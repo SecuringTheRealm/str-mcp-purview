@@ -6,6 +6,7 @@
 ![GitHub Repo stars](https://img.shields.io/github/stars/SecuringTheRealm/str-mcp-purview?style=social)
 [![Python](https://img.shields.io/badge/--3178C6?logo=python&logoColor=ffffff)](https://www.python.org/)
 [![Azure](https://img.shields.io/badge/--3178C6?logo=microsoftazure&logoColor=ffffff)](https://learn.microsoft.com/en-us/azure/developer/azure-developer-cli/?WT.mc_id=AI-MVP-5004204)
+[![UV](https://img.shields.io/badge/--3178C6?logo=python&logoColor=ffffff)](https://docs.astral.sh/uv/)
 
 This project implements a Model Context Protocol (MCP) server that integrates with Microsoft Purview, allowing LLMs to interact with Purview data through a secure interface. The server provides tools to monitor sensitivity label changes, analyze audit logs, manage data sources, and gain insights from your Microsoft Purview implementation.
 
@@ -22,6 +23,7 @@ This project implements a Model Context Protocol (MCP) server that integrates wi
 - Python 3.8 or higher
 - An Azure subscription with Purview configured
 - Appropriate permissions to access Purview resources
+- [UV package manager](https://docs.astral.sh/uv/installation/) installed
 
 ## Installation
 
@@ -31,28 +33,18 @@ This project implements a Model Context Protocol (MCP) server that integrates wi
    cd str-mcp-purview
    ```
 
-2. Set up a virtual environment (recommended):
+2. Configure your environment variables:
    ```bash
-   python -m venv venv
-
-   # On macOS/Linux:
-   source venv/bin/activate
-
-   # On Windows:
-   venv\Scripts\activate
-   ```
-
-3. Install the required packages:
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-4. Configure your environment variables:
-   ```bash
+   cd src
    cp .env.template .env
    ```
 
    Then edit the `.env` file with your Purview account details and authentication information.
+
+3. Run the server, and install dependencies: at the same time
+   ```bash
+   uv run server.py
+   ```
 
 ## Configuration
 
