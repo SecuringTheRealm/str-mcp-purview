@@ -1,0 +1,9 @@
+mcp[cli]>=0.1.0
+azure-identity>=1.15.0
+azure-purview-account>=1.0.0
+azure-purview-catalog>=1.0.0
+azure-purview-scanning>=1.0.0
+azure-purview-administration>=1.0.0
+azure-mgmt-purview>=1.0.0
+azure-mgmt-security>=3.0.0
+python-dotenv>=1.0.0
