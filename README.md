@@ -1,111 +1,235 @@
-# sealjay-template
-> A template for new repositories I create.
+# str-mcp-purview
+> MCP Server for Microsoft Purview Integration - with an optional D&D flavour.
 
-```
-Add a short description of your project.
-DELETE THIS COMMENT
-```
-<!-- Javascript -->
-[![JavaScript Style Guide](https://img.shields.io/badge/code_style-standard-brightgreen.svg)](https://standardjs.com)
-[![Commitizen friendly](https://img.shields.io/badge/commitizen-friendly-brightgreen.svg)](http://commitizen.github.io/cz-cli/)
-![GitHub issues](https://img.shields.io/github/issues/Sealjay/sealjay-template)
-![GitHub](https://img.shields.io/github/license/Sealjay/sealjay-template)
-![GitHub Repo stars](https://img.shields.io/github/stars/Sealjay/sealjay-template?style=social)
-
-<!-- Lang badges -->
-[![Go](https://img.shields.io/badge/--3178C6?logo=go&logoColor=ffffff)](https://go.dev/)
-[![Docker](https://img.shields.io/badge/--3178C6?logo=docker&logoColor=ffffff)](https://www.docker.com/) 
-[![TypeScript](https://img.shields.io/badge/--3178C6?logo=typescript&logoColor=ffffff)](https://www.typescriptlang.org/)
+![GitHub issues](https://img.shields.io/github/issues/SecuringTheRealm/str-mcp-purview)
+![GitHub](https://img.shields.io/github/license/SecuringTheRealm/str-mcp-purview)
+![GitHub Repo stars](https://img.shields.io/github/stars/SecuringTheRealm/str-mcp-purview?style=social)
 [![Python](https://img.shields.io/badge/--3178C6?logo=python&logoColor=ffffff)](https://www.python.org/)
-[![JavaScript](https://img.shields.io/badge/--3178C6?logo=javascript&logoColor=ffffff)](https://nodejs.org/en/)
-
-<!-- Cloud badges -->
 [![Azure](https://img.shields.io/badge/--3178C6?logo=microsoftazure&logoColor=ffffff)](https://learn.microsoft.com/en-us/azure/developer/azure-developer-cli/?WT.mc_id=AI-MVP-5004204)
 
-<!-- Package badges -->
-[![NextJS](https://img.shields.io/badge/--3178C6?logo=next.js&logoColor=ffffff)](https://nextjs.org/)
+This project implements a Model Context Protocol (MCP) server that integrates with Microsoft Purview, allowing LLMs to interact with Purview data through a secure interface. The server provides tools to monitor sensitivity label changes, analyze audit logs, manage data sources, and gain insights from your Microsoft Purview implementation.
 
+## Features
+
+- 🔍 **Audit Log Analysis**: Access and analyze Purview audit logs to monitor data governance activities
+- 🏷️ **Sensitivity Label Tracking**: Monitor changes to sensitivity labels in emails and documents
+- 🔄 **Data Source Scanning**: Trigger scans of your data sources programmatically
+- 📊 **Data Catalog Insights**: Get summary statistics about your entire data estate
+- 🔗 **Data Lineage Exploration**: Visualize and analyze how data flows through your organization
+
+## Prerequisites
+
+- Python 3.8 or higher
+- An Azure subscription with Purview configured
+- Appropriate permissions to access Purview resources
+
+## Installation
+
+1. Clone this repository:
+   ```bash
+   git clone <your-repo-url>
+   cd str-mcp-purview
+   ```
+
+2. Set up a virtual environment (recommended):
+   ```bash
+   python -m venv venv
+
+   # On macOS/Linux:
+   source venv/bin/activate
+
+   # On Windows:
+   venv\Scripts\activate
+   ```
+
+3. Install the required packages:
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+4. Configure your environment variables:
+   ```bash
+   cp .env.template .env
+   ```
+
+   Then edit the `.env` file with your Purview account details and authentication information.
+
+## Configuration
+
+The server uses environment variables for configuration. Copy the `.env.template` file to `.env` and fill in:
 
 ```
-Update the repo URL addresses for the shield templates.
-DELETE THIS COMMENT
+# Azure Purview Configuration
+PURVIEW_ACCOUNT_NAME=your-purview-account-name
+PURVIEW_ENDPOINT=https://your-purview-account-name.purview.azure.com
+
+# Azure Subscription Information
+AZURE_SUBSCRIPTION_ID=your-subscription-id
+AZURE_RESOURCE_GROUP=your-resource-group-name
+
+# Authentication (DefaultAzureCredential will be used if these are not provided)
+# For service principal authentication
+AZURE_TENANT_ID=your-tenant-id
+AZURE_CLIENT_ID=your-client-id
+AZURE_CLIENT_SECRET=your-client-secret
 ```
 
-## Overview
-Describe the project in more detail.
+## Authentication
 
-This repository is designed to be compiled and deployed to [Azure Static Web Apps](https://docs.microsoft.com/en-us/azure/static-web-apps/deploy-nextjs?WT.mc_id=AI-MVP-5004204).
+This server supports multiple authentication methods following Azure best practices:
 
+1. **Managed Identity**: When deployed to Azure, uses system-assigned or user-assigned managed identities (recommended)
+2. **DefaultAzureCredential**: Tries multiple authentication methods in sequence, including environment variables, managed identity, and interactive login
+3. **Service Principal**: Falls back to client secret authentication if client ID, client secret, and tenant ID are provided
 
-## Licensing
-<!-- MIT -->
-sealjay-template is available under the [MIT Licence](./LICENCE).and is freely available to End Users
-<!-- Tailwind template -->
-The underlying site template is a commercial product and is licensed under the [Tailwind UI license](https://tailwindui.com/license). Changes and additions are licenced under the MIT licence, as an End Product released open source and freely available to End Users
+## Starting the MCP Server
 
-```
-Update the project name.
-DELETE THIS COMMENT
-```
+Start the server using one of these methods:
 
-## Solutions Referenced
-- [Infrastructure as code in Bicep](https://docs.microsoft.com/en-us/azure/azure-resource-manager/bicep/overview?&WT.mc_id=AI-MVP-500420)
-
-
-```
-These are provided as examples. Include links to components you have used, or delete this section.
-DELETE THIS COMMENT
-```
-
-## Documentation
-The `docs` folder contains [more detailed documentation](./docs/start-here.md), along with setup instructions.
-
-```
-Add an optional installation or usage section, if the instructions are short.
-e.g.
-## Getting started with this repository
-You can use a [dev container](https://docs.microsoft.com/en-us/azure-sphere/app-development/container-build-vscode?&WT.mc_id=AI-MVP-500420) to run this in VS Code, or in [GitHub codespaces](https://github.com/features/codespaces).
-<!-- SWA -->
-To get started, first install the [Azure Static Web App CLI](https://azure.github.io/static-web-apps-cli/docs/use/install), and make sure you have nodejs installed.
-
-### Run the development server:
+### Basic Start
 
 ```bash
-swa start
+cd str-mcp-purview
+python src/server.py
 ```
 
-Finally, open [http://localhost:3000](http://localhost:3000) in your browser to view the website.
-<!-- Python -->
-### Review the research notebook
-The notebook uses Jupyter (not jupyterlabs.)
-1. Update conda: `conda update conda`
-2. Create the environment (Call it thinkdays-space) `conda create -c conda-forge -n thinkdays-space python=3.10 rise pip`
-3. Activate the environment: `source activate thinkdays-space`
-4. Install all required packages: `pip install -r requirements.txt`.
-5. Get some space back: `conda clean -a`
-6. Start the notebook server: `jupyter notebook`
+### Using MCP CLI
 
-### Cloud Resources
-You'll need to deploy an [Azure Cognitive Search](https://docs.microsoft.com/en-us/azure/search/search-what-is-azure-search?WT.mc_id=AI-MVP-5004204) resource; and an Azure App Service if you want to host this. Right now, the [Bicep file](https://docs.microsoft.com/en-us/azure/azure-resource-manager/bicep/overview?&WT.mc_id=AI-MVP-500420) is not complete.
+```bash
+# Standard mode
+mcp run src/server.py
 
-### Installation
-
-### Usage
-
-DELETE THIS COMMENT
+# Development mode with inspector
+mcp dev src/server.py
 ```
 
-## Contact
-Feel free to contact me [on Twitter](https://twitter.com/sealjay_clj). For bugs, please [raise an issue on GitHub](https://github.com/Sealjay/sealjay-template/issue).
+### Integration with Claude Desktop or Other MCP Clients
+
+To install the server as an MCP extension:
+
+```bash
+mcp install src/server.py --name "Purview Insights"
 ```
-Update the repo URL.
-DELETE THIS COMMENT
+
+## Available Tools
+
+The MCP server exposes these tools for LLMs:
+
+### `get_audit_logs`
+
+Retrieve audit logs from Purview for a specified time period.
+
+**Parameters:**
+- `start_time`: Start time in ISO format (YYYY-MM-DDTHH:MM:SS)
+- `end_time`: (Optional) End time in ISO format, defaults to current time
+- `limit`: Maximum number of logs to return (default: 100)
+
+**Example usage:**
+```python
+logs = await get_audit_logs(start_time="2025-04-10T00:00:00", limit=50)
 ```
+
+### `get_sensitivity_label_changes`
+
+Get a report of sensitivity label changes in a specified time period.
+
+**Parameters:**
+- `start_time`: Start time in ISO format (YYYY-MM-DDTHH:MM:SS)
+- `end_time`: (Optional) End time in ISO format, defaults to current time
+
+**Example usage:**
+```python
+report = await get_sensitivity_label_changes(start_time="2025-04-01T00:00:00")
+```
+
+### `scan_data_source`
+
+Initiate a scan on a Purview data source.
+
+**Parameters:**
+- `data_source_name`: Name of the data source to scan
+- `scan_level`: Type of scan (Incremental or Full)
+
+**Example usage:**
+```python
+result = await scan_data_source(data_source_name="MyDataLake", scan_level="Full")
+```
+
+### `get_data_catalog_summary`
+
+Get a summary of the data catalog including asset counts by type.
+
+**Example usage:**
+```python
+summary = await get_data_catalog_summary()
+```
+
+### `get_data_lineage`
+
+Get data lineage information for a specific entity.
+
+**Parameters:**
+- `entity_id`: ID of the entity to retrieve lineage for
+- `depth`: Depth of lineage graph to retrieve (default: 3)
+
+**Example usage:**
+```python
+lineage = await get_data_lineage(entity_id="guid-123-456", depth=5)
+```
+
+## Available Resources
+
+The server provides these information resources:
+
+### `purview-overview`
+
+Provides an overview of your Purview account configuration and status.
+
+### `email-sensitivity-guide`
+
+Provides guidance on email sensitivity labels and their management.
+
+## Security Considerations
+
+This server follows Azure best practices for security:
+
+1. **Secure Authentication**: Uses DefaultAzureCredential for proper authentication chains
+2. **No Hardcoded Credentials**: All sensitive information is stored in environment variables
+3. **Error Handling**: Comprehensive error handling prevents information leakage
+4. **Least Privilege**: Use RBAC in Azure to provide minimal required permissions to the service principal
+
+## Extending the Server
+
+To add new tools:
+
+1. Create a new function with the `@mcp.tool()` decorator
+2. Define parameters and return types
+3. Implement the tool functionality using the Purview client
+
+To add new resources:
+
+1. Create a new function with the `@mcp.resource(path="your-path")` decorator
+2. Return the content as a string (Markdown format recommended)
+
+## Troubleshooting
+
+If you encounter issues:
+
+1. **Authentication Errors**: Verify your environment variables and check if the service principal has sufficient permissions
+2. **Connection Issues**: Ensure your Purview endpoint is correctly specified
+3. **Tool Errors**: Check the error logs for specific error messages
+
+## Solutions Referenced
+- [Microsoft Purview documentation](https://learn.microsoft.com/en-us/purview/purview?WT.mc_id=AI-MVP-5004204)
+- [Microsoft Purview Python SDK tutorial](https://learn.microsoft.com/en-us/purview/tutorial-using-python-sdk?WT.mc_id=AI-MVP-5004204)
+- [Azure Identity authentication library](https://learn.microsoft.com/en-us/python/api/overview/azure/identity-readme?WT.mc_id=AI-MVP-5004204)
+- [Microsoft Purview sensitivity labels](https://learn.microsoft.com/en-us/purview/create-sensitivity-label?WT.mc_id=AI-MVP-5004204)
+- [Model Context Protocol (MCP) Python SDK](https://github.com/modelcontextprotocol/python-sdk)
+
 ## Contributing
-Contributions are more than welcome! This repository uses [GitHub flow](https://guides.github.com/introduction/flow/) - with [Commitizen](https://github.com/commitizen/cz-cli#making-your-repo-commitizen-friendly) to enforce semantic commits (`npm install -g commitizen cz-customizable`, `echo '{ "path": "cz-customizable" }' > ~/.czrc`, and then `git cz`- easy to setup!)
 
-**Note: This adds a .czrc file to your home directory, and will overwrite existing commitzen .czrc files.**
+Contributions are welcome! Please feel free to submit a Pull Request.
 
-```
-DELETE THIS COMMENT
-```
+## License
+
+This project is licensed under the MIT License - see the LICENSE file for details.
