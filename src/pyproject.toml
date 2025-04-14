@@ -2,7 +2,6 @@
 name = "str-mcp-purview"
 version = "0.1.0"
 description = "MCP Server for Microsoft Purview Integration - with an optional D&D flavour."
-readme = "../README.md"
 license = { text = "MIT" }
 requires-python = ">=3.10"
 keywords = ["mcp", "purview", "azure", "microsoft", "data", "catalog"]
@@ -16,6 +15,10 @@ dependencies = [
     "mcp>=1.6.0",
     "python-dotenv>=1.1.0",
 ]
+
+[[project.authors]]
+name = "Chris Lloyd-Jones"
+email = "19361656+Sealjay@users.noreply.github.com"
 
 [project.scripts]
 str-mcp-purview = "str_mcp_purview:main"

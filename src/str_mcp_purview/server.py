@@ -10,7 +10,7 @@ import datetime
 import json
 import os
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from azure.core.exceptions import HttpResponseError
 
@@ -80,13 +80,13 @@ async def handle_list_resources() -> list[types.Resource]:
     """
     resources = [
         types.Resource(
-            uri=AnyUrl(f"purview://overview"),
+            uri=AnyUrl("purview://overview"),
             name="Purview Overview",
             description="Overview of Purview configuration and status",
             mimeType="text/markdown",
         ),
         types.Resource(
-            uri=AnyUrl(f"purview://email-sensitivity-guide"),
+            uri=AnyUrl("purview://email-sensitivity-guide"),
             name="Email Sensitivity Guide",
             description="Guide on email sensitivity labels and management",
             mimeType="text/markdown",
@@ -593,7 +593,7 @@ async def main():
     """Main entry point for the MCP server"""
     # Initialize server state
     await initialize_state()
-    
+
     # Run the server using stdin/stdout streams
     async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):
         await server.run(
