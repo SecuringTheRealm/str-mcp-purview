@@ -360,8 +360,8 @@ async def get_data_lineage(
 
 # Define resources for Purview information
 
-@mcp.resource(path="purview-overview")
-async def get_purview_overview(ctx: Context = None) -> str:
+@mcp.resource("purview-overview")
+async def get_purview_overview() -> str:
     """
     Provide an overview of the Purview account configuration and status.
     """

@@ -1,0 +1,17 @@
+[project]
+name = "simple-mcp-server"
+version = "0.1.0"
+description = "A basic MCP server using Python MCP SDK"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [ "mcp>=1.6.0",]
+[[project.authors]]
+name = "Chris Lloyd-Jones"
+email = "19361656+Sealjay@users.noreply.github.com"
+
+[build-system]
+requires = [ "hatchling",]
+build-backend = "hatchling.build"
+
+[project.scripts]
+simple-mcp-server = "simple_mcp_server:main"

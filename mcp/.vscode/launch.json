@@ -1,0 +1,27 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Debug MCP Server",
+            "type": "python",
+            "request": "launch",
+            "module": "simple_mcp_server.server",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}/src"
+            }
+        },
+        {
+            "name": "Debug with MCP Inspector",
+            "type": "python",
+            "request": "launch",
+            "module": "simple_mcp_server.server",
+            "console": "externalTerminal",
+            "justMyCode": true,
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}/src"
+            }
+        }
+    ]
+}
