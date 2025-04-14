@@ -5,7 +5,7 @@
             "name": "Debug MCP Server",
             "type": "python",
             "request": "launch",
-            "module": "simple_mcp_server.server",
+            "module": "str-mcp-preview.server",
             "console": "integratedTerminal",
             "justMyCode": true,
             "env": {
@@ -16,7 +16,7 @@
             "name": "Debug with MCP Inspector",
             "type": "python",
             "request": "launch",
-            "module": "simple_mcp_server.server",
+            "module": "str-mcp-preview.server",
             "console": "externalTerminal",
             "justMyCode": true,
             "env": {

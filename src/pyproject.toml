@@ -16,3 +16,6 @@ dependencies = [
     "mcp>=1.6.0",
     "python-dotenv>=1.1.0",
 ]
+
+[project.scripts]
+str-mcp-purview = "str_mcp_purview:main"
