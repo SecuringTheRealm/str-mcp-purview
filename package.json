@@ -8,7 +8,8 @@
     "str-mcp-purview": "index.js"
   },
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "test": "node --experimental-test-module-mocks --test"
   },
   "dependencies": {
     "@azure/identity": "^4.5.0",

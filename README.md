@@ -40,6 +40,14 @@ cd str-mcp-purview
 npm install
 ```
 
+## Test
+
+```bash
+npm test
+```
+
+Runs the unit and integration test suite with Node's built-in test runner (`node:test`), covering the formatting helpers, sensitivity-label and DLP data-access/formatting logic, the PowerShell bridge protocol, and the MCP server's tool/prompt registration and dispatch (via a real stdio child-process round trip). No test framework dependency is required — Node 20+ ships `node:test` out of the box.
+
 ## Configure
 
 Set two environment variables (see `.env.template` for the full list). On Windows, storing them as user environment variables keeps them out of any file:
