@@ -61,7 +61,12 @@ class PowerShellBridge {
   #exec(script) {
     return new Promise((resolve, reject) => {
       this.#ensureProc();
-      if (!this.proc) {
+      // Capture the process reference now: it can flip to null (via the
+      // 'exit'/'error' handlers in #ensureProc) while this request is still
+      // in flight, and we must keep using the same stdout stream we attached
+      // onData to rather than re-reading the (possibly now-null) this.proc.
+      const proc = this.proc;
+      if (!proc) {
         reject(new Error("PowerShell (pwsh) is not available. Install PowerShell 7+ or set PURVIEW_PWSH."));
         return;
       }
@@ -71,7 +76,7 @@ class PowerShellBridge {
       const timer = setTimeout(() => {
         if (settled) return;
         settled = true;
-        this.proc.stdout.off("data", onData);
+        proc.stdout.off("data", onData);
         reject(new Error(`PowerShell command timed out after ${EXEC_TIMEOUT_MS}ms.`));
       }, EXEC_TIMEOUT_MS);
       const onData = (chunk) => {
@@ -82,7 +87,7 @@ class PowerShellBridge {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
-        this.proc.stdout.off("data", onData);
+        proc.stdout.off("data", onData);
 
         const block = buffer.slice(s + START.length, e).trim();
         const nl = block.indexOf("\n");
@@ -100,7 +105,7 @@ class PowerShellBridge {
           reject(new Error(body || "PowerShell command failed."));
         }
       };
-      this.proc.stdout.on("data", onData);
+      proc.stdout.on("data", onData);
 
       const wrapped = [
         "try {",
@@ -122,7 +127,7 @@ class PowerShellBridge {
         "",
       ].join("\n");
 
-      this.proc.stdin.write(wrapped);
+      proc.stdin.write(wrapped);
     });
   }
 
