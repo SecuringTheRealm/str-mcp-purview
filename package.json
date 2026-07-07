@@ -1,0 +1,31 @@
+{
+  "name": "str-mcp-purview",
+  "version": "2.0.0",
+  "description": "Local MCP server for Microsoft Purview data security — sensitivity labels (Microsoft Graph) and DLP policies (Security & Compliance PowerShell), for use by coding agents.",
+  "type": "module",
+  "main": "index.js",
+  "bin": {
+    "str-mcp-purview": "index.js"
+  },
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "@azure/identity": "^4.5.0",
+    "@modelcontextprotocol/sdk": "^1.12.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": [
+    "mcp",
+    "purview",
+    "microsoft",
+    "graph",
+    "dlp",
+    "sensitivity-labels",
+    "information-protection",
+    "compliance"
+  ],
+  "license": "MIT"
+}

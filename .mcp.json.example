@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "purview": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["index.js"],
+      "env": {
+        "AZURE_TENANT_ID": "your-tenant-id-or-domain",
+        "AZURE_CLIENT_ID": "your-public-client-app-id"
+      }
+    }
+  }
+}
