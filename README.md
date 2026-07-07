@@ -4,7 +4,7 @@
 
 ![GitHub issues](https://img.shields.io/github/issues/SecuringTheRealm/str-mcp-purview)
 ![GitHub](https://img.shields.io/github/license/SecuringTheRealm/str-mcp-purview)
-[![Node](https://img.shields.io/badge/node-%3E%3D18-3178C6?logo=node.js&logoColor=ffffff)](https://nodejs.org/)
+[![Node](https://img.shields.io/badge/node-%3E%3D20-3178C6?logo=node.js&logoColor=ffffff)](https://nodejs.org/)
 [![MCP](https://img.shields.io/badge/MCP-Model_Context_Protocol-3178C6)](https://modelcontextprotocol.io/)
 
 This is a ground-up rewrite (v2). The original server targeted the **Azure Purview** data-catalog SDKs and returned mocked data. This version targets the **Microsoft 365 / Microsoft Purview compliance** surface with real API calls, designed for coding agents (Claude Code, VS Code / GitHub Copilot) running locally.
@@ -24,7 +24,7 @@ So this server is a **hybrid**: raw Microsoft Graph calls for labels, and a pers
 
 ## Prerequisites
 
-- **Node.js 18+**
+- **Node.js 20+**
 - **PowerShell 7+** (`pwsh`) with the Exchange Online module — needed only for the DLP tools:
   ```powershell
   Install-Module ExchangeOnlineManagement -Scope CurrentUser

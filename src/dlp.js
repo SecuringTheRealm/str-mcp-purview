@@ -67,7 +67,7 @@ function policyLine(p) {
 export function formatPolicyList(policies) {
   if (!policies.length) return "No DLP policies found.";
   const lines = policies.map(policyLine);
-  return `${policies.length} DLP polic(ies):\n${lines.join("\n")}`;
+  return `${policies.length} DLP ${policies.length === 1 ? "policy" : "policies"}:\n${lines.join("\n")}`;
 }
 
 export function formatPolicyDetail(p) {

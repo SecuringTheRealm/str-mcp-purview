@@ -19,6 +19,7 @@ import { spawn } from "node:child_process";
 
 const START = "@@PVW_START@@";
 const END = "@@PVW_END@@";
+const EXEC_TIMEOUT_MS = Number(process.env.PURVIEW_EXEC_TIMEOUT_MS) || 60_000;
 
 class PowerShellBridge {
   constructor() {
@@ -66,11 +67,21 @@ class PowerShellBridge {
       }
 
       let buffer = "";
+      let settled = false;
+      const timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        this.proc.stdout.off("data", onData);
+        reject(new Error(`PowerShell command timed out after ${EXEC_TIMEOUT_MS}ms.`));
+      }, EXEC_TIMEOUT_MS);
       const onData = (chunk) => {
         buffer += chunk.toString();
         const s = buffer.indexOf(START);
         const e = buffer.indexOf(END);
         if (s === -1 || e === -1 || e < s) return;
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
         this.proc.stdout.off("data", onData);
 
         const block = buffer.slice(s + START.length, e).trim();
@@ -127,9 +138,7 @@ class PowerShellBridge {
       "  throw 'The ExchangeOnlineManagement module is not installed. Run: Install-Module ExchangeOnlineManagement -Scope CurrentUser'",
       "}",
       "Import-Module ExchangeOnlineManagement -ErrorAction Stop",
-      "if (-not (Get-Command Get-DlpCompliancePolicy -ErrorAction SilentlyContinue)) {",
-      `  ${connect}`,
-      "}",
+      `${connect}`,
       "'connected'",
     ].join("\n");
     await this.#enqueue(script);
