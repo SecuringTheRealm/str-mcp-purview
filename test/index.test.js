@@ -41,6 +41,8 @@ test("MCP server over stdio", async (t) => {
       assert.deepEqual(names, [
         "create_dlp_policy",
         "create_dlp_rule",
+        "create_endpoint_dlp_policy",
+        "create_endpoint_dlp_rule",
         "get_dlp_policy",
         "get_label_policy_settings",
         "get_sensitivity_label",
@@ -67,6 +69,8 @@ test("MCP server over stdio", async (t) => {
       assert.deepEqual(byName.get_dlp_policy.inputSchema.required, ["identity"]);
       assert.deepEqual(byName.create_dlp_policy.inputSchema.required, ["name"]);
       assert.deepEqual(byName.create_dlp_rule.inputSchema.required, ["name", "policy"]);
+      assert.deepEqual(byName.create_endpoint_dlp_policy.inputSchema.required, ["name"]);
+      assert.deepEqual(byName.create_endpoint_dlp_rule.inputSchema.required, ["name", "policy", "endpoint_restrictions"]);
       assert.deepEqual(byName.set_dlp_policy.inputSchema.required, ["identity"]);
       assert.deepEqual(byName.set_dlp_rule.inputSchema.required, ["identity"]);
       assert.equal(byName.list_dlp_rules.inputSchema.required, undefined);
@@ -109,7 +113,7 @@ test("MCP server over stdio", async (t) => {
     await withClient(async (client) => {
       const { resources } = await client.listResources();
       const uris = resources.map((r) => r.uri).sort();
-      assert.deepEqual(uris, ["purview://sit-catalog", "purview://sit-catalog/custom"]);
+      assert.deepEqual(uris, ["purview://label-catalog", "purview://sit-catalog", "purview://sit-catalog/custom"]);
       for (const resource of resources) {
         assert.equal(resource.mimeType, "text/markdown");
         assert.ok(resource.description.length > 0);

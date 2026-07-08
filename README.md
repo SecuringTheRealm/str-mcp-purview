@@ -231,6 +231,46 @@ flagged and only exist on the PowerShell plane.
 
 ---
 
+### Endpoint & Microsoft Edge DLP — Security & Compliance PowerShell
+
+These two tools are kept **separate** from the traditional DLP tools above so the common (Exchange/SharePoint/OneDrive) workflow stays lean — the endpoint activity/action options only appear when you're actually doing endpoint work. Endpoint DLP governs sensitive-data activities on users' **onboarded devices**, and this is also where **Microsoft Edge inline browser DLP** lives: the `PasteToBrowser` activity governs pasting sensitive text into Edge (e.g. prompts to AI apps like ChatGPT). Edge is natively supported; Chrome/Firefox require the Microsoft Purview browser extension.
+
+> **Prerequisite:** devices must be [onboarded to Microsoft Purview](https://learn.microsoft.com/purview/device-onboarding-overview). Blocking prompts to *specific* AI/cloud domains additionally depends on the tenant's sensitive-service-domain settings, which are configured in the Purview portal (not exposed by these tools).
+
+#### `create_endpoint_dlp_policy`
+
+- **Business:** Stand up a device-scoped DLP control for a set of users — the container that brings their onboarded devices (and their Edge browsing) into scope. Add the actual on-device restrictions with `create_endpoint_dlp_rule`. Prefer a Test mode first.
+- **Technical:** **Write.** `New-DlpCompliancePolicy` with `-EndpointDlpLocation`. Endpoint DLP is scoped by **user**, not mailbox or site; defaults to `["All"]` if no users are given.
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `name` | string | Unique policy name |
+| `endpoint_location` | string[] | Users whose onboarded devices are in scope — email/name/GUID, or `["All"]` (default) |
+| `mode` | string | `Enable`, `TestWithNotifications`, `TestWithoutNotifications`, `Disable` (default `Enable`) |
+| `comment` | string | Optional description/comment |
+
+---
+
+#### `create_endpoint_dlp_rule`
+
+- **Business:** Define what happens on the device — for each activity (print, clipboard, USB, network share, **paste into the Edge browser**…) choose whether to audit, warn, block, or block-with-override when content matches. This is how you stop sensitive data being pasted into AI-app prompts in Edge.
+- **Technical:** **Write.** `New-DlpComplianceRule` with `-EndpointDlpRestrictions`. Each `{activity, action}` pair maps to a `@{Setting=<activity>; Value=<action>}` hashtable entry. The persistent PowerShell bridge already marshals hashtable arrays, so no special handling is needed.
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `name` | string | Unique rule name |
+| `policy` | string | Parent endpoint DLP policy name or GUID |
+| `sensitive_information_types` | string[] | Condition — sensitive information types to detect |
+| `endpoint_restrictions` | object[] | **Required.** Each entry: `{ "activity": <activity>, "action": <action> }` |
+| `notify_user` | string[] | Action — notify these users |
+| `generate_alert` | boolean | Action — raise an alert on match |
+| `priority` | integer | Rule priority (lower runs first) |
+
+**`activity` values:** `Print`, `CopyToClipboard`, `RemovableMedia`, `NetworkShare`, `Bluetooth`, `RemoteDesktopServices`, `PasteToBrowser` *(Microsoft Edge)*, `ScreenCapture`.
+**`action` values:** `Audit`, `Block`, `Warn`, `BlockWithOverride`, `Ignore` — not every action is valid for every activity; verify against a live tenant.
+
+---
+
 > **Write operations change tenant configuration.** Run them against a test tenant first, and prefer creating policies in a Test mode before enabling enforcement.
 
 ---
@@ -266,10 +306,13 @@ Audit of sensitivity-label usage across DLP. Calls `list_sensitivity_labels`, `g
 
 ## Resources
 
-Resources are user/host-attached context, distinct from tools: instead of the model calling them mid-reasoning, a user (or a host that supports it) attaches them directly to a conversation. Both resources below are backed by the same data as `list_sensitive_information_types`, live-queried on every read (no caching).
+Resources are user/host-attached context, distinct from tools: instead of the model calling them mid-reasoning, a user (or a host that supports it) attaches them directly to a conversation. All resources are live-queried on every read (no caching).
+
+Resources here deliberately mirror **classification vocabulary** — the labels and sensitive information types you *reference* when reasoning about policy — not live posture (DLP policies/rules), which is better fetched on demand via the tools. Each resource is backed by the same data as its sibling `list_*` tool.
 
 | URI | Description |
 |-----|--------------|
+| `purview://label-catalog` | All sensitivity labels visible to the tenant — the classification vocabulary. |
 | `purview://sit-catalog` | All sensitive information types visible to the tenant — built-in and custom. |
 | `purview://sit-catalog/custom` | Only the org's custom sensitive information types. |
 

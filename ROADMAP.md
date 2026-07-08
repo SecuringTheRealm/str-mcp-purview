@@ -107,6 +107,42 @@ No new plane, no XML, no new auth.
 - **Remaining gap:** no **delete** for either policies or rules.
 - **Proposed tools:** `remove_dlp_policy`, `remove_dlp_rule`.
 
+### DLP surface coverage (locations & enforcement planes)
+The traditional and endpoint surfaces are done; the rest ride the *same*
+`*-DlpCompliancePolicy` / `*-DlpComplianceRule` cmdlets, differing only in
+location params, enforcement planes, and action shapes.
+
+- **✅ Done — traditional M365:** Exchange / SharePoint / OneDrive locations, block/notify/alert actions.
+- **✅ Done — Endpoint & Microsoft Edge:** `create_endpoint_dlp_policy` (`EndpointDlpLocation`) + `create_endpoint_dlp_rule` (`EndpointDlpRestrictions`). Covers on-device activities and Edge inline browser DLP (`PasteToBrowser`, cloud upload). Kept as **separate tools** so the traditional DLP schemas stay lean.
+  - *Follow-ups:* `set_endpoint_dlp_rule` (tune audit→block); Teams location on the traditional policy; `OnPremisesScannerDlpRestrictions`.
+  - *Out of tool scope:* blocking *specific* AI/cloud domains needs tenant sensitive-service-domain settings, configured in the portal.
+- **🟡 AI DLP (Copilot / Foundry / enterprise AI):** all ride the same
+  `*-DlpCompliancePolicy` / `*-DlpComplianceRule` cmdlets; the common enabler is a
+  **`Locations` + `AdvancedRule` JSON builder** plus the AI-specific actions
+  (`RestrictAccess`, `RestrictWebGrounding`) — the same JSON-authoring complexity
+  multiplier as custom SITs. Three distinct sub-variants, ranked by fit:
+  1. **⭐ Entra-registered AI apps & Microsoft Foundry — best fit.** DLP for these
+     is **PowerShell-only; the Purview portal cannot create them** ("you must use
+     the `New-DlpComplianceRule` cmdlet"). Exactly this server's niche (no Graph,
+     no portal). Scope a policy to the app's Entra ID via `Locations` JSON +
+     `EnforcementPlanes=("Application")`, block prompts by SIT. *(App honours it by
+     integrating the Purview `processContent` Graph API — developer's job, out of
+     our scope.)* **Note:** `Entra` enforcement plane is deprecated → use `Application`.
+  2. **Microsoft 365 Copilot & Copilot Chat.** Location `CopilotExperiences`. Four
+     protections: block sensitive prompts (`RestrictAccess` ExcludeContentProcessing),
+     block external web search (`RestrictWebGrounding`), exclude labeled content
+     (needs `AdvancedRule` for the label condition), block external-email grounding
+     (preview). Constraint: **SIT and label conditions can't share a rule** — one
+     rule each. Has a portal fallback, so lower priority than (1).
+  3. **Prompt/response capture (DSPM for AI).** A **separate cmdlet family** —
+     `New`/`Set`/`Get`/`Remove-FeatureConfiguration` with a `ScenarioConfig` JSON.
+     Enables capturing prompts/responses for enterprise & unmanaged AI apps. New
+     surface on the same SCC PowerShell plane.
+- **🔴 Network Data Security (SASE/SSE inline, non-Edge):** classifier/policy half
+  is cmdlet-reachable, but adds a SASE / secure-browser integration provisioned
+  through the portal/partner Security Store — not fully PowerShell-automatable.
+  Discovery needed before scheduling.
+
 ### SIT rule-package read
 - **Surface:** `Get-DlpSensitiveInformationTypeRulePackage`.
 - **Why now:** read-only, trivial, and it's the natural precursor to the Tier-2

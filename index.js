@@ -181,6 +181,86 @@ const TOOLS = [
     },
   },
   {
+    name: "create_endpoint_dlp_policy",
+    description:
+      "Create a DLP policy scoped to Endpoint DLP — sensitive-data controls on users' onboarded devices, including inline enforcement in the Microsoft Edge browser (paste/upload to cloud & AI apps). Add device-activity restrictions with create_endpoint_dlp_rule. Requires devices onboarded to Microsoft Purview. WRITE operation.",
+    inputSchema: {
+      type: "object",
+      required: ["name"],
+      properties: {
+        name: { type: "string", description: "Unique policy name" },
+        endpoint_location: {
+          type: "array",
+          items: { type: "string" },
+          description:
+            "Users whose onboarded devices are in scope — email/name/GUID, or ['All'] (default). Endpoint DLP is scoped by user, not by mailbox or site.",
+        },
+        mode: {
+          type: "string",
+          enum: ["Enable", "TestWithNotifications", "TestWithoutNotifications", "Disable"],
+          description: "Policy mode (default Enable). Prefer a Test mode first to see impact before blocking.",
+        },
+        comment: { type: "string", description: "Optional description/comment" },
+      },
+    },
+  },
+  {
+    name: "create_endpoint_dlp_rule",
+    description:
+      "Create an Endpoint DLP rule (New-DlpComplianceRule with EndpointDlpRestrictions) inside an endpoint-scoped policy. Governs on-device activities — print, clipboard, USB, network share, and Microsoft Edge browser actions (paste to browser, upload to cloud/AI apps). WRITE operation.",
+    inputSchema: {
+      type: "object",
+      required: ["name", "policy", "endpoint_restrictions"],
+      properties: {
+        name: { type: "string", description: "Unique rule name" },
+        policy: { type: "string", description: "Parent endpoint DLP policy name or GUID" },
+        sensitive_information_types: {
+          type: "array",
+          items: { type: "string" },
+          description: "Condition: sensitive information types to detect, e.g. ['Credit Card Number'].",
+        },
+        endpoint_restrictions: {
+          type: "array",
+          description:
+            "Endpoint activities to govern. Each entry pairs an on-device activity with an action. Maps to EndpointDlpRestrictions.",
+          items: {
+            type: "object",
+            required: ["activity", "action"],
+            properties: {
+              activity: {
+                type: "string",
+                enum: [
+                  "Print",
+                  "CopyToClipboard",
+                  "RemovableMedia",
+                  "NetworkShare",
+                  "Bluetooth",
+                  "RemoteDesktopServices",
+                  "PasteToBrowser",
+                  "ScreenCapture",
+                ],
+                description:
+                  "On-device activity. PasteToBrowser governs pasting sensitive text into Microsoft Edge (e.g. AI-app prompts).",
+              },
+              action: {
+                type: "string",
+                enum: ["Audit", "Block", "Warn", "BlockWithOverride", "Ignore"],
+                description: "Action for this activity. Not every action is valid for every activity — verify per activity.",
+              },
+            },
+          },
+        },
+        notify_user: {
+          type: "array",
+          items: { type: "string" },
+          description: "Action: notify these users (email addresses, or ['LastModifier','Owner']).",
+        },
+        generate_alert: { type: "boolean", description: "Action: raise an alert on match" },
+        priority: { type: "integer", description: "Rule priority (lower runs first)" },
+      },
+    },
+  },
+  {
     name: "list_sensitive_information_types",
     description:
       "List Sensitive Information Types (SITs) visible to the tenant via Security & Compliance PowerShell: built-in Microsoft types and any custom types the org has created. Use this to find the exact SIT name needed by create_dlp_rule's sensitive_information_types parameter. Does not include trainable classifiers (a separate classification mechanism).",
@@ -262,6 +342,30 @@ async function dispatch(name, args) {
       return text(dlp.formatWriteResult("Set DLP rule", await dlp.setRule(params)));
     }
 
+    case "create_endpoint_dlp_policy": {
+      const params = {
+        Name: args.name,
+        EndpointDlpLocation: args.endpoint_location?.length ? args.endpoint_location : ["All"],
+      };
+      if (args.mode) params.Mode = args.mode;
+      if (args.comment) params.Comment = args.comment;
+      return text(dlp.formatWriteResult("Create endpoint DLP policy", await dlp.createPolicy(params)));
+    }
+
+    case "create_endpoint_dlp_rule": {
+      const params = { Name: args.name, Policy: args.policy };
+      if (args.sensitive_information_types?.length) {
+        params.ContentContainsSensitiveInformation = args.sensitive_information_types.map((n) => ({ Name: n }));
+      }
+      if (args.endpoint_restrictions?.length) {
+        params.EndpointDlpRestrictions = args.endpoint_restrictions.map((r) => ({ Setting: r.activity, Value: r.action }));
+      }
+      if (args.notify_user?.length) params.NotifyUser = args.notify_user;
+      if (args.generate_alert != null) params.GenerateAlert = args.generate_alert;
+      if (args.priority != null) params.Priority = args.priority;
+      return text(dlp.formatWriteResult("Create endpoint DLP rule", await dlp.createRule(params)));
+    }
+
     case "list_sensitive_information_types": {
       const scope = args.scope === "custom" ? "custom" : "all";
       return text(dlp.formatSitList(await dlp.listSensitiveInformationTypes(scope), scope));
@@ -340,6 +444,13 @@ Then produce a report with these sections:
 // a user to attach directly when reasoning about the tenant's environment.
 const RESOURCES = [
   {
+    uri: "purview://label-catalog",
+    name: "Sensitivity Labels",
+    description:
+      "All Microsoft Purview Information Protection sensitivity labels visible to the signed-in admin — the classification vocabulary, attachable as context when reasoning about labels and DLP coverage.",
+    mimeType: "text/markdown",
+  },
+  {
     uri: "purview://sit-catalog",
     name: "Sensitive Information Types (all)",
     description:
@@ -356,6 +467,8 @@ const RESOURCES = [
 
 async function readResource(uri) {
   switch (uri) {
+    case "purview://label-catalog":
+      return labels.formatLabelList(await labels.listLabels());
     case "purview://sit-catalog":
       return dlp.formatSitList(await dlp.listSensitiveInformationTypes("all"), "all");
     case "purview://sit-catalog/custom":
