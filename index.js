@@ -31,12 +31,87 @@ import * as dlp from "./src/dlp.js";
 
 // ---- tool definitions ------------------------------------------------------
 
+// Shared, category-grouped settings for the label write tools. Keeps the large
+// New-/Set-Label surface organised (encryption, content marking, container and
+// Teams protection) and avoids duplicating the schema across create and modify.
+const LABEL_SETTINGS_PROPS = {
+  display_name: { type: "string", description: "Display name shown to users" },
+  tooltip: { type: "string", description: "Tooltip / description shown at classification time" },
+  comment: { type: "string", description: "Admin comment" },
+  encryption: {
+    type: "object",
+    description: "Encryption (rights-management) settings applied to labeled content.",
+    properties: {
+      enabled: { type: "boolean", description: "Turn encryption on/off" },
+      protection_type: { type: "string", enum: ["Template", "RemoveProtection", "UserDefined"], description: "Protection model" },
+      do_not_forward: { type: "boolean", description: "Apply the Do Not Forward protection" },
+      encrypt_only: { type: "boolean", description: "Apply the Encrypt-Only protection" },
+      offline_access_days: { type: "integer", description: "Days of offline access (-1 = unlimited, 0 = none)" },
+      rights_definitions: {
+        type: "array",
+        description: "Per-identity usage rights.",
+        items: {
+          type: "object",
+          required: ["identity", "rights"],
+          properties: {
+            identity: { type: "string", description: "User/group email, or 'AuthenticatedUsers'" },
+            rights: { type: "array", items: { type: "string" }, description: "Rights, e.g. ['VIEW','EDIT','PRINT']" },
+          },
+        },
+      },
+    },
+  },
+  content_marking: {
+    type: "object",
+    description: "Visual markings (header, footer, watermark) stamped on labeled documents.",
+    properties: {
+      header: { type: "object", properties: {
+        enabled: { type: "boolean" }, text: { type: "string" }, font_color: { type: "string", description: "Hex, e.g. #FF0000" },
+        font_size: { type: "integer" }, alignment: { type: "string", enum: ["Left", "Center", "Right"] } } },
+      footer: { type: "object", properties: {
+        enabled: { type: "boolean" }, text: { type: "string" }, font_color: { type: "string" },
+        font_size: { type: "integer" }, alignment: { type: "string", enum: ["Left", "Center", "Right"] } } },
+      watermark: { type: "object", properties: {
+        enabled: { type: "boolean" }, text: { type: "string" }, font_color: { type: "string" },
+        font_size: { type: "integer" }, layout: { type: "string", enum: ["Horizontal", "Diagonal"] } } },
+    },
+  },
+  site_and_group_protection: {
+    type: "object",
+    description: "Container protection for Microsoft 365 Groups, Teams, and SharePoint sites (Groups & sites label scope).",
+    properties: {
+      enabled: { type: "boolean" },
+      privacy: { type: "string", enum: ["Public", "Private"] },
+      allow_guest_access: { type: "boolean", description: "Allow guest users in the container" },
+      external_sharing_control: { type: "string", enum: ["ExternalUserAndGuestSharing", "ExternalUserSharingOnly", "ExistingExternalUserSharingOnly", "Disabled"] },
+      access_level: { type: "string", enum: ["FullAccess", "LimitedAccess", "BlockAccess"], description: "Access from unmanaged devices" },
+    },
+  },
+  teams_protection: {
+    type: "object",
+    description: "Microsoft Teams meeting protection settings.",
+    properties: {
+      enabled: { type: "boolean" },
+      allow_meeting_chat: { type: "string", enum: ["Enabled", "Disabled", "InMeetingOnly"] },
+      allowed_presenters: { type: "string", enum: ["Everyone", "Organization", "Organizer", "OrganizerAndCoorganizers"] },
+      end_to_end_encryption: { type: "boolean" },
+      prevent_copy: { type: "boolean", description: "Prevent copying of meeting chat" },
+    },
+  },
+};
+
 const TOOLS = [
   {
     name: "list_sensitivity_labels",
     description:
-      "List the Microsoft Purview Information Protection sensitivity labels available to the signed-in admin, via Microsoft Graph. One compact line per label.",
-    inputSchema: { type: "object", properties: {} },
+      "List the Microsoft Purview Information Protection sensitivity labels available to the signed-in admin, via Microsoft Graph. One compact line per label. Optional filters narrow the list.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        active: { type: "boolean", description: "Optional: only active (true) or inactive (false) labels." },
+        parent: { type: "string", description: "Optional: only sub-labels of this parent label (name or GUID)." },
+      },
+    },
   },
   {
     name: "get_sensitivity_label",
@@ -57,10 +132,112 @@ const TOOLS = [
     inputSchema: { type: "object", properties: {} },
   },
   {
+    name: "create_sensitivity_label",
+    description:
+      "Create a sensitivity label (New-Label) via Security & Compliance PowerShell. A created label does nothing until published with create_label_policy. WRITE operation — requires PowerShell 7+ and an IPPSSession sign-in.",
+    inputSchema: {
+      type: "object",
+      required: ["name", "display_name", "tooltip"],
+      properties: {
+        name: { type: "string", description: "Unique internal label name" },
+        parent_id: { type: "string", description: "Optional: parent label name/GUID to make this a sub-label" },
+        ...LABEL_SETTINGS_PROPS,
+      },
+    },
+  },
+  {
+    name: "set_sensitivity_label",
+    description:
+      "Modify an existing sensitivity label (Set-Label). Only supplied fields change. WRITE operation.",
+    inputSchema: {
+      type: "object",
+      required: ["identity"],
+      properties: {
+        identity: { type: "string", description: "Label name or GUID to modify" },
+        ...LABEL_SETTINGS_PROPS,
+      },
+    },
+  },
+  {
+    name: "create_label_policy",
+    description:
+      "Publish sensitivity labels to users by creating a label policy (New-LabelPolicy). Creation IS publishing — there is no separate publish step; changes replicate to clients automatically (can take up to ~24h). WRITE operation.",
+    inputSchema: {
+      type: "object",
+      required: ["name", "labels"],
+      properties: {
+        name: { type: "string", description: "Unique policy name" },
+        labels: { type: "array", items: { type: "string" }, description: "Labels to publish (names or GUIDs)" },
+        exchange_location: { type: "array", items: { type: "string" }, description: "Mailboxes to publish to, or ['All']" },
+        modern_group_location: { type: "array", items: { type: "string" }, description: "Microsoft 365 Groups to publish to (SMTP addresses)" },
+        advanced_settings: {
+          type: "object",
+          additionalProperties: { type: "string" },
+          description: "Behaviour settings as key→value, e.g. {\"OutlookDefaultLabel\":\"General\",\"TeamworkMandatory\":\"True\"} (mandatory labeling, default label, etc.).",
+        },
+        comment: { type: "string", description: "Optional description/comment" },
+      },
+    },
+  },
+  {
+    name: "set_label_policy",
+    description:
+      "Modify a label publishing policy (Set-LabelPolicy) — add/remove published labels or change behaviour settings. WRITE operation.",
+    inputSchema: {
+      type: "object",
+      required: ["identity"],
+      properties: {
+        identity: { type: "string", description: "Label policy name or GUID to modify" },
+        add_labels: { type: "array", items: { type: "string" }, description: "Labels to add to the policy" },
+        remove_labels: { type: "array", items: { type: "string" }, description: "Labels to remove from the policy" },
+        advanced_settings: {
+          type: "object",
+          additionalProperties: { type: "string" },
+          description: "Behaviour settings as key→value (mandatory labeling, default label, etc.).",
+        },
+        comment: { type: "string", description: "Optional description/comment" },
+      },
+    },
+  },
+  {
+    name: "remove_sensitivity_label",
+    description:
+      "Delete a sensitivity label (Remove-Label). DESTRUCTIVE, irreversible WRITE operation. Review dependent policies first.",
+    inputSchema: {
+      type: "object",
+      required: ["identity"],
+      properties: {
+        identity: { type: "string", description: "Sensitivity label name or GUID to delete" },
+      },
+    },
+  },
+  {
+    name: "remove_label_policy",
+    description:
+      "Delete a label publishing policy (Remove-LabelPolicy). Unpublishes its labels from users. DESTRUCTIVE, irreversible WRITE operation.",
+    inputSchema: {
+      type: "object",
+      required: ["identity"],
+      properties: {
+        identity: { type: "string", description: "Label policy name or GUID to delete" },
+      },
+    },
+  },
+  {
     name: "list_dlp_policies",
     description:
-      "List Data Loss Prevention (DLP) policies in Microsoft Purview via Security & Compliance PowerShell. One compact line per policy.",
-    inputSchema: { type: "object", properties: {} },
+      "List Data Loss Prevention (DLP) policies in Microsoft Purview via Security & Compliance PowerShell. One compact line per policy. Optional filters narrow the list.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        mode: {
+          type: "string",
+          enum: ["Enable", "TestWithNotifications", "TestWithoutNotifications", "Disable"],
+          description: "Optional: only policies in this exact mode.",
+        },
+        workload: { type: "string", description: "Optional: only policies whose workload contains this text (e.g. 'Endpoint', 'Exchange')." },
+      },
+    },
   },
   {
     name: "get_dlp_policy",
@@ -76,11 +253,25 @@ const TOOLS = [
   {
     name: "list_dlp_rules",
     description:
-      "List DLP rules, optionally filtered to one policy. Shows state, priority, block action, and detected sensitive information types.",
+      "List DLP rules, optionally filtered to one policy and/or by state. Shows state, priority, block action, and detected sensitive information types.",
     inputSchema: {
       type: "object",
       properties: {
         policy: { type: "string", description: "Optional: restrict to rules in this DLP policy (name or GUID)" },
+        disabled_only: { type: "boolean", description: "Optional: only disabled rules." },
+        blocking_only: { type: "boolean", description: "Optional: only rules that block access." },
+      },
+    },
+  },
+  {
+    name: "get_dlp_rule",
+    description:
+      "Get full DLP rule detail (Get-DlpComplianceRule): state, priority, parent policy, block action/scope, notified users, alert/severity, and detected sensitive information types. Provide EITHER identity (one rule) OR policy (full detail for every rule in that policy). Use list_dlp_rules first to find names.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        identity: { type: "string", description: "A single DLP rule name or GUID — returns that one rule." },
+        policy: { type: "string", description: "A DLP policy name or GUID — returns full detail for every rule in it. Use instead of identity." },
       },
     },
   },
@@ -177,6 +368,30 @@ const TOOLS = [
         generate_alert: { type: "boolean", description: "Set alert generation" },
         priority: { type: "integer", description: "Set rule priority" },
         disabled: { type: "boolean", description: "Enable (false) or disable (true) the rule" },
+      },
+    },
+  },
+  {
+    name: "remove_dlp_policy",
+    description:
+      "Delete a DLP policy and all its rules (Remove-DlpCompliancePolicy). DESTRUCTIVE, irreversible WRITE operation.",
+    inputSchema: {
+      type: "object",
+      required: ["identity"],
+      properties: {
+        identity: { type: "string", description: "DLP policy name or GUID to delete" },
+      },
+    },
+  },
+  {
+    name: "remove_dlp_rule",
+    description:
+      "Delete a single DLP rule (Remove-DlpComplianceRule). DESTRUCTIVE, irreversible WRITE operation.",
+    inputSchema: {
+      type: "object",
+      required: ["identity"],
+      properties: {
+        identity: { type: "string", description: "DLP rule name or GUID to delete" },
       },
     },
   },
@@ -330,6 +545,7 @@ const TOOLS = [
           enum: ["all", "custom"],
           description: "Restrict to the org's custom (non-Microsoft) SITs only. Default: all.",
         },
+        name_contains: { type: "string", description: "Optional: only SITs whose name contains this text (case-insensitive)." },
       },
     },
   },
@@ -344,7 +560,11 @@ function text(t) {
 async function dispatch(name, args) {
   switch (name) {
     case "list_sensitivity_labels":
-      return text(labels.formatLabelList(await labels.listLabels()));
+      return text(
+        labels.formatLabelList(
+          labels.filterLabels(await labels.listLabels(), { active: args.active, parent: args.parent })
+        )
+      );
 
     case "get_sensitivity_label":
       return text(labels.formatLabelDetail(await labels.getLabel(args.label_id)));
@@ -352,14 +572,63 @@ async function dispatch(name, args) {
     case "get_label_policy_settings":
       return text(labels.formatPolicySettings(await labels.getLabelPolicySettings()));
 
+    case "create_sensitivity_label": {
+      const params = { Name: args.name, ...labels.labelSettingsParams(args) };
+      if (args.parent_id) params.ParentId = args.parent_id;
+      return text(labels.formatWriteResult("Create sensitivity label", await labels.createLabel(params)));
+    }
+
+    case "set_sensitivity_label": {
+      const params = { Identity: args.identity, ...labels.labelSettingsParams(args) };
+      return text(labels.formatWriteResult("Set sensitivity label", await labels.setLabel(params)));
+    }
+
+    case "create_label_policy": {
+      const params = { Name: args.name, Labels: args.labels };
+      if (args.exchange_location?.length) params.ExchangeLocation = args.exchange_location;
+      if (args.modern_group_location?.length) params.ModernGroupLocation = args.modern_group_location;
+      if (args.advanced_settings) params.AdvancedSettings = args.advanced_settings;
+      if (args.comment) params.Comment = args.comment;
+      return text(labels.formatWriteResult("Create label policy", await labels.createLabelPolicy(params)));
+    }
+
+    case "set_label_policy": {
+      const params = { Identity: args.identity };
+      if (args.add_labels?.length) params.AddLabels = args.add_labels;
+      if (args.remove_labels?.length) params.RemoveLabels = args.remove_labels;
+      if (args.advanced_settings) params.AdvancedSettings = args.advanced_settings;
+      if (args.comment) params.Comment = args.comment;
+      return text(labels.formatWriteResult("Set label policy", await labels.setLabelPolicy(params)));
+    }
+
+    case "remove_sensitivity_label":
+      await labels.removeLabel({ Identity: args.identity, Confirm: false });
+      return text(`Deleted sensitivity label: ${args.identity}`);
+
+    case "remove_label_policy":
+      await labels.removeLabelPolicy({ Identity: args.identity, Confirm: false });
+      return text(`Deleted label policy: ${args.identity}`);
+
     case "list_dlp_policies":
-      return text(dlp.formatPolicyList(await dlp.listPolicies()));
+      return text(
+        dlp.formatPolicyList(dlp.filterPolicies(await dlp.listPolicies(), { mode: args.mode, workload: args.workload }))
+      );
 
     case "get_dlp_policy":
       return text(dlp.formatPolicyDetail(await dlp.getPolicy(args.identity)));
 
     case "list_dlp_rules":
-      return text(dlp.formatRuleList(await dlp.listRules(args.policy)));
+      return text(
+        dlp.formatRuleList(
+          dlp.filterRules(await dlp.listRules(args.policy), { disabledOnly: args.disabled_only, blockingOnly: args.blocking_only })
+        )
+      );
+
+    case "get_dlp_rule": {
+      if (args.identity) return text(dlp.formatRuleDetail(await dlp.getRule(args.identity)));
+      if (args.policy) return text(dlp.formatRuleDetails(await dlp.listRules(args.policy), args.policy));
+      throw new Error("get_dlp_rule requires either 'identity' (one rule) or 'policy' (all rules in a policy).");
+    }
 
     case "create_dlp_policy": {
       const params = { Name: args.name };
@@ -399,6 +668,14 @@ async function dispatch(name, args) {
       if (args.disabled != null) params.Disabled = args.disabled;
       return text(dlp.formatWriteResult("Set DLP rule", await dlp.setRule(params)));
     }
+
+    case "remove_dlp_policy":
+      await dlp.removePolicy({ Identity: args.identity, Confirm: false });
+      return text(`Deleted DLP policy: ${args.identity}`);
+
+    case "remove_dlp_rule":
+      await dlp.removeRule({ Identity: args.identity, Confirm: false });
+      return text(`Deleted DLP rule: ${args.identity}`);
 
     case "create_endpoint_dlp_policy": {
       const params = {
@@ -453,7 +730,7 @@ async function dispatch(name, args) {
 
     case "list_sensitive_information_types": {
       const scope = args.scope === "custom" ? "custom" : "all";
-      return text(dlp.formatSitList(await dlp.listSensitiveInformationTypes(scope), scope));
+      return text(dlp.formatSitList(await dlp.listSensitiveInformationTypes(scope, args.name_contains), scope));
     }
 
     default:

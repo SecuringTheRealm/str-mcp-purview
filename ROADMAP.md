@@ -43,13 +43,47 @@ Three rules follow from this:
 
 ## Ships today
 
-Baseline so the gaps below are legible. 10 tools, 2 prompts, 2 resources.
+Baseline so the gaps below are legible. **24 tools, 2 prompts, 3 resources.**
 
 - **Labels (read):** `list_sensitivity_labels`, `get_sensitivity_label`, `get_label_policy_settings`
+- **Labels (write):** `create_sensitivity_label`, `set_sensitivity_label`, `create_label_policy`, `set_label_policy`
 - **DLP (read):** `list_dlp_policies`, `get_dlp_policy`, `list_dlp_rules`
-- **DLP (write):** `create_dlp_policy`, `create_dlp_rule`, `set_dlp_rule`
-- **SITs (read):** `list_sensitive_information_types` + `purview://sit-catalog` and `.../custom` resources
+- **DLP (write):** `create_dlp_policy`, `set_dlp_policy`, `create_dlp_rule`, `set_dlp_rule`
+- **Endpoint & Edge DLP:** `create_endpoint_dlp_policy`, `create_endpoint_dlp_rule`
+- **Copilot DLP:** `create_copilot_dlp_policy`, `create_copilot_dlp_rule`
+- **SITs (read):** `list_sensitive_information_types`
+- **List filters (client-side):** labels (`active`, `parent`), DLP policies (`mode`, `workload`), DLP rules (`policy`, `disabled_only`, `blocking_only`), SITs (`scope`, `name_contains`)
+- **Resources:** `purview://label-catalog`, `purview://sit-catalog`, `purview://sit-catalog/custom`
 - **Prompts:** `dlp-policy-review`, `label-coverage-audit`
+
+---
+
+## Coverage scorecard — what's left, by tier
+
+Every remaining DLP / label / classification gap, mapped to the tier it belongs in.
+
+| Area | Gap | Cmdlet(s) | Tier |
+| --- | --- | --- | --- |
+| DLP CRUD | ✅ Rule read `get_dlp_rule` — **shipped** (single rule by `identity`, or all rules in a `policy`) | `Get-DlpComplianceRule` | ✅ done |
+| DLP CRUD | ✅ Delete policy / rule — **shipped** (`remove_dlp_policy`, `remove_dlp_rule`) | `Remove-DlpCompliancePolicy` / `-DlpComplianceRule` | ✅ done |
+| DLP CRUD | Edit policy **locations** (today `set_dlp_policy` = mode/comment only) | `Set-DlpCompliancePolicy` | 🟢 T1 |
+| DLP CRUD | `set_`/`remove_` for endpoint & Copilot rules | `Set-DlpComplianceRule` | 🟢 T1 |
+| DLP conditions | Richer rule conditions/actions (labels, doc-props, sender/recipient, file-type; encrypt/RMS, quarantine, incident report) | `*-DlpComplianceRule` | 🟢 T1 → 🟡 |
+| DLP locations | Teams, on-prem scanner, PowerBI, 3rd-party-app locations + exceptions/adaptive scopes | `New-DlpCompliancePolicy` | 🟢 T1 |
+| Labels | ✅ Delete label / policy — **shipped** (`remove_sensitivity_label`, `remove_label_policy`) | `Remove-Label` / `Remove-LabelPolicy` | ✅ done |
+| Labels | **Auto-labeling** (apply by condition) | `*-AutoSensitivityLabelPolicy` + `...Rule` | 🟢 T1 |
+| Classification | Keyword dictionaries | `*-DlpKeywordDictionary` | 🟢 T1 |
+| Classification | SIT rule-package read | `Get-DlpSensitiveInformationTypeRulePackage` | 🟢 T1 |
+| Ops/visibility | DLP alerts / detection reports | `Get-DlpDetailReport`, `Get-DlpDetectionsReport` | 🟢 T1 |
+| Classification | **Custom SIT** write (rule-package XML) | `*-DlpSensitiveInformationTypeRulePackage` | 🟡 T2 |
+| Classification | **EDM** (exact data match) schemas | `*-DlpEdmSchema` (XML) | 🟡 T2 |
+| AI DLP | Entra-registered / Foundry app DLP | `New-DlpComplianceRule` + `Locations` | 🟡 T2 |
+| AI capture | Prompt/response collection policies | `*-FeatureConfiguration` | 🟡 T2 |
+| Endpoint | Tenant endpoint settings (service-domain / app / USB / printer groups) | — (discovery needed) | 🟡 T2 / ❓ |
+| Classification | Trainable classifiers | — (no API) | 🔴 T3 |
+| AI DLP | Network Data Security (SASE/SSE) | portal/partner Security Store | 🔴 T3 |
+
+**Cheapest high-value next picks (all 🟢 T1):** **auto-labeling** (completes the label story), then **keyword dictionaries**, then DLP rule condition/action richness. *(Basic CRUD now closed: `get_dlp_rule` + DLP/label delete all shipped.)*
 
 ---
 
@@ -62,50 +96,28 @@ No new plane, no XML, no new auth.
 > test → enforce lifecycle — `Set-DlpCompliancePolicy -Mode`. Was the
 > highest-value missing write; now done. Remaining DLP write gaps below.
 
-### Sensitivity-label write (create / modify)
-- **Surface:** `New-Label`, `Set-Label`, `Remove-Label` (Security & Compliance PowerShell).
-- **Why now:** same `Connect-IPPSSession` session the DLP tools already use. A
-  minimal create is just `-DisplayName -Name -Tooltip`; the large surface of
-  encryption, content-marking, watermarking and Teams-protection parameters is
-  all **optional** and can be layered in incrementally.
-- **Proposed tools:** `create_sensitivity_label`, `set_sensitivity_label`.
-- **Watch-outs:** the cmdlet is enormous (100+ parameters). Start with a lean,
-  documented subset and expand on demand rather than mirroring every switch.
-
-### Sensitivity-label publishing
-- **Surface:** `New-LabelPolicy`, `Set-LabelPolicy`, `Remove-LabelPolicy` (Security & Compliance PowerShell).
-- **Why it matters:** a created label does **nothing** until it's published to
-  users via a label policy. Creation without publishing is a half-feature — pair
-  these with the write tools above.
-- **`New-LabelPolicy` params:** mandatory `-Name` and `-Labels` (which labels the
-  policy publishes); targeting via `-ExchangeLocation` and `-ModernGroupLocation`
-  (M365 Groups). Behaviour (mandatory labeling, default label, etc.) is set
-  through an `-AdvancedSettings` **hashtable**, not named switches.
-- **Design notes (differ from DLP — don't copy the DLP shapes blindly):**
-  - **Create = publish. There is no separate publish/run step** — `New-LabelPolicy`
-    publishes on completion; there's no draft state and no republish verb. The
-    only delay is automatic client-side replication (minutes up to ~24h), which
-    is not an admin action. The tool's success message must not imply *instant*
-    end-user availability.
-  - **No test/enforce mode.** Unlike DLP there is no `Mode` dial for label
-    policies. Posture behaviour lives in `-AdvancedSettings`, e.g.
-    `@{OutlookDefaultLabel="General"}`, `@{TeamworkMandatory="True"}` — the same
-    settings `get_label_policy_settings` already *reads*.
-  - **Only Exchange + M365 Group targeting is real.** On `New-LabelPolicy`,
-    `-SharePointLocation` / `-OneDriveLocation` / `-SkypeLocation` are documented
-    "reserved for internal Microsoft use" — expose `-ExchangeLocation` and
-    `-ModernGroupLocation` (plus `All`), *not* the SharePoint/OneDrive params the
-    DLP tools use.
-- **Proposed tools:** `create_label_policy`, `set_label_policy` (with an
-  `advanced_settings` map surfacing mandatory-labeling / default-label /
-  downgrade-justification).
+### ✅ Sensitivity-label write & publish — shipped
+- **Tools:** `create_sensitivity_label` / `set_sensitivity_label` (`New-/Set-Label`);
+  `create_label_policy` / `set_label_policy` (`New-/Set-LabelPolicy`).
+- **Full settings surface shipped** (not a lean subset): encryption (incl.
+  per-identity `rights_definitions`), content marking (header/footer/watermark),
+  container protection (Groups/Teams/SharePoint), Teams meeting protection —
+  exposed as category-grouped objects flattened to the flat `New-Label` params.
+- **Publishing:** create = publish (no separate step); behaviour via
+  `advanced_settings` hashtable; targets Exchange + M365 Groups.
+- **Note:** labels are now hybrid — read via Graph, **write via PowerShell**
+  (writes need `pwsh` + IPPSSession, unlike the Graph-only reads).
+- **✅ Delete — shipped:** `remove_sensitivity_label`, `remove_label_policy`.
+- **Remaining label gap:** **auto-labeling**
+  (`New-/Set-/Remove-AutoSensitivityLabelPolicy` + `...Rule`) — see coverage below.
 
 ### Round out DLP write
-- **Surface:** `Remove-DlpCompliancePolicy`, `Remove-DlpComplianceRule`.
 - **✅ Done — `set_dlp_policy`:** change an existing policy's mode
-  (`Set-DlpCompliancePolicy -Mode`), closing the test → enforce loop. Shipped.
-- **Remaining gap:** no **delete** for either policies or rules.
-- **Proposed tools:** `remove_dlp_policy`, `remove_dlp_rule`.
+  (`Set-DlpCompliancePolicy -Mode`), closing the test → enforce loop.
+- **✅ Done — delete:** `remove_dlp_policy`, `remove_dlp_rule`
+  (`Remove-DlpCompliancePolicy` / `-DlpComplianceRule`, `-Confirm:$false`).
+- **✅ Done — rule read:** `get_dlp_rule` (single rule, or all rules in a policy).
+- **Remaining gap:** policy **location** editing (`set_dlp_policy` = mode/comment only).
 
 ### DLP surface coverage (locations & enforcement planes)
 The traditional and endpoint surfaces are done; the rest ride the *same*

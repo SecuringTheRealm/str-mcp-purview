@@ -2,7 +2,11 @@
 // Reads use Get-DlpCompliance*, writes use New-/Set-DlpCompliance*.
 
 import { powershell } from "./powershell.js";
-import { truncate, shortDate, asArray, bulletFields } from "./format.js";
+import { truncate, shortDate, asArray, bulletFields, formatWriteResult } from "./format.js";
+
+// Re-exported so index.js can keep calling dlp.formatWriteResult; the shared
+// implementation lives in format.js (also used by the label write tools).
+export { formatWriteResult };
 
 // Trimmed property sets keep ConvertTo-Json output small and free of the deep,
 // occasionally self-referential graph that Exchange policy objects carry.
@@ -36,6 +40,32 @@ export async function listRules(policy) {
   return asArray(await powershell.invoke("Get-DlpComplianceRule", params, RULE_PROPS));
 }
 
+export async function getRule(identity) {
+  return asArray(await powershell.invoke("Get-DlpComplianceRule", { Identity: identity }, RULE_PROPS))[0];
+}
+
+// ---- client-side list filters ----------------------------------------------
+// Applied after fetch to trim output. Kept pure (and separate from the data
+// functions, which are reused unfiltered elsewhere) so they are unit-testable.
+
+/** @param {{ mode?: string, workload?: string }} [f] mode: exact; workload: substring. */
+export function filterPolicies(policies, f = {}) {
+  return policies.filter((p) => {
+    if (f.mode && String(p.Mode ?? "").toLowerCase() !== f.mode.toLowerCase()) return false;
+    if (f.workload && !String(p.Workload ?? "").toLowerCase().includes(f.workload.toLowerCase())) return false;
+    return true;
+  });
+}
+
+/** @param {{ disabledOnly?: boolean, blockingOnly?: boolean }} [f] */
+export function filterRules(rules, f = {}) {
+  return rules.filter((r) => {
+    if (f.disabledOnly && r.Disabled !== true) return false;
+    if (f.blockingOnly && r.BlockAccess !== true) return false;
+    return true;
+  });
+}
+
 export async function createPolicy(params) {
   // params: { Name, Mode?, Locations?, EnforcementPlanes?, Comment?, ExchangeLocation?, ... }
   return powershell.invoke("New-DlpCompliancePolicy", params, POLICY_PROPS);
@@ -55,6 +85,16 @@ export async function createRule(params) {
 export async function setRule(params) {
   // params: { Identity, ...properties to change }
   return powershell.invoke("Set-DlpComplianceRule", params, RULE_PROPS);
+}
+
+// Deletes: pass { Identity, Confirm: false } so the cmdlet's built-in
+// confirmation prompt does not hang the non-interactive pwsh session.
+export async function removePolicy(params) {
+  return powershell.invoke("Remove-DlpCompliancePolicy", params);
+}
+
+export async function removeRule(params) {
+  return powershell.invoke("Remove-DlpComplianceRule", params);
 }
 
 // ---- Copilot DLP helpers ---------------------------------------------------
@@ -98,9 +138,14 @@ export function copilotCondition({ sits, labels } = {}) {
  * no confirmed enumeration API (see README roadmap).
  * @param {"all"|"custom"} [scope]
  */
-export async function listSensitiveInformationTypes(scope = "all") {
-  const sits = asArray(await powershell.invoke("Get-DlpSensitiveInformationType", {}, SIT_PROPS));
-  return scope === "custom" ? sits.filter((s) => s.Publisher !== BUILTIN_SIT_PUBLISHER) : sits;
+export async function listSensitiveInformationTypes(scope = "all", nameContains = null) {
+  let sits = asArray(await powershell.invoke("Get-DlpSensitiveInformationType", {}, SIT_PROPS));
+  if (scope === "custom") sits = sits.filter((s) => s.Publisher !== BUILTIN_SIT_PUBLISHER);
+  if (nameContains) {
+    const needle = nameContains.toLowerCase();
+    sits = sits.filter((s) => String(s.Name ?? "").toLowerCase().includes(needle));
+  }
+  return sits;
 }
 
 // ---- formatters ------------------------------------------------------------
@@ -158,6 +203,35 @@ export function formatRuleList(rules) {
   return `${rules.length} DLP rule(s):\n${lines.join("\n")}`;
 }
 
+export function formatRuleDetail(r) {
+  if (!r) return "DLP rule not found.";
+  const lines = [
+    `# DLP rule: ${r.Name}`,
+    bulletFields(r, [
+      ["Guid", "GUID"],
+      ["ParentPolicyName", "Policy"],
+      ["Disabled", "Disabled"],
+      ["Mode", "Mode"],
+      ["Priority", "Priority"],
+      ["BlockAccess", "Block access"],
+      ["BlockAccessScope", "Block-access scope"],
+      ["NotifyUser", "Notify users"],
+      ["GenerateAlert", "Generate alert"],
+      ["ReportSeverityLevel", "Severity"],
+    ]),
+  ];
+  const sits = sitName(r.ContentContainsSensitiveInformation);
+  if (sits) lines.push(`- **Detected sensitive info:**${sits}`);
+  return lines.filter(Boolean).join("\n");
+}
+
+/** Full detail for several rules (e.g. every rule in a policy), one block each. */
+export function formatRuleDetails(rules, policy) {
+  if (!rules.length) return `No DLP rules found${policy ? ` in policy "${policy}"` : ""}.`;
+  const intro = `${rules.length} DLP rule(s)${policy ? ` in policy: ${policy}` : ""}:`;
+  return [intro, ...rules.map((r) => formatRuleDetail(r))].join("\n\n");
+}
+
 function sitLine(s) {
   const kind = s.Publisher !== BUILTIN_SIT_PUBLISHER ? "custom" : "built-in";
   return `${truncate(s.Name, 44).padEnd(44)}  ${kind.padEnd(9)}  ${truncate(s.Description, 60) || "-"}`;
@@ -171,18 +245,3 @@ export function formatSitList(sits, scope = "all") {
   return `${sits.length} ${label}:\n${sits.map(sitLine).join("\n")}`;
 }
 
-export function formatWriteResult(verb, obj) {
-  const item = asArray(obj)[0] ?? obj;
-  if (!item) return `${verb} completed.`;
-  const id = item.Name ?? item.Identity ?? item.Guid ?? "(unknown)";
-  return `${verb} succeeded: ${id}\n${bulletFields(item, [
-    ["Guid", "GUID"],
-    ["Policy", "Policy"],
-    ["ParentPolicyName", "Policy"],
-    ["Mode", "Mode"],
-    ["Enabled", "Enabled"],
-    ["Disabled", "Disabled"],
-    ["Priority", "Priority"],
-    ["BlockAccess", "Block access"],
-  ])}`;
-}

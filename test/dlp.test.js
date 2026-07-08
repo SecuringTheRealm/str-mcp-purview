@@ -67,6 +67,86 @@ test("listRules", async (t) => {
   });
 });
 
+test("getRule", async (t) => {
+  await t.test("passes Identity through and returns the first match", async () => {
+    invokeCalls.length = 0;
+    invokeImpl = async () => [{ Name: "R1" }];
+    const result = await dlp.getRule("R1");
+    assert.deepEqual(result, { Name: "R1" });
+    assert.equal(invokeCalls.at(-1).cmdlet, "Get-DlpComplianceRule");
+    assert.deepEqual(invokeCalls.at(-1).params, { Identity: "R1" });
+  });
+
+  await t.test("returns undefined when nothing matches", async () => {
+    invokeImpl = async () => null;
+    assert.equal(await dlp.getRule("missing"), undefined);
+  });
+});
+
+test("filterPolicies", async (t) => {
+  const policies = [
+    { Name: "P1", Mode: "Enable", Workload: "Exchange" },
+    { Name: "P2", Mode: "TestWithNotifications", Workload: "EndpointDevices" },
+  ];
+  await t.test("returns all when no filter", () => {
+    assert.equal(dlp.filterPolicies(policies).length, 2);
+  });
+  await t.test("filters by exact mode (case-insensitive)", () => {
+    const out = dlp.filterPolicies(policies, { mode: "enable" });
+    assert.deepEqual(out.map((p) => p.Name), ["P1"]);
+  });
+  await t.test("filters by workload substring", () => {
+    const out = dlp.filterPolicies(policies, { workload: "endpoint" });
+    assert.deepEqual(out.map((p) => p.Name), ["P2"]);
+  });
+});
+
+test("filterRules", async (t) => {
+  const rules = [
+    { Name: "R1", Disabled: true, BlockAccess: false },
+    { Name: "R2", Disabled: false, BlockAccess: true },
+  ];
+  await t.test("disabledOnly keeps only disabled", () => {
+    assert.deepEqual(dlp.filterRules(rules, { disabledOnly: true }).map((r) => r.Name), ["R1"]);
+  });
+  await t.test("blockingOnly keeps only blocking", () => {
+    assert.deepEqual(dlp.filterRules(rules, { blockingOnly: true }).map((r) => r.Name), ["R2"]);
+  });
+});
+
+test("formatRuleDetail", async (t) => {
+  await t.test("reports not found for a nullish rule", () => {
+    assert.equal(dlp.formatRuleDetail(null), "DLP rule not found.");
+  });
+
+  await t.test("renders a heading, bullet fields, and detected SITs", () => {
+    const out = dlp.formatRuleDetail({
+      Name: "R1",
+      ParentPolicyName: "P1",
+      Priority: 0,
+      BlockAccess: true,
+      ContentContainsSensitiveInformation: [{ groups: [{ sensitivetypes: [{ name: "Credit Card Number" }] }] }],
+    });
+    assert.match(out, /^# DLP rule: R1/);
+    assert.match(out, /- \*\*Policy:\*\* P1/);
+    assert.match(out, /- \*\*Block access:\*\* true/);
+    assert.match(out, /Detected sensitive info:.*Credit Card Number/);
+  });
+});
+
+test("formatRuleDetails", async (t) => {
+  await t.test("reports none found, scoped to the policy name", () => {
+    assert.equal(dlp.formatRuleDetails([], "P1"), 'No DLP rules found in policy "P1".');
+  });
+
+  await t.test("renders an intro count plus a detail block per rule", () => {
+    const out = dlp.formatRuleDetails([{ Name: "R1", Priority: 0 }, { Name: "R2", Priority: 1 }], "P1");
+    assert.match(out, /^2 DLP rule\(s\) in policy: P1:/);
+    assert.match(out, /# DLP rule: R1/);
+    assert.match(out, /# DLP rule: R2/);
+  });
+});
+
 test("createPolicy / setPolicy / createRule / setRule", async (t) => {
   await t.test("createPolicy invokes New-DlpCompliancePolicy with the given params", async () => {
     invokeCalls.length = 0;
@@ -94,6 +174,19 @@ test("createPolicy / setPolicy / createRule / setRule", async (t) => {
     await dlp.setRule({ Identity: "Rule1", Disabled: true });
     assert.equal(invokeCalls.at(-1).cmdlet, "Set-DlpComplianceRule");
     assert.deepEqual(invokeCalls.at(-1).params, { Identity: "Rule1", Disabled: true });
+  });
+
+  await t.test("removePolicy invokes Remove-DlpCompliancePolicy with Confirm:false", async () => {
+    invokeImpl = async () => null;
+    await dlp.removePolicy({ Identity: "P1", Confirm: false });
+    assert.equal(invokeCalls.at(-1).cmdlet, "Remove-DlpCompliancePolicy");
+    assert.deepEqual(invokeCalls.at(-1).params, { Identity: "P1", Confirm: false });
+  });
+
+  await t.test("removeRule invokes Remove-DlpComplianceRule", async () => {
+    invokeImpl = async () => null;
+    await dlp.removeRule({ Identity: "Rule1", Confirm: false });
+    assert.equal(invokeCalls.at(-1).cmdlet, "Remove-DlpComplianceRule");
   });
 });
 
@@ -240,6 +333,16 @@ test("listSensitiveInformationTypes", async (t) => {
   await t.test("returns an empty array when there are no SITs", async () => {
     invokeImpl = async () => null;
     assert.deepEqual(await dlp.listSensitiveInformationTypes(), []);
+  });
+
+  await t.test("filters by name_contains (case-insensitive substring)", async () => {
+    invokeImpl = async () => [
+      { Name: "Credit Card Number", Publisher: "Microsoft Corporation" },
+      { Name: "EU Debit Card Number", Publisher: "Microsoft Corporation" },
+      { Name: "U.S. Social Security Number (SSN)", Publisher: "Microsoft Corporation" },
+    ];
+    const result = await dlp.listSensitiveInformationTypes("all", "card");
+    assert.deepEqual(result.map((s) => s.Name), ["Credit Card Number", "EU Debit Card Number"]);
   });
 });
 

@@ -44,3 +44,26 @@ export function asArray(value) {
   if (value == null) return [];
   return Array.isArray(value) ? value : [value];
 }
+
+/**
+ * Render the result of a write cmdlet (New-/Set-*) as a compact confirmation.
+ * Shared by the DLP and label write tools — the whitelisted fields degrade
+ * gracefully when a given object doesn't carry them.
+ */
+export function formatWriteResult(verb, obj) {
+  const item = asArray(obj)[0] ?? obj;
+  if (!item) return `${verb} completed.`;
+  const id = item.Name ?? item.DisplayName ?? item.Identity ?? item.Guid ?? "(unknown)";
+  return `${verb} succeeded: ${id}\n${bulletFields(item, [
+    ["Guid", "GUID"],
+    ["DisplayName", "Display name"],
+    ["ParentId", "Parent"],
+    ["Policy", "Policy"],
+    ["ParentPolicyName", "Policy"],
+    ["Mode", "Mode"],
+    ["Enabled", "Enabled"],
+    ["Disabled", "Disabled"],
+    ["Priority", "Priority"],
+    ["BlockAccess", "Block access"],
+  ])}`;
+}

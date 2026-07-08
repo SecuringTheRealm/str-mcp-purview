@@ -45,15 +45,24 @@ test("MCP server over stdio", async (t) => {
         "create_dlp_rule",
         "create_endpoint_dlp_policy",
         "create_endpoint_dlp_rule",
+        "create_label_policy",
+        "create_sensitivity_label",
         "get_dlp_policy",
+        "get_dlp_rule",
         "get_label_policy_settings",
         "get_sensitivity_label",
         "list_dlp_policies",
         "list_dlp_rules",
         "list_sensitive_information_types",
         "list_sensitivity_labels",
+        "remove_dlp_policy",
+        "remove_dlp_rule",
+        "remove_label_policy",
+        "remove_sensitivity_label",
         "set_dlp_policy",
         "set_dlp_rule",
+        "set_label_policy",
+        "set_sensitivity_label",
       ]);
       for (const tool of tools) {
         assert.equal(typeof tool.description, "string");
@@ -69,12 +78,21 @@ test("MCP server over stdio", async (t) => {
       const byName = Object.fromEntries(tools.map((tool) => [tool.name, tool]));
       assert.deepEqual(byName.get_sensitivity_label.inputSchema.required, ["label_id"]);
       assert.deepEqual(byName.get_dlp_policy.inputSchema.required, ["identity"]);
+      assert.equal(byName.get_dlp_rule.inputSchema.required, undefined);
       assert.deepEqual(byName.create_dlp_policy.inputSchema.required, ["name"]);
       assert.deepEqual(byName.create_dlp_rule.inputSchema.required, ["name", "policy"]);
       assert.deepEqual(byName.create_copilot_dlp_policy.inputSchema.required, ["name"]);
       assert.deepEqual(byName.create_copilot_dlp_rule.inputSchema.required, ["name", "policy"]);
       assert.deepEqual(byName.create_endpoint_dlp_policy.inputSchema.required, ["name"]);
       assert.deepEqual(byName.create_endpoint_dlp_rule.inputSchema.required, ["name", "policy", "endpoint_restrictions"]);
+      assert.deepEqual(byName.create_sensitivity_label.inputSchema.required, ["name", "display_name", "tooltip"]);
+      assert.deepEqual(byName.set_sensitivity_label.inputSchema.required, ["identity"]);
+      assert.deepEqual(byName.create_label_policy.inputSchema.required, ["name", "labels"]);
+      assert.deepEqual(byName.set_label_policy.inputSchema.required, ["identity"]);
+      assert.deepEqual(byName.remove_dlp_policy.inputSchema.required, ["identity"]);
+      assert.deepEqual(byName.remove_dlp_rule.inputSchema.required, ["identity"]);
+      assert.deepEqual(byName.remove_sensitivity_label.inputSchema.required, ["identity"]);
+      assert.deepEqual(byName.remove_label_policy.inputSchema.required, ["identity"]);
       assert.deepEqual(byName.set_dlp_policy.inputSchema.required, ["identity"]);
       assert.deepEqual(byName.set_dlp_rule.inputSchema.required, ["identity"]);
       assert.equal(byName.list_dlp_rules.inputSchema.required, undefined);
@@ -96,6 +114,14 @@ test("MCP server over stdio", async (t) => {
       assert.equal(message.role, "user");
       assert.match(message.content.text, /list_dlp_policies/);
       assert.match(message.content.text, /list_dlp_rules/);
+    });
+  });
+
+  await t.test("get_dlp_rule with neither identity nor policy is a scoped error", async () => {
+    await withClient(async (client) => {
+      const result = await client.callTool({ name: "get_dlp_rule", arguments: {} });
+      assert.equal(result.isError, true);
+      assert.match(result.content[0].text, /either 'identity'.*or 'policy'/);
     });
   });
 

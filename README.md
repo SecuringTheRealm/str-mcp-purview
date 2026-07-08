@@ -110,9 +110,12 @@ flagged and only exist on the PowerShell plane.
 #### `list_sensitivity_labels`
 
 - **Business:** See every sensitivity label the signed-in admin can view — the *Public / Internal / Confidential*-style classifications your org uses to tag data. This is the starting point: it hands you the label ID you need to inspect any single label in detail.
-- **Technical:** `GET /beta/security/informationProtection/sensitivityLabels` via Microsoft Graph, as the delegated admin. Returns one compact line per label: label ID, sensitivity order, active/inactive state, name (and parent, if a sub-label), and a truncated description.
+- **Technical:** `GET /beta/security/informationProtection/sensitivityLabels` via Microsoft Graph, as the delegated admin. Returns one compact line per label: label ID, sensitivity order, active/inactive state, name (and parent, if a sub-label), and a truncated description. Optional filters are applied client-side.
 
-*No parameters.*
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `active` | boolean | Optional — only active (`true`) or inactive (`false`) labels |
+| `parent` | string | Optional — only sub-labels of this parent (name or GUID) |
 
 ---
 
@@ -136,14 +139,88 @@ flagged and only exist on the PowerShell plane.
 
 ---
 
+### Sensitivity labels — write & publish (Security & Compliance PowerShell)
+
+Labels are a **hybrid** domain: read through Graph (above), but **written** through PowerShell — Graph exposes no label create/publish surface. These four tools cover the full label lifecycle.
+
+> **Prerequisite:** unlike the label *read* tools (Graph only), these **writes require PowerShell 7+ and an IPPSSession sign-in** (same bridge as the DLP tools). A Graph read may briefly lag a PowerShell write (replication).
+
+The two label tools share a category-grouped settings surface — `encryption`, `content_marking` (header/footer/watermark), `site_and_group_protection` (Groups/Teams/SharePoint containers), and `teams_protection` (meetings) — passed as nested objects and flattened to the underlying `New-/Set-Label` parameters.
+
+#### `create_sensitivity_label`
+
+- **Business:** Define a new classification — its name, tooltip, and optionally the protection it applies (encryption, visual markings, container/Teams controls). A created label is invisible to users until published (see `create_label_policy`).
+- **Technical:** **Write.** `New-Label`. Required: `name`, `display_name`, `tooltip`. Optional `parent_id` (sub-label) + the shared settings groups.
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `name` | string | Unique internal label name |
+| `display_name` | string | Name shown to users |
+| `tooltip` | string | Guidance shown at classification time |
+| `parent_id` | string | Optional — parent label to make this a sub-label |
+| `encryption` | object | `enabled`, `protection_type`, `do_not_forward`, `encrypt_only`, `offline_access_days`, `rights_definitions[]` |
+| `content_marking` | object | `header` / `footer` / `watermark`, each with `enabled`, `text`, `font_color`, `font_size`, `alignment`/`layout` |
+| `site_and_group_protection` | object | `enabled`, `privacy`, `allow_guest_access`, `external_sharing_control`, `access_level` |
+| `teams_protection` | object | `enabled`, `allow_meeting_chat`, `allowed_presenters`, `end_to_end_encryption`, `prevent_copy` |
+| `comment` | string | Admin comment |
+
+#### `set_sensitivity_label`
+
+- **Business:** Change an existing label — rename, retint the tooltip, or adjust any of its protection settings — without recreating it.
+- **Technical:** **Write.** `Set-Label -Identity <name|GUID>`. Takes `identity` plus any of the same settings groups above; only supplied fields change.
+
+#### `create_label_policy`
+
+- **Business:** **Publish** labels so users can actually apply them, and set behaviour like mandatory labelling or a default label. Creation *is* publishing — there's no separate step; changes replicate to clients automatically (can take up to ~24h).
+- **Technical:** **Write.** `New-LabelPolicy`. Targets Exchange mailboxes and/or Microsoft 365 Groups; behaviour goes in `advanced_settings`.
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `name` | string | Unique policy name |
+| `labels` | string[] | Labels to publish (names or GUIDs) |
+| `exchange_location` | string[] | Mailboxes to publish to, or `["All"]` |
+| `modern_group_location` | string[] | Microsoft 365 Groups (SMTP addresses) |
+| `advanced_settings` | object | Key→value behaviour, e.g. `{"OutlookDefaultLabel":"General","TeamworkMandatory":"True"}` |
+| `comment` | string | Optional description/comment |
+
+#### `set_label_policy`
+
+- **Business:** Adjust a live publish policy — add or remove which labels it publishes, or change behaviour settings.
+- **Technical:** **Write.** `Set-LabelPolicy -Identity <name|GUID>` with `add_labels[]` / `remove_labels[]` / `advanced_settings` / `comment`.
+
+#### `remove_sensitivity_label`
+
+- **Business:** Permanently delete a sensitivity label. Review dependent policies first — deleting a published label affects users.
+- **Technical:** **Destructive write.** `Remove-Label -Identity <name|GUID> -Confirm:$false`.
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `identity` | string | Sensitivity label name or GUID to delete |
+
+#### `remove_label_policy`
+
+- **Business:** Permanently delete a publish policy, unpublishing its labels from users.
+- **Technical:** **Destructive write.** `Remove-LabelPolicy -Identity <name|GUID> -Confirm:$false`.
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `identity` | string | Label policy name or GUID to delete |
+
+> **Write operations change tenant configuration.** Test against a non-production tenant first.
+
+---
+
 ### DLP policies & rules — Security & Compliance PowerShell
 
 #### `list_dlp_policies`
 
 - **Business:** Get an at-a-glance inventory of the tenant's Data Loss Prevention policies — the containers that decide *where* protection applies (Exchange, SharePoint, etc.) and whether each is live-enforcing, in test, or off.
-- **Technical:** `Get-DlpCompliancePolicy` in the persistent `Connect-IPPSSession` bridge. Output is trimmed to key properties (name, mode/state, workload, creation date) — one line per policy — to stay token-lean.
+- **Technical:** `Get-DlpCompliancePolicy` in the persistent `Connect-IPPSSession` bridge. Output is trimmed to key properties (name, mode/state, workload, creation date) — one line per policy — to stay token-lean. Optional filters are applied client-side.
 
-*No parameters.*
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `mode` | string | Optional — only policies in this exact mode (`Enable`, `TestWithNotifications`, `TestWithoutNotifications`, `Disable`) |
+| `workload` | string | Optional — only policies whose workload contains this text (e.g. `Endpoint`, `Exchange`) |
 
 ---
 
@@ -166,6 +243,20 @@ flagged and only exist on the PowerShell plane.
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `policy` | string | Optional — restrict to rules in this DLP policy (name or GUID) |
+| `disabled_only` | boolean | Optional — only disabled rules |
+| `blocking_only` | boolean | Optional — only rules that block access |
+
+---
+
+#### `get_dlp_rule`
+
+- **Business:** Get the *full* detail behind a rule — its exact conditions, block scope, notified users, alert severity — either for one rule you've identified, or for every rule in a policy when reviewing that policy in depth. (`list_dlp_rules` gives the one-line overview; this gives the deep dive.)
+- **Technical:** `Get-DlpComplianceRule`. Provide **exactly one** of `identity` (one rule) or `policy` (full detail for all rules in it). Supplying neither is a scoped error. Bulk detail is deliberately bounded to a single policy to avoid dumping every rule into context.
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `identity` | string | A single DLP rule name or GUID — returns that one rule |
+| `policy` | string | A DLP policy name or GUID — returns full detail for every rule in it |
 
 ---
 
@@ -228,6 +319,26 @@ flagged and only exist on the PowerShell plane.
 | `generate_alert` | boolean | Set alert generation |
 | `priority` | integer | Set rule priority |
 | `disabled` | boolean | Enable (`false`) or disable (`true`) the rule |
+
+---
+
+#### `remove_dlp_policy`
+
+- **Business:** Permanently delete a DLP policy and every rule inside it.
+- **Technical:** **Destructive write.** `Remove-DlpCompliancePolicy -Identity <name|GUID> -Confirm:$false`.
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `identity` | string | DLP policy name or GUID to delete |
+
+#### `remove_dlp_rule`
+
+- **Business:** Permanently delete a single DLP rule, leaving its parent policy intact.
+- **Technical:** **Destructive write.** `Remove-DlpComplianceRule -Identity <name|GUID> -Confirm:$false`.
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `identity` | string | DLP rule name or GUID to delete |
 
 ---
 
@@ -324,6 +435,7 @@ Maps to the 4 Copilot protections: block sensitive prompts *(SITs + `block_proce
 | Parameter | Type | Description |
 |-----------|------|--------------|
 | `scope` | string | `all` (default) or `custom` — restrict to the org's own SITs |
+| `name_contains` | string | Optional — only SITs whose name contains this text (case-insensitive) |
 
 ## Prompts
 
