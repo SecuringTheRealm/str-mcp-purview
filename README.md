@@ -100,17 +100,26 @@ There are two data sources in use and it is worth understanding the difference:
 
 ## Tools
 
-### `list_sensitivity_labels`
+Every tool below is documented two ways: **Business** — why an admin would reach
+for it and what they get back — and **Technical** — the exact Graph endpoint or
+PowerShell cmdlet it runs and how. Tools are grouped by data plane; writes are
+flagged and only exist on the PowerShell plane.
 
-Queries Microsoft Graph. Returns one line per label: label ID, sensitivity order, active/inactive state, name (and parent, if any), and a short description. Use this first to find the `label_id` needed by `get_sensitivity_label`.
+### Sensitivity labels — Microsoft Graph (read-only)
+
+#### `list_sensitivity_labels`
+
+- **Business:** See every sensitivity label the signed-in admin can view — the *Public / Internal / Confidential*-style classifications your org uses to tag data. This is the starting point: it hands you the label ID you need to inspect any single label in detail.
+- **Technical:** `GET /beta/security/informationProtection/sensitivityLabels` via Microsoft Graph, as the delegated admin. Returns one compact line per label: label ID, sensitivity order, active/inactive state, name (and parent, if a sub-label), and a truncated description.
 
 *No parameters.*
 
 ---
 
-### `get_sensitivity_label`
+#### `get_sensitivity_label`
 
-Queries Microsoft Graph for a single label and returns a structured markdown report: sensitivity order, active state, colour, tooltip, description, and parent label.
+- **Business:** Drill into one label to understand exactly how it presents to users — its colour, the tooltip guidance shown at classification time, its position in the sensitivity hierarchy, and whether it's currently active.
+- **Technical:** `GET /beta/security/informationProtection/sensitivityLabels/{id}` via Microsoft Graph. Returns a structured markdown report: sensitivity order, active state, colour, tooltip, description, and parent label.
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
@@ -118,25 +127,30 @@ Queries Microsoft Graph for a single label and returns a structured markdown rep
 
 ---
 
-### `get_label_policy_settings`
+#### `get_label_policy_settings`
 
-Queries Microsoft Graph for the Information Protection label policy settings that apply to the signed-in admin. Returns markdown covering whether labeling is mandatory, whether downgrade justification is required, and the default label.
-
-*No parameters.*
-
----
-
-### `list_dlp_policies`
-
-Queries Security & Compliance PowerShell (`Get-DlpCompliancePolicy`). Returns one line per policy: name, mode/state, workload, and creation date. Output is trimmed to key properties to keep it lean.
+- **Business:** Understand the *rules of engagement* for labelling in the tenant — is applying a label mandatory, must users justify downgrading a label, and what label applies by default? These settings govern day-to-day user behaviour, not the labels themselves.
+- **Technical:** `GET /beta/security/informationProtection/labelPolicySettings` via Microsoft Graph, scoped to the signed-in admin. Returns markdown covering mandatory labelling, downgrade-justification requirement, and the default label ID.
 
 *No parameters.*
 
 ---
 
-### `get_dlp_policy`
+### DLP policies & rules — Security & Compliance PowerShell
 
-Queries `Get-DlpCompliancePolicy` for a single policy and returns a structured markdown report: GUID, mode, enabled state, workload, type, comment, and creation metadata.
+#### `list_dlp_policies`
+
+- **Business:** Get an at-a-glance inventory of the tenant's Data Loss Prevention policies — the containers that decide *where* protection applies (Exchange, SharePoint, etc.) and whether each is live-enforcing, in test, or off.
+- **Technical:** `Get-DlpCompliancePolicy` in the persistent `Connect-IPPSSession` bridge. Output is trimmed to key properties (name, mode/state, workload, creation date) — one line per policy — to stay token-lean.
+
+*No parameters.*
+
+---
+
+#### `get_dlp_policy`
+
+- **Business:** Inspect one DLP policy in full — its enforcement mode, which workloads it covers, who created it and when — before deciding whether to change or enforce it.
+- **Technical:** `Get-DlpCompliancePolicy -Identity <name|GUID>`. Returns a structured markdown report: GUID, mode, enabled state, workload, type, comment, and creation metadata.
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
@@ -144,9 +158,10 @@ Queries `Get-DlpCompliancePolicy` for a single policy and returns a structured m
 
 ---
 
-### `list_dlp_rules`
+#### `list_dlp_rules`
 
-Queries `Get-DlpComplianceRule`. Returns one line per rule: name, enabled/disabled state, priority, parent policy, whether it blocks access, and any detected sensitive information types.
+- **Business:** See the *actual protection logic* — the rules inside your policies that define what sensitive content is detected and what happens on a match (block, alert, notify). This is where you spot rules that detect data but take no action, or rules left disabled.
+- **Technical:** `Get-DlpComplianceRule`, optionally filtered by policy. One line per rule: name, enabled/disabled state, priority, parent policy, block-access flag, and detected sensitive information types.
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
@@ -154,9 +169,10 @@ Queries `Get-DlpComplianceRule`. Returns one line per rule: name, enabled/disabl
 
 ---
 
-### `create_dlp_policy`
+#### `create_dlp_policy`
 
-**Write operation.** Creates a new DLP policy container (`New-DlpCompliancePolicy`). Add rules afterwards with `create_dlp_rule`. Prefer a Test mode before enabling enforcement.
+- **Business:** Stand up a new DLP control — the empty container that says *which locations* to protect. Best practice is to create it in a **Test mode** first so you can see what it would catch before it blocks anything; add the detection rules afterwards with `create_dlp_rule`.
+- **Technical:** **Write.** `New-DlpCompliancePolicy` with the supplied name, mode, comment, and location parameters. Returns the created policy's key fields.
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
@@ -169,9 +185,23 @@ Queries `Get-DlpComplianceRule`. Returns one line per rule: name, enabled/disabl
 
 ---
 
-### `create_dlp_rule`
+#### `set_dlp_policy`
 
-**Write operation.** Creates a DLP rule inside a policy (`New-DlpComplianceRule`). A rule needs at least one condition and one action.
+- **Business:** Change an existing policy's enforcement level — most importantly, **promote a policy from Test to enforcement** once you're confident it behaves correctly (or pull it back to test / turn it off). This closes the test → enforce lifecycle that `create_dlp_policy` begins.
+- **Technical:** **Write.** `Set-DlpCompliancePolicy -Identity <name|GUID>` with `-Mode` (and optionally `-Comment`). Only supplied fields change. *(Note: this is the modern unified-DLP cmdlet, not the retired Exchange-only `Set-DlpPolicy`.)*
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `identity` | string | DLP policy name or GUID to modify |
+| `mode` | string | New mode: `Enable` (enforce), `TestWithNotifications`, `TestWithoutNotifications`, `Disable` |
+| `comment` | string | Optional — replace the policy's description/comment |
+
+---
+
+#### `create_dlp_rule`
+
+- **Business:** Add the actual detection logic to a policy — "if content contains *these* sensitive information types, then block / alert / notify." A policy does nothing until it has at least one rule.
+- **Technical:** **Write.** `New-DlpComplianceRule` inside the named policy. Maps the supplied sensitive information types into the `ContentContainsSensitiveInformation` condition and the block/notify/alert/priority actions.
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
@@ -185,9 +215,10 @@ Queries `Get-DlpComplianceRule`. Returns one line per rule: name, enabled/disabl
 
 ---
 
-### `set_dlp_rule`
+#### `set_dlp_rule`
 
-**Write operation.** Modifies an existing DLP rule (`Set-DlpComplianceRule`). Only the fields you supply change.
+- **Business:** Tune an existing rule without recreating it — flip on blocking, change who gets notified, adjust priority, or disable the rule entirely while you investigate.
+- **Technical:** **Write.** `Set-DlpComplianceRule -Identity <name|GUID>`. Only the fields you supply change.
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
@@ -198,13 +229,18 @@ Queries `Get-DlpComplianceRule`. Returns one line per rule: name, enabled/disabl
 | `priority` | integer | Set rule priority |
 | `disabled` | boolean | Enable (`false`) or disable (`true`) the rule |
 
+---
+
 > **Write operations change tenant configuration.** Run them against a test tenant first, and prefer creating policies in a Test mode before enabling enforcement.
 
 ---
 
-### `list_sensitive_information_types`
+### Sensitive information types — Security & Compliance PowerShell (read-only)
 
-Queries `Get-DlpSensitiveInformationType`. Returns one line per SIT: name, built-in/custom, and a short description. Custom SITs are identified by `Publisher` being something other than `Microsoft Corporation` (per Microsoft's documented convention). Use this to find the exact SIT name needed by `create_dlp_rule`'s `sensitive_information_types` parameter. Does **not** include trainable classifiers — see Roadmap.
+#### `list_sensitive_information_types`
+
+- **Business:** Look up the exact catalogue of detectable data types — built-in Microsoft ones (credit card numbers, SSNs, passport numbers…) plus any custom types your org has defined. You need the precise name from here to reference a type when building a DLP rule.
+- **Technical:** `Get-DlpSensitiveInformationType`. One line per SIT: name, built-in/custom, and a short description. Custom SITs are identified by `Publisher` being something other than `Microsoft Corporation` (per Microsoft's documented convention). Does **not** include trainable classifiers — see [ROADMAP.md](ROADMAP.md).
 
 | Parameter | Type | Description |
 |-----------|------|--------------|
@@ -266,12 +302,20 @@ The PowerShell bridge passes model-supplied parameters as a base64-encoded JSON 
 
 ## Roadmap
 
-- Insider Risk Management (Microsoft Graph Security API — alerts/incidents, advanced hunting)
-- Communications Compliance policies
-- DSPM / DSPM for AI posture
-- Sensitivity-label **write** (publish/apply) and retention labels
-- Trainable classifier catalog (resource + tool, mirroring the SIT catalog) — **pending**: unlike SITs, there is no confirmed, documented PowerShell cmdlet or Graph API for enumerating trainable classifiers (built-in or custom). Management currently appears to be Purview-portal-only. Before implementing, verify against a live tenant session (e.g. `Get-Command *Classifier*` / `*TrainableClassifier*` post-`Connect-IPPSSession`) rather than assuming an API surface.
+Planned work is tracked in **[ROADMAP.md](ROADMAP.md)**, organised by feasibility
+tier — whether a documented API surface actually exists to build on. In brief:
+
+- 🟢 **Ready next:** sensitivity-label **write** and publishing (`New-/Set-Label`, `*-LabelPolicy`), plus DLP delete (`Remove-DlpCompliancePolicy/Rule`). *Changing a DLP policy's mode (`set_dlp_policy`) is now shipped.*
+- 🟡 **Feasible but complex:** custom SIT write (requires hand-built rule-package XML), retention labels.
+- 🔴 **Blocked:** trainable classifier catalog — no confirmed cmdlet or Graph API; portal-only today, needs live-tenant discovery first.
+- 🔭 **New planes:** Insider Risk Management, Communications Compliance, DSPM / DSPM for AI.
+
+See [ROADMAP.md](ROADMAP.md) for the full breakdown, the surface each item rests on, and the contribution rules.
+
+## Credits
+
+Developed by **[Securing the Realm](https://securing.quest/)** — Chris Lloyd-Jones (**Sealjay**) & Josh McDonald (**KnowledgeRatio**).
 
 ## License
 
-MIT — see [LICENCE](LICENCE).
+MIT — see [LICENCE](LICENCE). If you fork, redistribute, or build on this, please retain the attribution above.

@@ -48,6 +48,7 @@ test("MCP server over stdio", async (t) => {
         "list_dlp_rules",
         "list_sensitive_information_types",
         "list_sensitivity_labels",
+        "set_dlp_policy",
         "set_dlp_rule",
       ]);
       for (const tool of tools) {
@@ -66,6 +67,7 @@ test("MCP server over stdio", async (t) => {
       assert.deepEqual(byName.get_dlp_policy.inputSchema.required, ["identity"]);
       assert.deepEqual(byName.create_dlp_policy.inputSchema.required, ["name"]);
       assert.deepEqual(byName.create_dlp_rule.inputSchema.required, ["name", "policy"]);
+      assert.deepEqual(byName.set_dlp_policy.inputSchema.required, ["identity"]);
       assert.deepEqual(byName.set_dlp_rule.inputSchema.required, ["identity"]);
       assert.equal(byName.list_dlp_rules.inputSchema.required, undefined);
     });

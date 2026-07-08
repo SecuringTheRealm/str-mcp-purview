@@ -67,13 +67,20 @@ test("listRules", async (t) => {
   });
 });
 
-test("createPolicy / createRule / setRule", async (t) => {
+test("createPolicy / setPolicy / createRule / setRule", async (t) => {
   await t.test("createPolicy invokes New-DlpCompliancePolicy with the given params", async () => {
     invokeCalls.length = 0;
     invokeImpl = async () => ({ Name: "New1" });
     await dlp.createPolicy({ Name: "New1" });
     assert.equal(invokeCalls.at(-1).cmdlet, "New-DlpCompliancePolicy");
     assert.deepEqual(invokeCalls.at(-1).params, { Name: "New1" });
+  });
+
+  await t.test("setPolicy invokes Set-DlpCompliancePolicy with the given params", async () => {
+    invokeImpl = async () => ({ Name: "P1", Mode: "Enable" });
+    await dlp.setPolicy({ Identity: "P1", Mode: "Enable" });
+    assert.equal(invokeCalls.at(-1).cmdlet, "Set-DlpCompliancePolicy");
+    assert.deepEqual(invokeCalls.at(-1).params, { Identity: "P1", Mode: "Enable" });
   });
 
   await t.test("createRule invokes New-DlpComplianceRule with the given params", async () => {

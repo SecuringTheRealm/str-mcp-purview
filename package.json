@@ -3,6 +3,12 @@
   "version": "1.0.0",
   "description": "Local MCP server for Microsoft Purview data security — sensitivity labels (Microsoft Graph) and DLP policies (Security & Compliance PowerShell), for use by coding agents.",
   "type": "module",
+  "author": "Securing the Realm (https://securing.quest/) — Chris Lloyd-Jones (Sealjay) & Josh McDonald (KnowledgeRatio)",
+  "homepage": "https://securing.quest/",
+  "contributors": [
+    "Chris Lloyd-Jones (Sealjay)",
+    "Josh McDonald (KnowledgeRatio)"
+  ],
   "main": "index.js",
   "bin": {
     "str-mcp-purview": "index.js"

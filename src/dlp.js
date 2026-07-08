@@ -41,6 +41,12 @@ export async function createPolicy(params) {
   return powershell.invoke("New-DlpCompliancePolicy", params, POLICY_PROPS);
 }
 
+export async function setPolicy(params) {
+  // params: { Identity, Mode?, Comment?, ... } — used to flip a policy between
+  // a Test mode and Enable (enforce), or back. Only supplied fields change.
+  return powershell.invoke("Set-DlpCompliancePolicy", params, POLICY_PROPS);
+}
+
 export async function createRule(params) {
   // params: { Name, Policy, ContentContainsSensitiveInformation?, BlockAccess?, NotifyUser?, ... }
   return powershell.invoke("New-DlpComplianceRule", params, RULE_PROPS);

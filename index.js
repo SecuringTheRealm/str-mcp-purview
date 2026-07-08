@@ -1,6 +1,10 @@
 #!/usr/bin/env node
 // str-mcp-purview — local MCP server for Microsoft Purview data security.
 //
+// Developed by Securing the Realm (https://securing.quest/):
+//   Chris Lloyd-Jones (Sealjay) & Josh McDonald (KnowledgeRatio).
+// Licensed under MIT — this attribution notice must be retained (see LICENCE).
+//
 // Two planes, as required by the current Purview developer surface:
 //   * Microsoft Graph (beta) — sensitivity label discovery (read).
 //   * Security & Compliance PowerShell — DLP policy/rule CRUD (read + write),
@@ -114,6 +118,25 @@ const TOOLS = [
     },
   },
   {
+    name: "set_dlp_policy",
+    description:
+      "Modify an existing DLP policy (Set-DlpCompliancePolicy). Primary use: change a policy's mode to move it between a Test mode and enforcement (Enable), or back. Only supplied fields change. WRITE operation — this changes tenant configuration.",
+    inputSchema: {
+      type: "object",
+      required: ["identity"],
+      properties: {
+        identity: { type: "string", description: "DLP policy name or GUID to modify" },
+        mode: {
+          type: "string",
+          enum: ["Enable", "TestWithNotifications", "TestWithoutNotifications", "Disable"],
+          description:
+            "New policy mode. Enable = enforce; TestWithNotifications/TestWithoutNotifications = test; Disable = turn off.",
+        },
+        comment: { type: "string", description: "Optional: replace the policy's description/comment" },
+      },
+    },
+  },
+  {
     name: "create_dlp_rule",
     description:
       "Create a DLP rule inside a policy (New-DlpComplianceRule). A rule needs at least one condition and one action. WRITE operation.",
@@ -208,6 +231,13 @@ async function dispatch(name, args) {
       if (args.sharepoint_location) params.SharePointLocation = args.sharepoint_location;
       if (args.onedrive_location) params.OneDriveLocation = args.onedrive_location;
       return text(dlp.formatWriteResult("Create DLP policy", await dlp.createPolicy(params)));
+    }
+
+    case "set_dlp_policy": {
+      const params = { Identity: args.identity };
+      if (args.mode) params.Mode = args.mode;
+      if (args.comment) params.Comment = args.comment;
+      return text(dlp.formatWriteResult("Set DLP policy", await dlp.setPolicy(params)));
     }
 
     case "create_dlp_rule": {
