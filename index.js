@@ -261,6 +261,64 @@ const TOOLS = [
     },
   },
   {
+    name: "create_copilot_dlp_policy",
+    description:
+      "Create a DLP policy scoped to Microsoft 365 Copilot & Copilot Chat — controls what Copilot may process or ground responses on. Add rules with create_copilot_dlp_rule. WRITE operation.",
+    inputSchema: {
+      type: "object",
+      required: ["name"],
+      properties: {
+        name: { type: "string", description: "Unique policy name" },
+        user_scope: {
+          type: "array",
+          items: { type: "string" },
+          description: "Users the policy applies to — email/GUID, or ['All'] (default).",
+        },
+        mode: {
+          type: "string",
+          enum: ["Enable", "TestWithNotifications", "TestWithoutNotifications", "Disable"],
+          description: "Policy mode (default Enable). Prefer a Test mode first.",
+        },
+        comment: { type: "string", description: "Optional description/comment" },
+      },
+    },
+  },
+  {
+    name: "create_copilot_dlp_rule",
+    description:
+      "Create a Microsoft 365 Copilot DLP rule inside a Copilot-scoped policy. Detects sensitive information types OR sensitivity labels (not both in one rule) and restricts Copilot from processing the content or from using external web grounding. WRITE operation.",
+    inputSchema: {
+      type: "object",
+      required: ["name", "policy"],
+      properties: {
+        name: { type: "string", description: "Unique rule name" },
+        policy: { type: "string", description: "Parent Copilot DLP policy name or GUID" },
+        sensitive_information_types: {
+          type: "array",
+          items: { type: "string" },
+          description: "Condition: SITs to detect in prompts/content, e.g. ['Credit Card Number']. Mutually exclusive with sensitivity_labels.",
+        },
+        sensitivity_labels: {
+          type: "array",
+          items: { type: "string" },
+          description: "Condition: sensitivity-label GUIDs whose labeled files/emails Copilot must not process. Mutually exclusive with sensitive_information_types.",
+        },
+        action: {
+          type: "string",
+          enum: ["block_processing", "block_web_search"],
+          description:
+            "block_processing (default): Copilot won't process the matching content. block_web_search: Copilot won't use external web grounding for sensitive prompts (SIT condition only).",
+        },
+        notify_user: {
+          type: "array",
+          items: { type: "string" },
+          description: "Action: notify these users (email addresses).",
+        },
+        priority: { type: "integer", description: "Rule priority (lower runs first)" },
+      },
+    },
+  },
+  {
     name: "list_sensitive_information_types",
     description:
       "List Sensitive Information Types (SITs) visible to the tenant via Security & Compliance PowerShell: built-in Microsoft types and any custom types the org has created. Use this to find the exact SIT name needed by create_dlp_rule's sensitive_information_types parameter. Does not include trainable classifiers (a separate classification mechanism).",
@@ -364,6 +422,33 @@ async function dispatch(name, args) {
       if (args.generate_alert != null) params.GenerateAlert = args.generate_alert;
       if (args.priority != null) params.Priority = args.priority;
       return text(dlp.formatWriteResult("Create endpoint DLP rule", await dlp.createRule(params)));
+    }
+
+    case "create_copilot_dlp_policy": {
+      const params = {
+        Name: args.name,
+        Locations: dlp.copilotLocations(args.user_scope),
+        EnforcementPlanes: ["CopilotExperiences"],
+      };
+      if (args.mode) params.Mode = args.mode;
+      if (args.comment) params.Comment = args.comment;
+      return text(dlp.formatWriteResult("Create Copilot DLP policy", await dlp.createPolicy(params)));
+    }
+
+    case "create_copilot_dlp_rule": {
+      const params = {
+        Name: args.name,
+        Policy: args.policy,
+        ContentContainsSensitiveInformation: dlp.copilotCondition({
+          sits: args.sensitive_information_types,
+          labels: args.sensitivity_labels,
+        }),
+      };
+      if (args.action === "block_web_search") params.RestrictWebGrounding = true;
+      else params.RestrictAccess = [{ setting: "ExcludeContentProcessing", value: "Block" }];
+      if (args.notify_user?.length) params.NotifyUser = args.notify_user;
+      if (args.priority != null) params.Priority = args.priority;
+      return text(dlp.formatWriteResult("Create Copilot DLP rule", await dlp.createRule(params)));
     }
 
     case "list_sensitive_information_types": {

@@ -57,6 +57,40 @@ export async function setRule(params) {
   return powershell.invoke("Set-DlpComplianceRule", params, RULE_PROPS);
 }
 
+// ---- Copilot DLP helpers ---------------------------------------------------
+// Microsoft 365 Copilot DLP rides the same New-DlpCompliancePolicy/Rule cmdlets;
+// only the policy scoping (a Locations JSON string) and the label condition shape
+// differ. Both stay in hashtable/array land the bridge already marshals.
+
+// Well-known Microsoft 365 Copilot & Copilot Chat DLP location (Workload
+// "Applications"), from Microsoft's New-DlpCompliancePolicy Copilot example.
+// VERIFY against a live tenant before relying on it.
+const COPILOT_LOCATION_ID = "470f2276-e011-4e9d-a6ec-20768be3a4b0";
+
+/** Build the -Locations JSON string that scopes a DLP policy to Microsoft 365 Copilot. */
+export function copilotLocations(userScope = ["All"]) {
+  const scope = userScope?.length ? userScope : ["All"];
+  const Inclusions = scope.map((id) =>
+    id === "All" ? { Type: "Tenant", Identity: "All" } : { Type: "User", Identity: id }
+  );
+  return JSON.stringify([{ Workload: "Applications", Location: COPILOT_LOCATION_ID, Inclusions }]);
+}
+
+/**
+ * Build the ContentContainsSensitiveInformation condition (a PswsHashtable[]) for a
+ * Copilot rule from either SITs or sensitivity-label GUIDs. Microsoft disallows both
+ * conditions in one rule, so exactly one must be supplied.
+ * @param {{ sits?: string[], labels?: string[] }} input
+ */
+export function copilotCondition({ sits, labels } = {}) {
+  if (sits?.length && labels?.length) {
+    throw new Error("A Copilot rule cannot combine sensitive information types and sensitivity labels — use one condition per rule.");
+  }
+  if (sits?.length) return sits.map((n) => ({ Name: n }));
+  if (labels?.length) return [{ groups: [{ operator: "Or", labels: labels.map((g) => ({ name: g, type: "Sensitivity" })) }] }];
+  throw new Error("A Copilot rule needs a condition: sensitive_information_types or sensitivity_labels.");
+}
+
 /**
  * List Sensitive Information Types (SITs) visible to the tenant: built-in
  * Microsoft types and any custom types the org has created. Does NOT include

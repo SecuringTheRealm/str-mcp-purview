@@ -271,6 +271,45 @@ These two tools are kept **separate** from the traditional DLP tools above so th
 
 ---
 
+### Microsoft 365 Copilot DLP — Security & Compliance PowerShell
+
+Kept **separate** from traditional DLP so the Copilot-specific conditions/actions don't bloat the common workflow. These govern what **Microsoft 365 Copilot and Copilot Chat** may process or ground responses on — protecting against sensitive prompts and sensitive/labeled content being used by Copilot. Same `*-DlpCompliancePolicy`/`*-DlpComplianceRule` cmdlets; the policy is scoped to Copilot via a `Locations` template + `EnforcementPlanes=("CopilotExperiences")`, and label conditions stay in hashtable form (no raw JSON).
+
+> Covers 3 of the 4 documented Copilot protections. **Not yet covered:** blocking external-email grounding (preview) — pending condition-parameter discovery. The Copilot location GUID and `RestrictAccess` setting string are encoded from Microsoft's docs and should be verified against a live tenant.
+
+#### `create_copilot_dlp_policy`
+
+- **Business:** Bring Microsoft 365 Copilot into DLP scope for a set of users — the container for rules that decide what Copilot can process or ground on. Prefer a Test mode first.
+- **Technical:** **Write.** `New-DlpCompliancePolicy` with a `Locations` JSON scoping to the Copilot location + `EnforcementPlanes=("CopilotExperiences")`.
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `name` | string | Unique policy name |
+| `user_scope` | string[] | Users the policy applies to — email/GUID, or `["All"]` (default) |
+| `mode` | string | `Enable`, `TestWithNotifications`, `TestWithoutNotifications`, `Disable` (default `Enable`) |
+| `comment` | string | Optional description/comment |
+
+---
+
+#### `create_copilot_dlp_rule`
+
+- **Business:** Define the Copilot protection — either "if a prompt contains these sensitive info types, don't process it (or don't use web search)" or "if content has these sensitivity labels, exclude it from Copilot grounding." One condition type per rule.
+- **Technical:** **Write.** `New-DlpComplianceRule`. SITs → `ContentContainsSensitiveInformation @{Name}`; labels → the same param with a `groups`/`labels` hashtable. Action maps to `RestrictAccess` (ExcludeContentProcessing) or `RestrictWebGrounding $true`.
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `name` | string | Unique rule name |
+| `policy` | string | Parent Copilot DLP policy name or GUID |
+| `sensitive_information_types` | string[] | Condition — SITs to detect. **Mutually exclusive** with `sensitivity_labels` |
+| `sensitivity_labels` | string[] | Condition — sensitivity-label GUIDs to exclude from Copilot. **Mutually exclusive** with `sensitive_information_types` |
+| `action` | string | `block_processing` (default) or `block_web_search` (SIT condition only) |
+| `notify_user` | string[] | Action — notify these users |
+| `priority` | integer | Rule priority (lower runs first) |
+
+Maps to the 4 Copilot protections: block sensitive prompts *(SITs + `block_processing`)*, block sensitive web grounding *(SITs + `block_web_search`)*, exclude labeled content *(labels + `block_processing`)*. External-email grounding is not yet exposed.
+
+---
+
 > **Write operations change tenant configuration.** Run them against a test tenant first, and prefer creating policies in a Test mode before enabling enforcement.
 
 ---

@@ -39,6 +39,8 @@ test("MCP server over stdio", async (t) => {
       const { tools } = await client.listTools();
       const names = tools.map((tool) => tool.name).sort();
       assert.deepEqual(names, [
+        "create_copilot_dlp_policy",
+        "create_copilot_dlp_rule",
         "create_dlp_policy",
         "create_dlp_rule",
         "create_endpoint_dlp_policy",
@@ -69,6 +71,8 @@ test("MCP server over stdio", async (t) => {
       assert.deepEqual(byName.get_dlp_policy.inputSchema.required, ["identity"]);
       assert.deepEqual(byName.create_dlp_policy.inputSchema.required, ["name"]);
       assert.deepEqual(byName.create_dlp_rule.inputSchema.required, ["name", "policy"]);
+      assert.deepEqual(byName.create_copilot_dlp_policy.inputSchema.required, ["name"]);
+      assert.deepEqual(byName.create_copilot_dlp_rule.inputSchema.required, ["name", "policy"]);
       assert.deepEqual(byName.create_endpoint_dlp_policy.inputSchema.required, ["name"]);
       assert.deepEqual(byName.create_endpoint_dlp_rule.inputSchema.required, ["name", "policy", "endpoint_restrictions"]);
       assert.deepEqual(byName.set_dlp_policy.inputSchema.required, ["identity"]);

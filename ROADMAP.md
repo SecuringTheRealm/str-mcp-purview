@@ -128,12 +128,16 @@ location params, enforcement planes, and action shapes.
      `EnforcementPlanes=("Application")`, block prompts by SIT. *(App honours it by
      integrating the Purview `processContent` Graph API — developer's job, out of
      our scope.)* **Note:** `Entra` enforcement plane is deprecated → use `Application`.
-  2. **Microsoft 365 Copilot & Copilot Chat.** Location `CopilotExperiences`. Four
+  2. **✅ Microsoft 365 Copilot & Copilot Chat — shipped (phase 1).**
+     `create_copilot_dlp_policy` + `create_copilot_dlp_rule`. Covers 3 of 4
      protections: block sensitive prompts (`RestrictAccess` ExcludeContentProcessing),
-     block external web search (`RestrictWebGrounding`), exclude labeled content
-     (needs `AdvancedRule` for the label condition), block external-email grounding
-     (preview). Constraint: **SIT and label conditions can't share a rule** — one
-     rule each. Has a portal fallback, so lower priority than (1).
+     block web grounding (`RestrictWebGrounding`), exclude labeled content. Label
+     conditions use a `ContentContainsSensitiveInformation` **hashtable** with a
+     `labels` group — **no AdvancedRule JSON needed** (that's only for cross-
+     condition-type Boolean logic). Constraint enforced: SIT and label conditions
+     can't share a rule. *Deferred:* external-email grounding (preview) — needs
+     condition-param discovery. *Verify on live tenant:* Copilot location GUID,
+     `ExcludeContentProcessing` setting string.
   3. **Prompt/response capture (DSPM for AI).** A **separate cmdlet family** —
      `New`/`Set`/`Get`/`Remove-FeatureConfiguration` with a `ScenarioConfig` JSON.
      Enables capturing prompts/responses for enterprise & unmanaged AI apps. New

@@ -97,6 +97,41 @@ test("createPolicy / setPolicy / createRule / setRule", async (t) => {
   });
 });
 
+test("copilotLocations", async (t) => {
+  await t.test("defaults to a tenant-wide (All) inclusion", () => {
+    const loc = JSON.parse(dlp.copilotLocations());
+    assert.equal(loc[0].Workload, "Applications");
+    assert.deepEqual(loc[0].Inclusions, [{ Type: "Tenant", Identity: "All" }]);
+  });
+
+  await t.test("maps specific users to User inclusions", () => {
+    const loc = JSON.parse(dlp.copilotLocations(["a@contoso.com", "b@contoso.com"]));
+    assert.deepEqual(loc[0].Inclusions, [
+      { Type: "User", Identity: "a@contoso.com" },
+      { Type: "User", Identity: "b@contoso.com" },
+    ]);
+  });
+});
+
+test("copilotCondition", async (t) => {
+  await t.test("maps SITs to a Name array (same shape as create_dlp_rule)", () => {
+    assert.deepEqual(dlp.copilotCondition({ sits: ["Credit Card Number"] }), [{ Name: "Credit Card Number" }]);
+  });
+
+  await t.test("maps labels to a groups/labels condition", () => {
+    const cond = dlp.copilotCondition({ labels: ["guid-1"] });
+    assert.deepEqual(cond, [{ groups: [{ operator: "Or", labels: [{ name: "guid-1", type: "Sensitivity" }] }] }]);
+  });
+
+  await t.test("throws when both SITs and labels are supplied", () => {
+    assert.throws(() => dlp.copilotCondition({ sits: ["x"], labels: ["y"] }), /cannot combine/);
+  });
+
+  await t.test("throws when no condition is supplied", () => {
+    assert.throws(() => dlp.copilotCondition({}), /needs a condition/);
+  });
+});
+
 test("formatPolicyList", async (t) => {
   await t.test("reports no policies when the list is empty", () => {
     assert.equal(dlp.formatPolicyList([]), "No DLP policies found.");
