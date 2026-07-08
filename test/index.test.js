@@ -46,6 +46,7 @@ test("MCP server over stdio", async (t) => {
         "get_sensitivity_label",
         "list_dlp_policies",
         "list_dlp_rules",
+        "list_sensitive_information_types",
         "list_sensitivity_labels",
         "set_dlp_rule",
       ]);
@@ -99,6 +100,24 @@ test("MCP server over stdio", async (t) => {
   await t.test("rejects an unknown prompt name", async () => {
     await withClient(async (client) => {
       await assert.rejects(() => client.getPrompt({ name: "not-a-real-prompt", arguments: {} }));
+    });
+  });
+
+  await t.test("lists the SIT catalog resources", async () => {
+    await withClient(async (client) => {
+      const { resources } = await client.listResources();
+      const uris = resources.map((r) => r.uri).sort();
+      assert.deepEqual(uris, ["purview://sit-catalog", "purview://sit-catalog/custom"]);
+      for (const resource of resources) {
+        assert.equal(resource.mimeType, "text/markdown");
+        assert.ok(resource.description.length > 0);
+      }
+    });
+  });
+
+  await t.test("rejects an unknown resource URI", async () => {
+    await withClient(async (client) => {
+      await assert.rejects(() => client.readResource({ uri: "purview://not-a-real-resource" }));
     });
   });
 

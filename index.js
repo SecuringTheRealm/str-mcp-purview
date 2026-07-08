@@ -18,6 +18,8 @@ import {
   ListToolsRequestSchema,
   ListPromptsRequestSchema,
   GetPromptRequestSchema,
+  ListResourcesRequestSchema,
+  ReadResourceRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 
 import * as labels from "./src/labels.js";
@@ -155,6 +157,21 @@ const TOOLS = [
       },
     },
   },
+  {
+    name: "list_sensitive_information_types",
+    description:
+      "List Sensitive Information Types (SITs) visible to the tenant via Security & Compliance PowerShell: built-in Microsoft types and any custom types the org has created. Use this to find the exact SIT name needed by create_dlp_rule's sensitive_information_types parameter. Does not include trainable classifiers (a separate classification mechanism).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        scope: {
+          type: "string",
+          enum: ["all", "custom"],
+          description: "Restrict to the org's custom (non-Microsoft) SITs only. Default: all.",
+        },
+      },
+    },
+  },
 ];
 
 // ---- tool dispatch ---------------------------------------------------------
@@ -213,6 +230,11 @@ async function dispatch(name, args) {
       if (args.priority != null) params.Priority = args.priority;
       if (args.disabled != null) params.Disabled = args.disabled;
       return text(dlp.formatWriteResult("Set DLP rule", await dlp.setRule(params)));
+    }
+
+    case "list_sensitive_information_types": {
+      const scope = args.scope === "custom" ? "custom" : "all";
+      return text(dlp.formatSitList(await dlp.listSensitiveInformationTypes(scope), scope));
     }
 
     default:
@@ -281,11 +303,43 @@ Then produce a report with these sections:
   }
 }
 
+// ---- resources ---------------------------------------------------------
+
+// Resources are user/host-attached context (as opposed to tools, which the
+// model calls itself), so the same SIT catalog data is also exposed here for
+// a user to attach directly when reasoning about the tenant's environment.
+const RESOURCES = [
+  {
+    uri: "purview://sit-catalog",
+    name: "Sensitive Information Types (all)",
+    description:
+      "All sensitive information types visible to the tenant — built-in Microsoft types and custom types the org has created. Does not include trainable classifiers.",
+    mimeType: "text/markdown",
+  },
+  {
+    uri: "purview://sit-catalog/custom",
+    name: "Sensitive Information Types (custom only)",
+    description: "Only the org's custom sensitive information types (Publisher other than Microsoft Corporation).",
+    mimeType: "text/markdown",
+  },
+];
+
+async function readResource(uri) {
+  switch (uri) {
+    case "purview://sit-catalog":
+      return dlp.formatSitList(await dlp.listSensitiveInformationTypes("all"), "all");
+    case "purview://sit-catalog/custom":
+      return dlp.formatSitList(await dlp.listSensitiveInformationTypes("custom"), "custom");
+    default:
+      throw new Error(`Unknown resource: ${uri}`);
+  }
+}
+
 // ---- server wiring ---------------------------------------------------------
 
 const server = new Server(
-  { name: "str-mcp-purview", version: "2.0.0" },
-  { capabilities: { tools: {}, prompts: {} } }
+  { name: "str-mcp-purview", version: "1.0.0" },
+  { capabilities: { tools: {}, prompts: {}, resources: {} } }
 );
 
 server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }));
@@ -301,6 +355,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
 server.setRequestHandler(ListPromptsRequestSchema, async () => ({ prompts: PROMPTS }));
 server.setRequestHandler(GetPromptRequestSchema, async (request) => getPrompt(request.params.name));
+
+server.setRequestHandler(ListResourcesRequestSchema, async () => ({ resources: RESOURCES }));
+server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
+  const { uri } = request.params;
+  return { contents: [{ uri, mimeType: "text/markdown", text: await readResource(uri) }] };
+});
 
 const transport = new StdioServerTransport();
 await server.connect(transport);

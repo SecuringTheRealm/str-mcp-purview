@@ -8,7 +8,7 @@ const graphGetCalls = [];
 let graphGetImpl = async () => ({ value: [] });
 
 mock.module("../src/graph.js", {
-  exports: {
+  namedExports: {
     graphGet: async (path, params) => {
       graphGetCalls.push({ path, params });
       return graphGetImpl(path, params);

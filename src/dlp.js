@@ -15,6 +15,11 @@ const RULE_PROPS = [
   "Priority", "BlockAccess", "BlockAccessScope", "NotifyUser",
   "GenerateAlert", "ReportSeverityLevel", "ContentContainsSensitiveInformation",
 ];
+const SIT_PROPS = ["Name", "Id", "Publisher", "Description"];
+
+// Per Microsoft docs, custom SITs always report a Publisher other than this
+// value: https://learn.microsoft.com/purview/sit-create-a-custom-sensitive-information-type-in-scc-powershell
+const BUILTIN_SIT_PUBLISHER = "Microsoft Corporation";
 
 // ---- data access -----------------------------------------------------------
 
@@ -44,6 +49,18 @@ export async function createRule(params) {
 export async function setRule(params) {
   // params: { Identity, ...properties to change }
   return powershell.invoke("Set-DlpComplianceRule", params, RULE_PROPS);
+}
+
+/**
+ * List Sensitive Information Types (SITs) visible to the tenant: built-in
+ * Microsoft types and any custom types the org has created. Does NOT include
+ * trainable classifiers, which are a separate classification mechanism with
+ * no confirmed enumeration API (see README roadmap).
+ * @param {"all"|"custom"} [scope]
+ */
+export async function listSensitiveInformationTypes(scope = "all") {
+  const sits = asArray(await powershell.invoke("Get-DlpSensitiveInformationType", {}, SIT_PROPS));
+  return scope === "custom" ? sits.filter((s) => s.Publisher !== BUILTIN_SIT_PUBLISHER) : sits;
 }
 
 // ---- formatters ------------------------------------------------------------
@@ -99,6 +116,19 @@ export function formatRuleList(rules) {
   if (!rules.length) return "No DLP rules found.";
   const lines = rules.map(ruleLine);
   return `${rules.length} DLP rule(s):\n${lines.join("\n")}`;
+}
+
+function sitLine(s) {
+  const kind = s.Publisher !== BUILTIN_SIT_PUBLISHER ? "custom" : "built-in";
+  return `${truncate(s.Name, 44).padEnd(44)}  ${kind.padEnd(9)}  ${truncate(s.Description, 60) || "-"}`;
+}
+
+export function formatSitList(sits, scope = "all") {
+  if (!sits.length) {
+    return scope === "custom" ? "No custom sensitive information types found." : "No sensitive information types found.";
+  }
+  const label = scope === "custom" ? "custom sensitive information type(s)" : "sensitive information type(s)";
+  return `${sits.length} ${label}:\n${sits.map(sitLine).join("\n")}`;
 }
 
 export function formatWriteResult(verb, obj) {

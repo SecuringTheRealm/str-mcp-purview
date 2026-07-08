@@ -37,7 +37,7 @@ let spawnImpl = () => {
 };
 
 mock.module("node:child_process", {
-  exports: {
+  namedExports: {
     spawn: (...args) => spawnImpl(...args),
   },
 });

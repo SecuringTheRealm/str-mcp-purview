@@ -7,7 +7,7 @@
 [![Node](https://img.shields.io/badge/node-%3E%3D20-3178C6?logo=node.js&logoColor=ffffff)](https://nodejs.org/)
 [![MCP](https://img.shields.io/badge/MCP-Model_Context_Protocol-3178C6)](https://modelcontextprotocol.io/)
 
-This is a ground-up rewrite (v2). The original server targeted the **Azure Purview** data-catalog SDKs and returned mocked data. This version targets the **Microsoft 365 / Microsoft Purview compliance** surface with real API calls, designed for coding agents (Claude Code, VS Code / GitHub Copilot) running locally.
+This server targets the **Microsoft 365 / Microsoft Purview compliance** surface with real API calls, designed for coding agents (Claude Code, VS Code / GitHub Copilot) running locally.
 
 ## Why a hybrid design
 
@@ -20,7 +20,7 @@ The modern Purview developer surface is split across planes, and no single one c
 
 So this server is a **hybrid**: raw Microsoft Graph calls for labels, and a persistent PowerShell bridge (`ExchangeOnlineManagement` → `Get/New/Set-DlpCompliance*`) for DLP. Both act as the **delegated signed-in admin**, so every action honours that admin's Purview RBAC.
 
-> Scope of v1: **sensitivity labels (read)** and **DLP policies (read/write)**. Insider Risk Management, Communications Compliance, and DSPM are planned follow-ups.
+> Current scope: **sensitivity labels (read)** and **DLP policies (read/write)**. Insider Risk Management, Communications Compliance, and DSPM are planned follow-ups.
 
 ## Prerequisites
 
@@ -200,6 +200,16 @@ Queries `Get-DlpComplianceRule`. Returns one line per rule: name, enabled/disabl
 
 > **Write operations change tenant configuration.** Run them against a test tenant first, and prefer creating policies in a Test mode before enabling enforcement.
 
+---
+
+### `list_sensitive_information_types`
+
+Queries `Get-DlpSensitiveInformationType`. Returns one line per SIT: name, built-in/custom, and a short description. Custom SITs are identified by `Publisher` being something other than `Microsoft Corporation` (per Microsoft's documented convention). Use this to find the exact SIT name needed by `create_dlp_rule`'s `sensitive_information_types` parameter. Does **not** include trainable classifiers — see Roadmap.
+
+| Parameter | Type | Description |
+|-----------|------|--------------|
+| `scope` | string | `all` (default) or `custom` — restrict to the org's own SITs |
+
 ## Prompts
 
 Prompts are pre-defined workflows that chain multiple tool calls and instruct the model to produce a structured report. In VS Code they are available via the Copilot Chat prompt picker. Both are read-only analyses — they make no changes.
@@ -217,6 +227,15 @@ Full review of the tenant's DLP posture. Calls `list_dlp_policies` and `list_dlp
 Audit of sensitivity-label usage across DLP. Calls `list_sensitivity_labels`, `get_label_policy_settings`, and `list_dlp_rules`, then produces a report covering the label inventory, policy settings, which labels are (and are not) referenced by DLP rules, and recommendations.
 
 *No arguments.*
+
+## Resources
+
+Resources are user/host-attached context, distinct from tools: instead of the model calling them mid-reasoning, a user (or a host that supports it) attaches them directly to a conversation. Both resources below are backed by the same data as `list_sensitive_information_types`, live-queried on every read (no caching).
+
+| URI | Description |
+|-----|--------------|
+| `purview://sit-catalog` | All sensitive information types visible to the tenant — built-in and custom. |
+| `purview://sit-catalog/custom` | Only the org's custom sensitive information types. |
 
 ## Typical workflows
 
@@ -251,6 +270,7 @@ The PowerShell bridge passes model-supplied parameters as a base64-encoded JSON 
 - Communications Compliance policies
 - DSPM / DSPM for AI posture
 - Sensitivity-label **write** (publish/apply) and retention labels
+- Trainable classifier catalog (resource + tool, mirroring the SIT catalog) — **pending**: unlike SITs, there is no confirmed, documented PowerShell cmdlet or Graph API for enumerating trainable classifiers (built-in or custom). Management currently appears to be Purview-portal-only. Before implementing, verify against a live tenant session (e.g. `Get-Command *Classifier*` / `*TrainableClassifier*` post-`Connect-IPPSSession`) rather than assuming an API surface.
 
 ## License
 

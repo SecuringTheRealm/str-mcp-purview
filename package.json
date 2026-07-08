@@ -1,6 +1,6 @@
 {
   "name": "str-mcp-purview",
-  "version": "2.0.0",
+  "version": "1.0.0",
   "description": "Local MCP server for Microsoft Purview data security — sensitivity labels (Microsoft Graph) and DLP policies (Security & Compliance PowerShell), for use by coding agents.",
   "type": "module",
   "main": "index.js",

@@ -9,7 +9,7 @@ const invokeCalls = [];
 let invokeImpl = async () => null;
 
 mock.module("../src/powershell.js", {
-  exports: {
+  namedExports: {
     powershell: {
       invoke: async (cmdlet, params, selectProps) => {
         invokeCalls.push({ cmdlet, params, selectProps });
@@ -161,6 +161,63 @@ test("formatRuleList", async (t) => {
   await t.test("shows p? when Priority is missing", () => {
     const out = dlp.formatRuleList([{ Name: "R1" }]);
     assert.match(out, /p\?/);
+  });
+});
+
+test("listSensitiveInformationTypes", async (t) => {
+  await t.test("invokes Get-DlpSensitiveInformationType and returns everything for scope 'all'", async () => {
+    invokeCalls.length = 0;
+    invokeImpl = async () => [
+      { Name: "Credit Card Number", Publisher: "Microsoft Corporation" },
+      { Name: "Employee ID", Publisher: "Contoso" },
+    ];
+    const result = await dlp.listSensitiveInformationTypes("all");
+    assert.equal(result.length, 2);
+    assert.equal(invokeCalls.at(-1).cmdlet, "Get-DlpSensitiveInformationType");
+  });
+
+  await t.test("defaults to scope 'all' when not given", async () => {
+    invokeImpl = async () => [{ Name: "Credit Card Number", Publisher: "Microsoft Corporation" }];
+    const result = await dlp.listSensitiveInformationTypes();
+    assert.equal(result.length, 1);
+  });
+
+  await t.test("filters to non-Microsoft Publisher values for scope 'custom'", async () => {
+    invokeImpl = async () => [
+      { Name: "Credit Card Number", Publisher: "Microsoft Corporation" },
+      { Name: "Employee ID", Publisher: "Contoso" },
+      { Name: "Badge Number", Publisher: "" },
+    ];
+    const result = await dlp.listSensitiveInformationTypes("custom");
+    assert.deepEqual(
+      result.map((s) => s.Name),
+      ["Employee ID", "Badge Number"]
+    );
+  });
+
+  await t.test("returns an empty array when there are no SITs", async () => {
+    invokeImpl = async () => null;
+    assert.deepEqual(await dlp.listSensitiveInformationTypes(), []);
+  });
+});
+
+test("formatSitList", async (t) => {
+  await t.test("reports no SITs found for scope 'all' when the list is empty", () => {
+    assert.equal(dlp.formatSitList([], "all"), "No sensitive information types found.");
+  });
+
+  await t.test("reports no custom SITs found for scope 'custom' when the list is empty", () => {
+    assert.equal(dlp.formatSitList([], "custom"), "No custom sensitive information types found.");
+  });
+
+  await t.test("labels built-in vs custom based on Publisher", () => {
+    const out = dlp.formatSitList([
+      { Name: "Credit Card Number", Publisher: "Microsoft Corporation", Description: "Detects card numbers" },
+      { Name: "Employee ID", Publisher: "Contoso", Description: "Detects employee IDs" },
+    ]);
+    assert.match(out, /2 sensitive information type\(s\):/);
+    assert.match(out, /Credit Card Number.*built-in/);
+    assert.match(out, /Employee ID.*custom/);
   });
 });
 

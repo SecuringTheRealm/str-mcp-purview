@@ -17,7 +17,7 @@ class FakeCredential {
 }
 
 mock.module("@azure/identity", {
-  exports: {
+  namedExports: {
     InteractiveBrowserCredential: FakeCredential,
     DeviceCodeCredential: FakeCredential,
   },
