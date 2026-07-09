@@ -226,8 +226,8 @@ The two label tools share a category-grouped settings surface — `encryption`, 
 
 #### `get_dlp_policy`
 
-- **Business:** Inspect one DLP policy in full — its enforcement mode, which workloads it covers, who created it and when — before deciding whether to change or enforce it.
-- **Technical:** `Get-DlpCompliancePolicy -Identity <name|GUID>`. Returns a structured markdown report: GUID, mode, enabled state, workload, type, comment, and creation metadata.
+- **Business:** Inspect one DLP policy in full — its enforcement mode, exactly which locations/workloads it targets (and exclusions), who created it and when — before deciding whether to change or enforce it.
+- **Technical:** `Get-DlpCompliancePolicy -Identity <name|GUID>`. Detail reads select a **richer property set** than the list tools, so output stays lean in bulk but deep on demand. Report covers GUID, mode, enabled state, workload, type, comment, creation metadata, and a summarised **Locations** line (per-workload scope + exclusions).
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
@@ -250,8 +250,8 @@ The two label tools share a category-grouped settings surface — `encryption`, 
 
 #### `get_dlp_rule`
 
-- **Business:** Get the *full* detail behind a rule — its exact conditions, block scope, notified users, alert severity — either for one rule you've identified, or for every rule in a policy when reviewing that policy in depth. (`list_dlp_rules` gives the one-line overview; this gives the deep dive.)
-- **Technical:** `Get-DlpComplianceRule`. Provide **exactly one** of `identity` (one rule) or `policy` (full detail for all rules in it). Supplying neither is a scoped error. Bulk detail is deliberately bounded to a single policy to avoid dumping every rule into context.
+- **Business:** Get the *full* detail behind a rule — conditions, block scope, notified users, alert severity, **exceptions**, restrict-access actions, stop-processing, policy-tip — either for one rule you've identified, or for every rule in a policy when reviewing that policy in depth. (`list_dlp_rules` gives the one-line overview; this gives the deep dive.)
+- **Technical:** `Get-DlpComplianceRule`. Provide **exactly one** of `identity` (one rule) or `policy` (all rules in it). Supplying neither is a scoped error. The single-rule path selects a **richer property set** (exceptions, `RestrictAccess`, `StopPolicyProcessing`, incident report, policy tip), summarised compactly; the bulk path stays lean and is bounded to one policy. *(Exact `ExceptIf*`/location property names should be confirmed against a live tenant.)*
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
@@ -439,21 +439,32 @@ Maps to the 4 Copilot protections: block sensitive prompts *(SITs + `block_proce
 
 ## Prompts
 
-Prompts are pre-defined workflows that chain multiple tool calls and instruct the model to produce a structured report. In VS Code they are available via the Copilot Chat prompt picker. Both are read-only analyses — they make no changes.
+Prompts are pre-defined workflows that chain multiple tool calls and instruct the model to produce a structured report. In VS Code they are available via the Copilot Chat prompt picker. All are read-only analyses — they make no changes.
 
-### `dlp-policy-review`
+The analysis layer applies **data-security judgment**, not just reads: it traces whether classifications (SITs, labels) translate into *enforced* controls, classifies gaps as **Effectiveness** (data not protected) or **Hygiene** (quality) rather than imposing a severity score, and ends every recommendation in a concrete next action. `data-security-posture` is the front door; `dlp-control-review` is a focused DLP drill-down. Findings are also tagged **[config]** (a fact from settings) or **[assessment]** (the model's judgement).
 
-Full review of the tenant's DLP posture. Calls `list_dlp_policies` and `list_dlp_rules`, then produces a report covering a summary of policies and rules, workload coverage, gaps and risks (test-mode policies, disabled rules, rules that detect sensitive information but take no blocking action), and prioritised recommendations.
+### `data-security-posture`
 
-*No arguments.*
+The flagship assessment. Traces the **protection chain** — *define → reference → enforce → cover* — across the tenant's classification primitives, and reports where it breaks (e.g. a control referencing sensitive data but stuck in Test mode = "false security"). Key design choices:
+
+- **Opt-in direction:** custom SITs and labels are walked catalog-out (an unused one the org *built* is a real gap); built-in SITs are considered only where policies already reference them — it deliberately does **not** enumerate the 280+ built-ins.
+- **Business context with provenance:** the "should you be protecting X?" judgment needs context the tool doesn't own, so the prompt first uses any provided context, else asks, else infers a profile from deployment signals (label/SIT/policy names, workloads) — and tags every recommendation `[from stated context]` or `[inferred — confirm]`.
+
+| Argument | Required | Description |
+|----------|----------|-------------|
+| `business_context` | no | The org's industry, jurisdictions, regulatory obligations, and sensitive data handled — used to judge which protections *should* exist. Omit and the prompt elicits or infers it. |
 
 ---
 
-### `label-coverage-audit`
+### `dlp-control-review`
 
-Audit of sensitivity-label usage across DLP. Calls `list_sensitivity_labels`, `get_label_policy_settings`, and `list_dlp_rules`, then produces a report covering the label inventory, policy settings, which labels are (and are not) referenced by DLP rules, and recommendations.
+Focused DLP drill-down — the depth counterpart to `data-security-posture`. Audits whether DLP controls are **well-built, non-conflicting, correctly scoped, alerted, and enforce-ready**, across enforcement readiness, rule correctness/conflicts (priority shadowing, monitor-only), scope & exceptions (using the enriched `get_dlp_policy`/`get_dlp_rule` detail), and alerting/hygiene. Findings are grouped **Effectiveness** then **Hygiene** (never ranked by severity) and tagged `[config]`/`[assessment]`; recommendations name the tool to use.
 
-*No arguments.*
+Handles the **stalled test-mode** question honestly: mode-change history isn't available, so it uses `WhenCreated`/`WhenChangedUTC` as a proxy, always shows the dates, and never flags a recently created policy.
+
+| Argument | Required | Description |
+|----------|----------|-------------|
+| `policy` | no | Focus the review on a single DLP policy (name or GUID). Omit for tenant-wide. |
 
 ## Resources
 
@@ -472,11 +483,11 @@ Resources here deliberately mirror **classification vocabulary** — the labels 
 **Inspect a sensitivity label you have heard about:**
 > Call `list_sensitivity_labels`, then `get_sensitivity_label` with the ID returned.
 
-**Understand your DLP posture:**
-> Use the `dlp-policy-review` prompt with no arguments.
+**Assess your whole data-security posture:**
+> Use the `data-security-posture` prompt (optionally pass `business_context`).
 
-**Check which labels lack DLP coverage:**
-> Use the `label-coverage-audit` prompt with no arguments.
+**Deep-dive on DLP control quality:**
+> Use the `dlp-control-review` prompt (optionally scope to one `policy`).
 
 **Stand up a new DLP control in test mode:**
 > Call `create_dlp_policy` with `mode: "TestWithNotifications"`, then `create_dlp_rule` with the sensitive information types to detect and `block_access: true`.

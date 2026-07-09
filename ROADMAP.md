@@ -54,7 +54,7 @@ Baseline so the gaps below are legible. **24 tools, 2 prompts, 3 resources.**
 - **SITs (read):** `list_sensitive_information_types`
 - **List filters (client-side):** labels (`active`, `parent`), DLP policies (`mode`, `workload`), DLP rules (`policy`, `disabled_only`, `blocking_only`), SITs (`scope`, `name_contains`)
 - **Resources:** `purview://label-catalog`, `purview://sit-catalog`, `purview://sit-catalog/custom`
-- **Prompts:** `dlp-policy-review`, `label-coverage-audit`
+- **Prompts (analysis layer):** `data-security-posture` (front door — protection-chain traversal, opt-in SIT direction, elicit/infer business context with provenance), `dlp-control-review` (DLP depth — control quality/enforce-readiness; Effectiveness/Hygiene classes not severity; `[config]`/`[assessment]` provenance; stalled-test-mode via age proxy). *(`label-coverage-audit` retired; `dlp-policy-review` evolved into `dlp-control-review`. Future: a `label-taxonomy-health` lens.)*
 
 ---
 
@@ -117,6 +117,12 @@ No new plane, no XML, no new auth.
 - **✅ Done — delete:** `remove_dlp_policy`, `remove_dlp_rule`
   (`Remove-DlpCompliancePolicy` / `-DlpComplianceRule`, `-Confirm:$false`).
 - **✅ Done — rule read:** `get_dlp_rule` (single rule, or all rules in a policy).
+- **✅ Done — detail-read enrichment:** `get_dlp_policy` / `get_dlp_rule` now select a
+  richer property set (granular locations + exclusions; rule exceptions,
+  `RestrictAccess`, `StopPolicyProcessing`, incident report, policy tip),
+  summarised by the formatters — list reads stay lean. Unblocks scope/exception
+  hygiene (dimension **C**) for the DLP deep-dive analysis. *(Verify exact
+  `ExceptIf*`/location property names on a live tenant.)*
 - **Remaining gap:** policy **location** editing (`set_dlp_policy` = mode/comment only).
 
 ### DLP surface coverage (locations & enforcement planes)

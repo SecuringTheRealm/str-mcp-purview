@@ -21,6 +21,41 @@ const RULE_PROPS = [
 ];
 const SIT_PROPS = ["Name", "Id", "Publisher", "Description"];
 
+// Detail reads (get_dlp_policy / get_dlp_rule) select a wider set than the lean
+// list reads, so scope/exception hygiene can be analysed on demand without
+// bloating list output. Formatters summarise these rather than dumping them.
+const POLICY_LOCATION_FIELDS = [
+  ["ExchangeLocation", "Exchange", "ExchangeLocationException"],
+  ["SharePointLocation", "SharePoint", "SharePointLocationException"],
+  ["OneDriveLocation", "OneDrive", "OneDriveLocationException"],
+  ["TeamsLocation", "Teams", "TeamsLocationException"],
+  ["EndpointDlpLocation", "Endpoint", "EndpointDlpLocationException"],
+  ["OnPremisesScannerDlpLocation", "On-prem scanner", null],
+  ["PowerBIDlpLocation", "Power BI", null],
+  ["ThirdPartyAppDlpLocation", "Third-party apps", null],
+];
+const RULE_EXCEPTION_FIELDS = [
+  ["ExceptIfContentContainsSensitiveInformation", "sensitive-info"],
+  ["ExceptIfContentPropertyContainsWords", "content-property"],
+  ["ExceptIfDocumentNameMatchesWords", "doc-name"],
+  ["ExceptIfDocumentNameMatchesPatterns", "doc-name-pattern"],
+  ["ExceptIfDocumentMatchesPatterns", "doc-content-pattern"],
+  ["ExceptIfContentExtensionMatchesWords", "file-extension"],
+  ["ExceptIfFrom", "sender"],
+  ["ExceptIfFromMemberOf", "sender-group"],
+  ["ExceptIfSentTo", "recipient"],
+  ["ExceptIfRecipientDomainIs", "recipient-domain"],
+  ["ExceptIfSenderDomainIs", "sender-domain"],
+];
+
+const POLICY_DETAIL_PROPS = [...POLICY_PROPS, ...POLICY_LOCATION_FIELDS.flatMap(([f, , e]) => (e ? [f, e] : [f]))];
+const RULE_DETAIL_PROPS = [
+  ...RULE_PROPS,
+  "StopPolicyProcessing", "RestrictAccess", "EncryptRMSTemplate", "Quarantine",
+  "GenerateIncidentReport", "NotifyPolicyTipCustomText",
+  ...RULE_EXCEPTION_FIELDS.map(([f]) => f),
+];
+
 // Per Microsoft docs, custom SITs always report a Publisher other than this
 // value: https://learn.microsoft.com/purview/sit-create-a-custom-sensitive-information-type-in-scc-powershell
 const BUILTIN_SIT_PUBLISHER = "Microsoft Corporation";
@@ -32,7 +67,7 @@ export async function listPolicies() {
 }
 
 export async function getPolicy(identity) {
-  return asArray(await powershell.invoke("Get-DlpCompliancePolicy", { Identity: identity }, POLICY_PROPS))[0];
+  return asArray(await powershell.invoke("Get-DlpCompliancePolicy", { Identity: identity }, POLICY_DETAIL_PROPS))[0];
 }
 
 export async function listRules(policy) {
@@ -41,7 +76,7 @@ export async function listRules(policy) {
 }
 
 export async function getRule(identity) {
-  return asArray(await powershell.invoke("Get-DlpComplianceRule", { Identity: identity }, RULE_PROPS))[0];
+  return asArray(await powershell.invoke("Get-DlpComplianceRule", { Identity: identity }, RULE_DETAIL_PROPS))[0];
 }
 
 // ---- client-side list filters ----------------------------------------------
@@ -172,9 +207,28 @@ export function formatPolicyList(policies) {
   return `${policies.length} DLP ${policies.length === 1 ? "policy" : "policies"}:\n${lines.join("\n")}`;
 }
 
+// Summarise the location fields into one compact line (e.g. "Exchange (All),
+// SharePoint (3), Endpoint (excluded: 2)") rather than dumping the arrays.
+function locationSummary(p) {
+  const isAll = (v) => /^all$/i.test(String(v?.DisplayName ?? v?.Name ?? v ?? ""));
+  const parts = [];
+  for (const [field, label, excField] of POLICY_LOCATION_FIELDS) {
+    const locs = asArray(p?.[field]);
+    if (!locs.length) continue;
+    const scope = locs.length === 1 && isAll(locs[0]) ? "All" : String(locs.length);
+    const exc = excField ? asArray(p?.[excField]).length : 0;
+    parts.push(`${label} (${scope}${exc ? `, excluded: ${exc}` : ""})`);
+  }
+  return parts.join(", ");
+}
+
+function exceptionSummary(r) {
+  return RULE_EXCEPTION_FIELDS.filter(([f]) => asArray(r?.[f]).length).map(([, label]) => label).join(", ");
+}
+
 export function formatPolicyDetail(p) {
   if (!p) return "DLP policy not found.";
-  return [
+  const lines = [
     `# DLP policy: ${p.Name}`,
     bulletFields(p, [
       ["Guid", "GUID"],
@@ -187,7 +241,10 @@ export function formatPolicyDetail(p) {
       ["WhenCreated", "Created"],
       ["WhenChangedUTC", "Last changed (UTC)"],
     ]),
-  ].join("\n");
+  ];
+  const locs = locationSummary(p);
+  if (locs) lines.push(`- **Locations:** ${locs}`);
+  return lines.filter(Boolean).join("\n");
 }
 
 function ruleLine(r) {
@@ -218,10 +275,21 @@ export function formatRuleDetail(r) {
       ["NotifyUser", "Notify users"],
       ["GenerateAlert", "Generate alert"],
       ["ReportSeverityLevel", "Severity"],
+      ["StopPolicyProcessing", "Stops later rules"],
+      ["Quarantine", "Quarantine"],
+      ["GenerateIncidentReport", "Incident report to"],
+      ["EncryptRMSTemplate", "Encryption template"],
     ]),
   ];
   const sits = sitName(r.ContentContainsSensitiveInformation);
   if (sits) lines.push(`- **Detected sensitive info:**${sits}`);
+  const restrict = asArray(r.RestrictAccess)
+    .map((a) => `${a?.setting ?? a?.Setting}=${a?.value ?? a?.Value}`)
+    .filter((s) => !s.includes("undefined"));
+  if (restrict.length) lines.push(`- **Restrict access:** ${restrict.join(", ")}`);
+  const exc = exceptionSummary(r);
+  if (exc) lines.push(`- **Exceptions:** ${exc}`);
+  if (r.NotifyPolicyTipCustomText) lines.push("- **Policy tip:** configured");
   return lines.filter(Boolean).join("\n");
 }
 

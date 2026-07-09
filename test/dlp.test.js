@@ -132,6 +132,27 @@ test("formatRuleDetail", async (t) => {
     assert.match(out, /- \*\*Block access:\*\* true/);
     assert.match(out, /Detected sensitive info:.*Credit Card Number/);
   });
+
+  await t.test("surfaces exceptions, restrict-access, stop-processing, and policy tip when present", () => {
+    const out = dlp.formatRuleDetail({
+      Name: "R1",
+      Priority: 0,
+      StopPolicyProcessing: true,
+      RestrictAccess: [{ setting: "ExcludeContentProcessing", value: "Block" }],
+      ExceptIfSenderDomainIs: ["contoso.com"],
+      ExceptIfDocumentNameMatchesWords: ["template"],
+      NotifyPolicyTipCustomText: "Careful!",
+    });
+    assert.match(out, /- \*\*Stops later rules:\*\* true/);
+    assert.match(out, /- \*\*Restrict access:\*\* ExcludeContentProcessing=Block/);
+    assert.match(out, /- \*\*Exceptions:\*\* doc-name, sender-domain/);
+    assert.match(out, /- \*\*Policy tip:\*\* configured/);
+  });
+
+  await t.test("degrades gracefully on a lean object (bulk path) — no detail lines", () => {
+    const out = dlp.formatRuleDetail({ Name: "R1", Priority: 0 });
+    assert.doesNotMatch(out, /Exceptions:|Restrict access:|Policy tip:/);
+  });
 });
 
 test("formatRuleDetails", async (t) => {
@@ -258,6 +279,21 @@ test("formatPolicyDetail", async (t) => {
     const out = dlp.formatPolicyDetail({ Name: "P1", Mode: "Enable", Enabled: true, Workload: "Exchange" });
     assert.match(out, /^# DLP policy: P1/);
     assert.match(out, /- \*\*Mode:\*\* Enable/);
+  });
+
+  await t.test("summarises locations, detecting All and exclusions", () => {
+    const out = dlp.formatPolicyDetail({
+      Name: "P1",
+      ExchangeLocation: ["All"],
+      SharePointLocation: ["https://a", "https://b", "https://c"],
+      SharePointLocationException: ["https://x"],
+    });
+    assert.match(out, /- \*\*Locations:\*\* Exchange \(All\), SharePoint \(3, excluded: 1\)/);
+  });
+
+  await t.test("omits the Locations line when no locations are present (e.g. a lean list object)", () => {
+    const out = dlp.formatPolicyDetail({ Name: "P1", Mode: "Enable" });
+    assert.doesNotMatch(out, /Locations:/);
   });
 });
 

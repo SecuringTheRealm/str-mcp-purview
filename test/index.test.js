@@ -99,21 +99,44 @@ test("MCP server over stdio", async (t) => {
     });
   });
 
-  await t.test("lists the two review prompts", async () => {
+  await t.test("lists the analysis prompts", async () => {
     await withClient(async (client) => {
       const { prompts } = await client.listPrompts();
       const names = prompts.map((p) => p.name).sort();
-      assert.deepEqual(names, ["dlp-policy-review", "label-coverage-audit"]);
+      assert.deepEqual(names, ["data-security-posture", "dlp-control-review"]);
     });
   });
 
-  await t.test("returns the chained-tool-call prompt text for dlp-policy-review", async () => {
+  await t.test("data-security-posture weaves in provided business_context and the chain steps", async () => {
     await withClient(async (client) => {
-      const result = await client.getPrompt({ name: "dlp-policy-review", arguments: {} });
-      const message = result.messages[0];
-      assert.equal(message.role, "user");
-      assert.match(message.content.text, /list_dlp_policies/);
-      assert.match(message.content.text, /list_dlp_rules/);
+      const result = await client.getPrompt({
+        name: "data-security-posture",
+        arguments: { business_context: "EU fintech, PCI-DSS + GDPR" },
+      });
+      const body = result.messages[0].content.text;
+      assert.match(body, /EU fintech, PCI-DSS \+ GDPR/);
+      assert.match(body, /DEFINE .* REFERENCE .* ENFORCE .* COVER/);
+      assert.match(body, /do NOT enumerate all built-in SITs/i);
+      assert.match(body, /\[inferred . confirm\]/);
+    });
+  });
+
+  await t.test("dlp-control-review encodes the effectiveness/hygiene contract and stalled-test proxy", async () => {
+    await withClient(async (client) => {
+      const result = await client.getPrompt({ name: "dlp-control-review", arguments: {} });
+      const body = result.messages[0].content.text;
+      assert.match(body, /list_dlp_rules/);
+      assert.match(body, /Effectiveness/);
+      assert.match(body, /Hygiene/);
+      assert.match(body, /do NOT assign risk severities/i);
+      assert.match(body, /WhenCreated/);
+    });
+  });
+
+  await t.test("dlp-control-review scopes to a single policy when given", async () => {
+    await withClient(async (client) => {
+      const result = await client.getPrompt({ name: "dlp-control-review", arguments: { policy: "PII Policy" } });
+      assert.match(result.messages[0].content.text, /review only the DLP policy "PII Policy"/);
     });
   });
 
