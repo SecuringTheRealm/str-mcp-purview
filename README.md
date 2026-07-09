@@ -24,21 +24,105 @@ So this server is a **hybrid**: raw Microsoft Graph calls for labels, and a pers
 
 ## Prerequisites
 
-- **Node.js 20+**
-- **PowerShell 7+** (`pwsh`) with the Exchange Online module — needed only for the DLP tools:
+Before you start, have these ready:
+
+- **Node.js 20+**.
+- **PowerShell 7+** (`pwsh`) with the Exchange Online module — required for the DLP tools **and** the sensitivity-label *write* tools; not needed if you only use the label *read* tools:
   ```powershell
   Install-Module ExchangeOnlineManagement -Scope CurrentUser
   ```
-- A **Microsoft Entra app registration** (public client / native) in your tenant with the **delegated** `InformationProtectionPolicy.Read` permission granted with admin consent, and redirect URI `http://localhost`. Needed only for the sensitivity-label tools.
-- An account with the appropriate Microsoft Purview roles (e.g. *Compliance Administrator* / *Information Protection*).
+- A **Microsoft 365 tenant** in which you can register an app and grant admin consent (or an admin who can consent for you).
+- An **admin account** with the appropriate Microsoft Purview roles — see [step 2](#2-give-the-sign-in-account-its-purview-roles).
 
-## Install
+## Setup
+
+The server has two auth planes and this walkthrough wires up both: an **Entra app registration** for the Graph label-read tools (steps 1–2), and the **local install + credentials** the whole server needs (steps 3–5). If you only ever call the DLP tools, the app registration (steps 1–2's app part) is optional — those tools authenticate through `Connect-IPPSSession` instead — but you still need the Purview roles in step 2.
+
+### 1. Register the Microsoft Entra app
+
+This app registration backs the **sensitivity-label read tools** (Microsoft Graph). It is a **public client** — no client secret or certificate is ever created.
+
+In the [Microsoft Entra admin center](https://entra.microsoft.com) → **Identity → Applications → App registrations → New registration**:
+
+1. **Name** it (e.g. `str-mcp-purview`).
+2. **Supported account types**: *Accounts in this organizational directory only* (single tenant).
+3. **Redirect URI**: set the platform dropdown to **Public client/native (mobile & desktop)** and enter `http://localhost`. Leave the port off — Entra treats bare `http://localhost` as a loopback URI and accepts **any port**, which is what the interactive sign-in needs. Click **Register**.
+
+On the new registration:
+
+4. **Authentication** blade → **Advanced settings** → set **Allow public client flows** to **Yes** → **Save**. (Required for the optional `PURVIEW_AUTH_MODE=devicecode` sign-in; harmless otherwise.)
+5. **API permissions** blade → **Add a permission** → **Microsoft Graph** → **Delegated permissions** → search and add **`InformationProtectionPolicy.Read`**. This is the only permission the server uses.
+6. Still on **API permissions**, click **Grant admin consent for \<tenant\>** and confirm the row shows a green **✔ Granted**. (Needs Global Administrator, Privileged Role Administrator, or Cloud Application Administrator.)
+7. Open the **Overview** blade and copy the **Application (client) ID** and **Directory (tenant) ID** — you need both in step 4.
+
+### 2. Give the sign-in account its Purview roles
+
+The app grants only *API access*; every action still runs as the signed-in admin and is gated by **that account's** Purview RBAC. Sign in with an account that holds the role for the tools you'll demo:
+
+| Tools you want to use | Minimum role |
+|---|---|
+| Sensitivity-label **reads** (Graph) | *Information Protection Reader* (or higher) |
+| Sensitivity-label **writes** (`New-/Set-Label`, `*-LabelPolicy`) | *Information Protection Admin* or *Compliance Administrator* |
+| **DLP** read/write | *Compliance Administrator* or *DLP Compliance Management* |
+| Everything (simplest) | *Compliance Administrator* |
+
+Roles are assigned in the **Microsoft Purview portal → Settings → Roles & scopes → Role groups**. For a demo, *Compliance Administrator* covers every tool.
+
+### 3. Install
 
 ```bash
 git clone <this-repo>
 cd str-mcp-purview
 npm install
 ```
+
+### 4. Provide the tenant and client IDs
+
+The server reads `AZURE_TENANT_ID` and `AZURE_CLIENT_ID` (the two values from step 1.7) straight from the process environment — there is **no `.env` file loading**, so a `.env` file does nothing. Pick one of two ways to supply them:
+
+**Option A — Windows user environment variables** (keeps the IDs out of any repo file). Run in a `pwsh` window, then **reopen your terminal/IDE** so the values are picked up:
+```powershell
+[System.Environment]::SetEnvironmentVariable("AZURE_TENANT_ID", "<tenant-id>", "User")
+[System.Environment]::SetEnvironmentVariable("AZURE_CLIENT_ID", "<client-id>", "User")
+```
+
+**Option B — inline in the MCP config** (`env` block in step 5). Simplest for a demo; the IDs are not secrets (there is no client secret), so committing them is low-risk.
+
+Optional variables — device-code sign-in, a custom redirect URI, a pre-filled admin UPN, a custom `pwsh` path — are documented in [`.env.template`](.env.template).
+
+### 5. Register the server with your MCP host
+
+**Claude Code** — add to your workspace `.mcp.json` (see [`.mcp.json.example`](.mcp.json.example)):
+
+```json
+{
+  "mcpServers": {
+    "purview": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["index.js"],
+      "env": { "AZURE_TENANT_ID": "<tenant-id>", "AZURE_CLIENT_ID": "<client-id>" }
+    }
+  }
+}
+```
+
+**VS Code / GitHub Copilot** — add to `.vscode/mcp.json`:
+
+```json
+{
+  "servers": {
+    "purview": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["${workspaceFolder}/index.js"],
+      "env": { "AZURE_TENANT_ID": "<tenant-id>", "AZURE_CLIENT_ID": "<client-id>" }
+    }
+  }
+}
+```
+
+Omit the `env` block if you set the variables via Option A in step 4. Restart the MCP host after editing its config so the server launches with the new settings. On first tool use you'll be prompted to sign in — see [Authentication flow](#authentication-flow) for what to expect.
 
 ## Test
 
@@ -47,39 +131,6 @@ npm test
 ```
 
 Runs the unit and integration test suite with Node's built-in test runner (`node:test`), covering the formatting helpers, sensitivity-label and DLP data-access/formatting logic, the PowerShell bridge protocol, and the MCP server's tool/prompt registration and dispatch (via a real stdio child-process round trip). No test framework dependency is required — Node 20+ ships `node:test` out of the box.
-
-## Configure
-
-Set two environment variables (see `.env.template` for the full list). On Windows, storing them as user environment variables keeps them out of any file:
-
-```powershell
-[System.Environment]::SetEnvironmentVariable("AZURE_TENANT_ID", "your-tenant-id", "User")
-[System.Environment]::SetEnvironmentVariable("AZURE_CLIENT_ID", "your-app-id", "User")
-```
-
-### Claude Code
-
-Add to your workspace `.mcp.json` (see `.mcp.json.example`):
-
-```json
-{
-  "mcpServers": {
-    "purview": { "type": "stdio", "command": "node", "args": ["index.js"] }
-  }
-}
-```
-
-### VS Code / GitHub Copilot
-
-Add to `.vscode/mcp.json`:
-
-```json
-{
-  "servers": {
-    "purview": { "type": "stdio", "command": "node", "args": ["${workspaceFolder}/index.js"] }
-  }
-}
-```
 
 ## Authentication flow
 
