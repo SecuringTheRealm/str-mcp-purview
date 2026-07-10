@@ -134,8 +134,45 @@ Runs the unit and integration test suite with Node's built-in test runner (`node
 
 ## Authentication flow
 
-- **Labels (Graph):** first label tool call triggers an interactive browser sign-in (or device code if `PURVIEW_AUTH_MODE=devicecode`). The token is cached in memory for the session.
-- **DLP (PowerShell):** first DLP tool call starts a single background `pwsh` process and runs `Connect-IPPSSession`, which opens an interactive sign-in **once**. That session is reused for every later DLP command. Sign-in prompts and URLs are written to **stderr** so they never corrupt the MCP stdio channel.
+The two auth planes sign in independently and the first call on each triggers its own sign-in:
+
+- **Labels (Graph):** the first label tool call triggers an interactive browser sign-in via `@azure/identity`. The token is cached in memory for the session.
+- **DLP (PowerShell):** the first DLP tool call starts a single background `pwsh` process and runs `Connect-IPPSSession`, which opens an interactive browser sign-in **once**. That session is reused for every later DLP command. Sign-in prompts and URLs are written to **stderr** so they never corrupt the MCP stdio channel.
+
+Because the sign-in **blocks the tool call** until you complete it, the first call on each plane can sit for a while. Later calls in the same session are fast (cached).
+
+### Auth environment variables
+
+| Variable | Plane | Default | Purpose |
+| --- | --- | --- | --- |
+| `PURVIEW_AUTH_MODE` | Graph | `interactive` | Set to `devicecode` to sign in with a URL + code instead of a browser popup (see troubleshooting). |
+| `AZURE_REDIRECT_URI` | Graph | `http://localhost` | Redirect URI for the interactive browser flow. |
+| `PURVIEW_UPN` | DLP | *(none)* | Pre-fills the account for `Connect-IPPSSession`. |
+| `PURVIEW_ENABLE_WAM` | DLP | *(off)* | Set to `1` to use the Windows WAM broker instead of the browser (only works on an interactive desktop host — see troubleshooting). |
+| `PURVIEW_CONNECT_TIMEOUT_MS` | DLP | `300000` | How long the interactive `Connect-IPPSSession` may take before timing out (5 min). |
+| `PURVIEW_EXEC_TIMEOUT_MS` | DLP | `60000` | Per-cmdlet timeout for DLP commands once connected. |
+| `PURVIEW_PWSH` | DLP | `pwsh` | Path to the PowerShell 7+ executable. |
+
+### Troubleshooting sign-in
+
+**The browser opens in the wrong profile / you want to pick where you sign in (Graph label tools).**
+Switch the Graph plane to device code: it prints a URL and a code to stderr, and you open the URL in whatever browser/profile you like. Add `PURVIEW_AUTH_MODE=devicecode` to the server's `env` block:
+
+```jsonc
+"env": {
+  "AZURE_TENANT_ID": "<tenant-id>",
+  "AZURE_CLIENT_ID": "<client-id>",
+  "PURVIEW_AUTH_MODE": "devicecode"
+}
+```
+
+This requires **Allow public client flows = Yes** on the app registration (step 1.4). Restart the MCP host after editing. Note the device-code prompt is written to the server's **stderr** — view it in your MCP host's server logs. *Device code applies to the Graph label tools only;* `Connect-IPPSSession` (the DLP/Copilot plane) does not support it.
+
+**`Connect-IPPSSession` fails instantly with "A window handle must be configured."**
+This is the WAM broker (default in ExchangeOnlineManagement 3.7+) failing because the server runs `pwsh` as a windowless child. The server works around it by passing `-DisableWAM`, which uses the system-browser flow instead — this is the default and needs no configuration. Only set `PURVIEW_ENABLE_WAM=1` if you are running on a fully interactive desktop where the WAM popup can appear.
+
+**The first DLP call "takes ages" / times out.**
+That is the interactive `Connect-IPPSSession` browser sign-in blocking the call. Look for a browser window (it may open behind your terminal or in another profile) and complete it — do not cancel the tool call. For **unattended / headless** use where no browser is available, `Connect-IPPSSession` also supports certificate-based app-only auth (`-AppId` / `-CertificateThumbprint` / `-Organization`); wiring that into the server requires a code change and a certificate uploaded to the app registration plus a Purview admin role assigned to the app.
 
 ## How the tools work
 

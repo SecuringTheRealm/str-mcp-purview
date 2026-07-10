@@ -72,6 +72,9 @@ test("PowerShellBridge.invoke", async (t) => {
 
     const scripts = lastProc.writes.join("");
     assert.match(scripts, /Connect-IPPSSession/);
+    // WAM is disabled by default so the headless pwsh child can use the browser
+    // flow instead of the window-handle-dependent broker.
+    assert.match(scripts, /-DisableWAM/);
     assert.match(scripts, /Get-DlpCompliancePolicy @__p \| Select-Object Name/);
   });
 
@@ -112,10 +115,16 @@ test("PowerShellBridge.invoke", async (t) => {
 
   await t.test("rejects when the pwsh executable cannot be started", async () => {
     const savedTimeout = process.env.PURVIEW_EXEC_TIMEOUT_MS;
+    const savedConnectTimeout = process.env.PURVIEW_CONNECT_TIMEOUT_MS;
     process.env.PURVIEW_EXEC_TIMEOUT_MS = "50";
+    // The first in-flight request is the Connect-IPPSSession, which now has its
+    // own (much longer) budget; shrink it too or this test waits minutes.
+    process.env.PURVIEW_CONNECT_TIMEOUT_MS = "50";
     const bridge = await freshBridge("spawn-error");
     if (savedTimeout == null) delete process.env.PURVIEW_EXEC_TIMEOUT_MS;
     else process.env.PURVIEW_EXEC_TIMEOUT_MS = savedTimeout;
+    if (savedConnectTimeout == null) delete process.env.PURVIEW_CONNECT_TIMEOUT_MS;
+    else process.env.PURVIEW_CONNECT_TIMEOUT_MS = savedConnectTimeout;
 
     // spawn() itself always returns a ChildProcess synchronously (even for a
     // missing executable) and reports failure asynchronously via the 'error'

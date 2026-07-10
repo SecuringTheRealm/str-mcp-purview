@@ -20,6 +20,9 @@ import { spawn } from "node:child_process";
 const START = "@@PVW_START@@";
 const END = "@@PVW_END@@";
 const EXEC_TIMEOUT_MS = Number(process.env.PURVIEW_EXEC_TIMEOUT_MS) || 60_000;
+// The first Connect-IPPSSession opens a browser and blocks on a human sign-in,
+// so it needs a far larger budget than a normal cmdlet's EXEC_TIMEOUT_MS.
+const CONNECT_TIMEOUT_MS = Number(process.env.PURVIEW_CONNECT_TIMEOUT_MS) || 300_000;
 
 class PowerShellBridge {
   constructor() {
@@ -51,14 +54,14 @@ class PowerShellBridge {
   }
 
   // Serialise every request so their framed output blocks cannot interleave.
-  #enqueue(script) {
-    const run = this.queue.then(() => this.#exec(script));
+  #enqueue(script, timeoutMs = EXEC_TIMEOUT_MS) {
+    const run = this.queue.then(() => this.#exec(script, timeoutMs));
     // Keep the chain alive even if a call rejects.
     this.queue = run.catch(() => {});
     return run;
   }
 
-  #exec(script) {
+  #exec(script, timeoutMs = EXEC_TIMEOUT_MS) {
     return new Promise((resolve, reject) => {
       this.#ensureProc();
       // Capture the process reference now: it can flip to null (via the
@@ -77,8 +80,8 @@ class PowerShellBridge {
         if (settled) return;
         settled = true;
         proc.stdout.off("data", onData);
-        reject(new Error(`PowerShell command timed out after ${EXEC_TIMEOUT_MS}ms.`));
-      }, EXEC_TIMEOUT_MS);
+        reject(new Error(`PowerShell command timed out after ${timeoutMs}ms.`));
+      }, timeoutMs);
       const onData = (chunk) => {
         buffer += chunk.toString();
         const s = buffer.indexOf(START);
@@ -135,9 +138,16 @@ class PowerShellBridge {
   async #ensureConnected() {
     if (this.connected) return;
     const upn = process.env.PURVIEW_UPN;
+    // ExchangeOnlineManagement 3.7+ defaults to the WAM broker, which needs an
+    // interactive window handle. This server runs pwsh as a windowless child
+    // (piped stdio), so WAM fails instantly with "A window handle must be
+    // configured." -DisableWAM falls back to the MSAL system-browser flow,
+    // which works from a headless child (external browser + localhost redirect).
+    // Set PURVIEW_ENABLE_WAM=1 to opt back in on an interactive host.
+    const noWam = process.env.PURVIEW_ENABLE_WAM === "1" ? "" : " -DisableWAM";
     const connect = upn
-      ? `Connect-IPPSSession -UserPrincipalName '${upn.replace(/'/g, "''")}' -ShowBanner:$false`
-      : "Connect-IPPSSession -ShowBanner:$false";
+      ? `Connect-IPPSSession -UserPrincipalName '${upn.replace(/'/g, "''")}'${noWam} -ShowBanner:$false`
+      : `Connect-IPPSSession${noWam} -ShowBanner:$false`;
     const script = [
       "if (-not (Get-Module -ListAvailable -Name ExchangeOnlineManagement)) {",
       "  throw 'The ExchangeOnlineManagement module is not installed. Run: Install-Module ExchangeOnlineManagement -Scope CurrentUser'",
@@ -146,7 +156,9 @@ class PowerShellBridge {
       `${connect}`,
       "'connected'",
     ].join("\n");
-    await this.#enqueue(script);
+    // The connect blocks on an interactive browser sign-in, so give it the
+    // longer connect budget rather than the per-cmdlet timeout.
+    await this.#enqueue(script, CONNECT_TIMEOUT_MS);
     this.connected = true;
   }
 
