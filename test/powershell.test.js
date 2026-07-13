@@ -3,30 +3,53 @@ import assert from "node:assert/strict";
 import { mock } from "node:test";
 import { EventEmitter } from "node:events";
 
+// The bridge is Windows-only by default (Connect-IPPSSession platform gate);
+// tests exercise the protocol itself, so opt out of the gate.
+process.env.PURVIEW_ALLOW_UNSUPPORTED_OS = "1";
+
 // Fake child process that mimics the pieces of a pwsh child the bridge relies
 // on: a writable stdin we can inspect, and stdout/stderr event emitters we
-// drive manually to simulate the framed @@PVW_START@@/@@PVW_END@@ protocol.
+// drive manually to simulate the framed @@PVW_<id>_START/END@@ protocol.
+// Frame markers are unique per request, so responses derive them from the
+// most recently written script.
 class FakeChildProcess extends EventEmitter {
   constructor() {
     super();
     this.stdout = new EventEmitter();
     this.stderr = new EventEmitter();
     this.writes = [];
+    this.killed = false;
     this.stdin = {
       setDefaultEncoding() {},
+      on() {},
       write: (chunk) => {
         this.writes.push(chunk);
       },
     };
   }
 
+  kill() {
+    this.killed = true;
+    this.emit("exit");
+  }
+
+  /** Extract the frame markers of the Nth written script (default: latest). */
+  markers(index = this.writes.length - 1) {
+    const m = this.writes[index].match(/@@PVW_[0-9a-f-]+_START@@/);
+    assert.ok(m, "expected a frame START marker in the written script");
+    const start = m[0];
+    return { start, end: start.replace("_START@@", "_END@@") };
+  }
+
   respondOk(payload) {
+    const { start, end } = this.markers();
     const json = payload === undefined ? "null" : JSON.stringify(payload);
-    this.stdout.emit("data", `@@PVW_START@@\n__OK__\n${json}\n@@PVW_END@@\n`);
+    this.stdout.emit("data", `${start}\n__OK__\n${json}\n${end}\n`);
   }
 
   respondErr(message) {
-    this.stdout.emit("data", `@@PVW_START@@\n__ERR__\n${message}\n@@PVW_END@@\n`);
+    const { start, end } = this.markers();
+    this.stdout.emit("data", `${start}\n__ERR__\n${message}\n${end}\n`);
   }
 }
 
@@ -44,11 +67,15 @@ mock.module("node:child_process", {
 
 // Each test below imports powershell.js with a unique query string so it gets
 // its own module instance (and therefore its own fresh PowerShellBridge
-// singleton with connected=false), since the bridge keeps connection state at
-// module scope and there is no public reset API.
+// singleton with no connection state), since the bridge keeps state at module
+// scope and there is no public reset API.
 async function freshBridge(tag) {
   const mod = await import(`../src/powershell.js?${tag}`);
   return mod.powershell;
+}
+
+function tick() {
+  return new Promise((r) => setImmediate(r));
 }
 
 test("PowerShellBridge.invoke", async (t) => {
@@ -61,10 +88,10 @@ test("PowerShellBridge.invoke", async (t) => {
 
     const invokePromise = bridge.invoke("Get-DlpCompliancePolicy", {}, ["Name"]);
     // Let the bridge spawn the process and write the Connect-IPPSSession script.
-    await new Promise((r) => setImmediate(r));
+    await tick();
     lastProc.respondOk("connected");
     // Let the connect response resolve and the next script (the cmdlet) be written.
-    await new Promise((r) => setImmediate(r));
+    await tick();
     lastProc.respondOk([{ Name: "Policy1" }]);
 
     const result = await invokePromise;
@@ -86,9 +113,9 @@ test("PowerShellBridge.invoke", async (t) => {
     };
 
     const invokePromise = bridge.invoke("Get-DlpCompliancePolicy", {});
-    await new Promise((r) => setImmediate(r));
+    await tick();
     lastProc.respondOk("connected");
-    await new Promise((r) => setImmediate(r));
+    await tick();
     lastProc.respondErr("Something went wrong");
 
     await assert.rejects(() => invokePromise, /Something went wrong/);
@@ -102,15 +129,142 @@ test("PowerShellBridge.invoke", async (t) => {
     };
 
     const invokePromise = bridge.invoke("Get-DlpComplianceRule");
-    await new Promise((r) => setImmediate(r));
+    await tick();
     lastProc.respondOk("connected");
-    await new Promise((r) => setImmediate(r));
+    await tick();
     lastProc.respondOk([]);
     await invokePromise;
 
     const scripts = lastProc.writes.join("");
     assert.match(scripts, /Get-DlpComplianceRule @__p\n/);
     assert.doesNotMatch(scripts, /Select-Object/);
+  });
+
+  await t.test("uses certificate app-only auth when the PURVIEW_APP_* env vars are set", async () => {
+    process.env.PURVIEW_APP_ID = "app-id-123";
+    process.env.PURVIEW_ORGANIZATION = "contoso.onmicrosoft.com";
+    process.env.PURVIEW_CERT_THUMBPRINT = "ABCDEF";
+    try {
+      const bridge = await freshBridge("app-only");
+      spawnImpl = () => {
+        lastProc = new FakeChildProcess();
+        return lastProc;
+      };
+
+      const invokePromise = bridge.invoke("Get-DlpCompliancePolicy", {});
+      await tick();
+      lastProc.respondOk("connected");
+      await tick();
+      lastProc.respondOk([]);
+      await invokePromise;
+
+      const scripts = lastProc.writes.join("");
+      assert.match(scripts, /Connect-IPPSSession -AppId 'app-id-123' -CertificateThumbprint 'ABCDEF' -Organization 'contoso\.onmicrosoft\.com'/);
+      assert.doesNotMatch(scripts, /-DisableWAM/);
+    } finally {
+      delete process.env.PURVIEW_APP_ID;
+      delete process.env.PURVIEW_ORGANIZATION;
+      delete process.env.PURVIEW_CERT_THUMBPRINT;
+    }
+  });
+
+  await t.test("ignores a stale frame from a previous request (unique per-request markers)", async () => {
+    const bridge = await freshBridge("stale-frame");
+    spawnImpl = () => {
+      lastProc = new FakeChildProcess();
+      return lastProc;
+    };
+
+    const invokePromise = bridge.invoke("Get-DlpCompliancePolicy", {});
+    await tick();
+    lastProc.respondOk("connected");
+    await tick();
+
+    // A stale frame using the CONNECT request's markers must not settle the
+    // in-flight cmdlet request...
+    const stale = lastProc.markers(0);
+    lastProc.stdout.emit("data", `${stale.start}\n__OK__\n["stale"]\n${stale.end}\n`);
+    // ...only a frame with the cmdlet's own markers does.
+    lastProc.respondOk([{ Name: "Fresh" }]);
+
+    assert.deepEqual(await invokePromise, [{ Name: "Fresh" }]);
+  });
+
+  await t.test("kills the pwsh child on timeout so the next call reconnects cleanly", async () => {
+    process.env.PURVIEW_EXEC_TIMEOUT_MS = "40";
+    process.env.PURVIEW_CONNECT_TIMEOUT_MS = "40";
+    try {
+      const bridge = await freshBridge("timeout-kill");
+      const procs = [];
+      spawnImpl = () => {
+        lastProc = new FakeChildProcess();
+        procs.push(lastProc);
+        return lastProc;
+      };
+
+      // Never respond: the connect request times out and must kill the child.
+      await assert.rejects(() => bridge.invoke("Get-DlpCompliancePolicy", {}), /timed out .* session was reset/s);
+      assert.equal(procs[0].killed, true);
+
+      // The next call spawns a fresh child and re-runs Connect-IPPSSession.
+      const retry = bridge.invoke("Get-DlpCompliancePolicy", {});
+      await tick();
+      assert.equal(procs.length, 2);
+      assert.match(procs[1].writes.join(""), /Connect-IPPSSession/);
+      procs[1].respondOk("connected");
+      await tick();
+      procs[1].respondOk([]);
+      assert.deepEqual(await retry, []);
+    } finally {
+      delete process.env.PURVIEW_EXEC_TIMEOUT_MS;
+      delete process.env.PURVIEW_CONNECT_TIMEOUT_MS;
+    }
+  });
+
+  await t.test("rejects the in-flight request promptly when the pwsh process dies", async () => {
+    const bridge = await freshBridge("proc-death");
+    spawnImpl = () => {
+      lastProc = new FakeChildProcess();
+      return lastProc;
+    };
+
+    const invokePromise = bridge.invoke("Get-DlpCompliancePolicy", {});
+    await tick();
+    lastProc.emit("exit");
+
+    await assert.rejects(() => invokePromise, /exited before responding/);
+  });
+
+  await t.test("concurrent first calls share a single Connect-IPPSSession", async () => {
+    const bridge = await freshBridge("connect-dedup");
+    spawnImpl = () => {
+      lastProc = new FakeChildProcess();
+      return lastProc;
+    };
+
+    const a = bridge.invoke("Get-DlpCompliancePolicy", {});
+    const b = bridge.invoke("Get-DlpComplianceRule", {});
+    await tick();
+    lastProc.respondOk("connected");
+    await tick();
+    lastProc.respondOk([]);
+    await tick();
+    lastProc.respondOk([]);
+    await Promise.all([a, b]);
+
+    const connects = lastProc.writes.join("").match(/Connect-IPPSSession/g);
+    assert.equal(connects.length, 1);
+  });
+
+  await t.test("fails fast on non-Windows platforms unless overridden", async () => {
+    if (process.platform === "win32") return; // gate only applies off-Windows
+    delete process.env.PURVIEW_ALLOW_UNSUPPORTED_OS;
+    try {
+      const bridge = await freshBridge("platform-gate");
+      await assert.rejects(() => bridge.invoke("Get-DlpCompliancePolicy", {}), /only supports.*on Windows/s);
+    } finally {
+      process.env.PURVIEW_ALLOW_UNSUPPORTED_OS = "1";
+    }
   });
 
   await t.test("rejects when the pwsh executable cannot be started", async () => {
@@ -128,9 +282,9 @@ test("PowerShellBridge.invoke", async (t) => {
 
     // spawn() itself always returns a ChildProcess synchronously (even for a
     // missing executable) and reports failure asynchronously via the 'error'
-    // event handled in #ensureProc, which only clears this.proc for *future*
-    // calls. Exercise that failure surface: the in-flight request still hits
-    // its execution timeout since no @@PVW_END@@ frame ever arrives.
+    // event handled in #ensureProc. The 'error' handler clears this.proc; the
+    // in-flight request then hits its execution timeout since no frame ever
+    // arrives.
     spawnImpl = () => {
       lastProc = new FakeChildProcess();
       setImmediate(() => lastProc.emit("error", new Error("spawn pwsh ENOENT")));

@@ -1,6 +1,6 @@
 # str-mcp-purview
 
-> A local MCP server that lets AI agents read and write Microsoft Purview **data security** configuration — sensitivity labels and DLP policies — as the signed-in admin.
+> An MCP server that lets AI agents read and write Microsoft Purview **data security** configuration — sensitivity labels and DLP policies — as the signed-in admin. Runs locally over stdio, or remotely on Azure Functions over streamable HTTP.
 
 ![GitHub issues](https://img.shields.io/github/issues/SecuringTheRealm/str-mcp-purview)
 ![GitHub](https://img.shields.io/github/license/SecuringTheRealm/str-mcp-purview)
@@ -20,14 +20,23 @@ The modern Purview developer surface is split across planes, and no single one c
 
 So this server is a **hybrid**: raw Microsoft Graph calls for labels, and a persistent PowerShell bridge (`ExchangeOnlineManagement` → `Get/New/Set-DlpCompliance*`) for DLP. Both act as the **delegated signed-in admin**, so every action honours that admin's Purview RBAC.
 
-> Current scope: **sensitivity labels (read)** and **DLP policies (read/write)**. Insider Risk Management, Communications Compliance, and DSPM are planned follow-ups.
+> Current scope: **sensitivity labels (read/write)** and **DLP policies (read/write)**. Insider Risk Management, Communications Compliance, and DSPM are planned follow-ups.
+
+## Platform support
+
+**The DLP tools and the label write/read-back tools work on Windows only.** They run through Security & Compliance PowerShell (`Connect-IPPSSession`), which Microsoft [does not support in PowerShell 7 on macOS or Linux](https://learn.microsoft.com/powershell/exchange/exchange-online-powershell-v2#supported-operating-systems-for-the-exchange-online-powershell-module). On macOS/Linux those tools fail fast with a clear error, and the **Graph-backed label read tools still work**. If a future `ExchangeOnlineManagement` release proves otherwise on your machine, `PURVIEW_ALLOW_UNSUPPORTED_OS=1` skips the gate.
+
+| Platform | Label reads (Graph) | Label writes & read-back, all DLP (PowerShell) |
+| --- | --- | --- |
+| Windows | ✅ | ✅ |
+| macOS / Linux | ✅ | ❌ (Microsoft-unsupported; gated) |
 
 ## Prerequisites
 
 Before you start, have these ready:
 
 - **Node.js 20+**.
-- **PowerShell 7+** (`pwsh`) with the Exchange Online module — required for the DLP tools **and** the sensitivity-label *write* tools; not needed if you only use the label *read* tools:
+- **Windows with PowerShell 7+** (`pwsh`) and the Exchange Online module — required for the DLP tools **and** the sensitivity-label *write/read-back* tools (see [Platform support](#platform-support)); not needed if you only use the label *read* tools:
   ```powershell
   Install-Module ExchangeOnlineManagement -Scope CurrentUser
   ```
@@ -147,11 +156,19 @@ Because the sign-in **blocks the tool call** until you complete it, the first ca
 | --- | --- | --- | --- |
 | `PURVIEW_AUTH_MODE` | Graph | `interactive` | Set to `devicecode` to sign in with a URL + code instead of a browser popup (see troubleshooting). |
 | `AZURE_REDIRECT_URI` | Graph | `http://localhost` | Redirect URI for the interactive browser flow. |
+| `AZURE_CLIENT_CERTIFICATE_PATH` | Graph | *(none)* | Switches the Graph plane to **certificate app-only** auth (headless hosts). Label reads then use the tenant-wide path and need the application permission `InformationProtectionPolicy.Read.All`. |
 | `PURVIEW_UPN` | DLP | *(none)* | Pre-fills the account for `Connect-IPPSSession`. |
+| `PURVIEW_APP_ID` | DLP | *(none)* | With `PURVIEW_ORGANIZATION` + a certificate below, switches the PowerShell plane to **certificate app-only** auth (`Connect-IPPSSession -AppId …`). |
+| `PURVIEW_ORGANIZATION` | DLP | *(none)* | Tenant for app-only auth, e.g. `contoso.onmicrosoft.com`. |
+| `PURVIEW_CERT_THUMBPRINT` | DLP | *(none)* | App-only cert by thumbprint (Windows cert store only). |
+| `PURVIEW_CERT_PATH` / `PURVIEW_CERT_PASSWORD` | DLP | *(none)* | App-only cert by file path (portable), with optional password. |
 | `PURVIEW_ENABLE_WAM` | DLP | *(off)* | Set to `1` to use the Windows WAM broker instead of the browser (only works on an interactive desktop host — see troubleshooting). |
 | `PURVIEW_CONNECT_TIMEOUT_MS` | DLP | `300000` | How long the interactive `Connect-IPPSSession` may take before timing out (5 min). |
-| `PURVIEW_EXEC_TIMEOUT_MS` | DLP | `60000` | Per-cmdlet timeout for DLP commands once connected. |
+| `PURVIEW_EXEC_TIMEOUT_MS` | DLP | `60000` | Per-cmdlet timeout for DLP commands once connected. On timeout the pwsh session is reset; the next call reconnects. |
 | `PURVIEW_PWSH` | DLP | `pwsh` | Path to the PowerShell 7+ executable. |
+| `PURVIEW_ALLOW_UNSUPPORTED_OS` | DLP | *(off)* | Set to `1` to attempt `Connect-IPPSSession` on macOS/Linux despite Microsoft not supporting it there. |
+
+**App-only (unattended) auth** — for headless hosts, or local unattended use: give the app registration the **application** permissions `InformationProtectionPolicy.Read.All` (Graph) and **Office 365 Exchange Online → Exchange.ManageAsApp**, grant admin consent, upload a certificate, and assign the app's service principal the **Compliance Administrator** Entra role. Then set the app-only variables above. Every action runs as the app, not a signed-in admin — scope its role accordingly. See [Microsoft's app-only auth guide](https://learn.microsoft.com/powershell/exchange/app-only-auth-powershell-v2).
 
 ### Troubleshooting sign-in
 
@@ -169,7 +186,7 @@ Switch the Graph plane to device code: it prints a URL and a code to stderr, and
 This requires **Allow public client flows = Yes** on the app registration (step 1.4). Restart the MCP host after editing. Note the device-code prompt is written to the server's **stderr** — view it in your MCP host's server logs. *Device code applies to the Graph label tools only;* `Connect-IPPSSession` (the DLP/Copilot plane) does not support it.
 
 **`Connect-IPPSSession` fails instantly with "A window handle must be configured."**
-This is the WAM broker (default in ExchangeOnlineManagement 3.7+) failing because the server runs `pwsh` as a windowless child. The server works around it by passing `-DisableWAM`, which uses the system-browser flow instead — this is the default and needs no configuration. Only set `PURVIEW_ENABLE_WAM=1` if you are running on a fully interactive desktop where the WAM popup can appear.
+This is the WAM broker (default since ExchangeOnlineManagement 3.7.0) failing because the server runs `pwsh` as a windowless child — WAM needs a native window handle to parent its sign-in dialog. The server works around it by passing `-DisableWAM` (added in module 3.7.2), which uses the system-browser flow instead — this is the default and needs no configuration. Only set `PURVIEW_ENABLE_WAM=1` if you are running on a fully interactive desktop where the WAM popup can appear. For unattended use, Microsoft's recommended fix is certificate app-only auth (see [Auth environment variables](#auth-environment-variables)) rather than any interactive flow.
 
 **The first DLP call "takes ages" / times out.**
 That is the interactive `Connect-IPPSSession` browser sign-in blocking the call. Look for a browser window (it may open behind your terminal or in another profile) and complete it — do not cancel the tool call. For **unattended / headless** use where no browser is available, `Connect-IPPSSession` also supports certificate-based app-only auth (`-AppId` / `-CertificateThumbprint` / `-Organization`); wiring that into the server requires a code change and a certificate uploaded to the app registration plus a Purview admin role assigned to the app.
@@ -209,12 +226,13 @@ flagged and only exist on the PowerShell plane.
 
 #### `get_sensitivity_label`
 
-- **Business:** Drill into one label to understand exactly how it presents to users — its colour, the tooltip guidance shown at classification time, its position in the sensitivity hierarchy, and whether it's currently active.
-- **Technical:** `GET /beta/security/informationProtection/sensitivityLabels/{id}` via Microsoft Graph. Returns a structured markdown report: sensitivity order, active state, colour, tooltip, description, and parent label.
+- **Business:** Drill into one label to understand exactly how it presents to users — its colour, the tooltip guidance shown at classification time, its position in the sensitivity hierarchy, and whether it's currently active. Optionally also read back the **protection** the label applies (encryption, markings, container/Teams settings) — the settings the write tools set.
+- **Technical:** `GET /beta/security/informationProtection/sensitivityLabels/{id}` via Microsoft Graph. With `include_protection_settings`, additionally runs `Get-Label` on the PowerShell plane and appends a protection-settings section (degrades to a note if that plane is unavailable).
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `label_id` | string | Sensitivity label GUID, from `list_sensitivity_labels` |
+| `include_protection_settings` | boolean | Optional — also return encryption/marking/container/Teams protection (needs the PowerShell plane) |
 
 ---
 
@@ -224,6 +242,24 @@ flagged and only exist on the PowerShell plane.
 - **Technical:** `GET /beta/security/informationProtection/labelPolicySettings` via Microsoft Graph, scoped to the signed-in admin. Returns markdown covering mandatory labelling, downgrade-justification requirement, and the default label ID.
 
 *No parameters.*
+
+---
+
+#### `list_label_policies`
+
+- **Business:** See every label **publishing policy** — which labels are actually published to which users, and whether each policy is live. This is the read that makes the label-policy write tools verifiable.
+- **Technical:** `Get-LabelPolicy` on the PowerShell plane. One line per policy: name, state, published-label count, creation date.
+
+*No parameters.*
+
+#### `get_label_policy`
+
+- **Business:** Inspect one publishing policy in full — the labels it publishes, the mailboxes/groups it targets, and its behaviour settings (mandatory labelling, default label).
+- **Technical:** `Get-LabelPolicy -Identity <name|GUID>` with an enriched property set (labels, locations, settings), summarised as markdown.
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `identity` | string | Label policy name or GUID |
 
 ---
 
@@ -361,19 +397,22 @@ The two label tools share a category-grouped settings surface — `encryption`, 
 | `exchange_location` | string[] | Exchange locations, e.g. `["All"]` |
 | `sharepoint_location` | string[] | SharePoint locations, e.g. `["All"]` |
 | `onedrive_location` | string[] | OneDrive locations, e.g. `["All"]` |
+| `teams_location` | string[] | Teams chat/channel locations, e.g. `["All"]` |
 
 ---
 
 #### `set_dlp_policy`
 
-- **Business:** Change an existing policy's enforcement level — most importantly, **promote a policy from Test to enforcement** once you're confident it behaves correctly (or pull it back to test / turn it off). This closes the test → enforce lifecycle that `create_dlp_policy` begins.
-- **Technical:** **Write.** `Set-DlpCompliancePolicy -Identity <name|GUID>` with `-Mode` (and optionally `-Comment`). Only supplied fields change. *(Note: this is the modern unified-DLP cmdlet, not the retired Exchange-only `Set-DlpPolicy`.)*
+- **Business:** Change an existing policy's enforcement level — most importantly, **promote a policy from Test to enforcement** once you're confident it behaves correctly (or pull it back to test / turn it off) — and **grow or shrink where it applies** by adding/removing locations per workload. This closes the test → enforce lifecycle that `create_dlp_policy` begins.
+- **Technical:** **Write.** `Set-DlpCompliancePolicy -Identity <name|GUID>` with `-Mode`, `-Comment`, and/or the `-Add*/-Remove*Location` parameters. Only supplied fields change. *(Note: this is the modern unified-DLP cmdlet, not the retired Exchange-only `Set-DlpPolicy`.)*
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `identity` | string | DLP policy name or GUID to modify |
 | `mode` | string | New mode: `Enable` (enforce), `TestWithNotifications`, `TestWithoutNotifications`, `Disable` |
 | `comment` | string | Optional — replace the policy's description/comment |
+| `add_locations` | object | Locations to add, per workload: `exchange`, `sharepoint`, `onedrive`, `teams`, `endpoint` (each a string array, or `["All"]`) |
+| `remove_locations` | object | Locations to remove, same shape as `add_locations` |
 
 ---
 
@@ -396,17 +435,19 @@ The two label tools share a category-grouped settings surface — `encryption`, 
 
 #### `set_dlp_rule`
 
-- **Business:** Tune an existing rule without recreating it — flip on blocking, change who gets notified, adjust priority, or disable the rule entirely while you investigate.
+- **Business:** Tune an existing rule without recreating it — flip on blocking, change who gets notified, adjust priority, change the detected sensitive info types, retune an endpoint rule's device restrictions (e.g. audit → block), or disable the rule entirely while you investigate. Covers traditional, endpoint, and Copilot rules.
 - **Technical:** **Write.** `Set-DlpComplianceRule -Identity <name|GUID>`. Only the fields you supply change.
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `identity` | string | Rule name or GUID to modify |
+| `sensitive_information_types` | string[] | Replace the detected sensitive information types |
 | `block_access` | boolean | Set the block-access action |
 | `notify_user` | string[] | Replace the notify-user list |
 | `generate_alert` | boolean | Set alert generation |
 | `priority` | integer | Set rule priority |
 | `disabled` | boolean | Enable (`false`) or disable (`true`) the rule |
+| `endpoint_restrictions` | object[] | Endpoint rules only — replace the activity restrictions (same shape as `create_endpoint_dlp_rule`; Block/Warn require `notify_user`) |
 
 ---
 
@@ -430,11 +471,13 @@ The two label tools share a category-grouped settings surface — `encryption`, 
 
 ---
 
-### Endpoint & Microsoft Edge DLP — Security & Compliance PowerShell
+### Endpoint DLP — Security & Compliance PowerShell
 
-These two tools are kept **separate** from the traditional DLP tools above so the common (Exchange/SharePoint/OneDrive) workflow stays lean — the endpoint activity/action options only appear when you're actually doing endpoint work. Endpoint DLP governs sensitive-data activities on users' **onboarded devices**, and this is also where **Microsoft Edge inline browser DLP** lives: the `PasteToBrowser` activity governs pasting sensitive text into Edge (e.g. prompts to AI apps like ChatGPT). Edge is natively supported; Chrome/Firefox require the Microsoft Purview browser extension.
+These two tools are kept **separate** from the traditional DLP tools above so the common (Exchange/SharePoint/OneDrive) workflow stays lean — the endpoint activity/action options only appear when you're actually doing endpoint work. Endpoint DLP governs sensitive-data activities on users' **onboarded devices**: printing, copy/paste to clipboard, screen capture, removable media (USB), and network shares — the activities [documented for `EndpointDlpRestrictions`](https://learn.microsoft.com/powershell/module/exchangepowershell/new-dlpcompliancerule).
 
-> **Prerequisite:** devices must be [onboarded to Microsoft Purview](https://learn.microsoft.com/purview/device-onboarding-overview). Blocking prompts to *specific* AI/cloud domains additionally depends on the tenant's sensitive-service-domain settings, which are configured in the Purview portal (not exposed by these tools).
+> **Prerequisite:** devices must be [onboarded to Microsoft Purview](https://learn.microsoft.com/purview/device-onboarding-overview).
+>
+> **Browser & AI-site restrictions:** controlling paste/upload into browsers or specific AI/cloud domains ("Paste to supported browsers", sensitive service domains) is configured through **sensitive-service-domain groups in the Purview portal**, not through the rule-level `EndpointDlpRestrictions` surface these tools expose. See [restricting paste actions into browsers](https://learn.microsoft.com/purview/endpoint-dlp-create-policy-restrict-paste-in-browsers).
 
 #### `create_endpoint_dlp_policy`
 
@@ -452,8 +495,8 @@ These two tools are kept **separate** from the traditional DLP tools above so th
 
 #### `create_endpoint_dlp_rule`
 
-- **Business:** Define what happens on the device — for each activity (print, clipboard, USB, network share, **paste into the Edge browser**…) choose whether to audit, warn, block, or block-with-override when content matches. This is how you stop sensitive data being pasted into AI-app prompts in Edge.
-- **Technical:** **Write.** `New-DlpComplianceRule` with `-EndpointDlpRestrictions`. Each `{activity, action}` pair maps to a `@{Setting=<activity>; Value=<action>}` hashtable entry. The persistent PowerShell bridge already marshals hashtable arrays, so no special handling is needed.
+- **Business:** Define what happens on the device — for each activity (print, copy/paste, screen capture, USB, network share) choose whether to audit, warn, block, or ignore when content matches.
+- **Technical:** **Write.** `New-DlpComplianceRule` with `-EndpointDlpRestrictions`. Each `{activity, action}` pair maps to a `@{Setting=<activity>; Value=<action>}` hashtable entry. Per the cmdlet docs, `Block`/`Warn` actions require `notify_user` — the tool enforces this before calling the tenant.
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
@@ -461,12 +504,12 @@ These two tools are kept **separate** from the traditional DLP tools above so th
 | `policy` | string | Parent endpoint DLP policy name or GUID |
 | `sensitive_information_types` | string[] | Condition — sensitive information types to detect |
 | `endpoint_restrictions` | object[] | **Required.** Each entry: `{ "activity": <activity>, "action": <action> }` |
-| `notify_user` | string[] | Action — notify these users |
+| `notify_user` | string[] | Notify these users — **required when any action is `Block` or `Warn`** |
 | `generate_alert` | boolean | Action — raise an alert on match |
 | `priority` | integer | Rule priority (lower runs first) |
 
-**`activity` values:** `Print`, `CopyToClipboard`, `RemovableMedia`, `NetworkShare`, `Bluetooth`, `RemoteDesktopServices`, `PasteToBrowser` *(Microsoft Edge)*, `ScreenCapture`.
-**`action` values:** `Audit`, `Block`, `Warn`, `BlockWithOverride`, `Ignore` — not every action is valid for every activity; verify against a live tenant.
+**`activity` values** (the [documented](https://learn.microsoft.com/powershell/module/exchangepowershell/new-dlpcompliancerule) `EndpointDlpRestrictions` settings): `Print`, `CopyPaste`, `ScreenCapture`, `RemovableMedia`, `NetworkShare`.
+**`action` values:** `Audit`, `Block`, `Warn`, `Ignore`.
 
 ---
 
@@ -474,7 +517,7 @@ These two tools are kept **separate** from the traditional DLP tools above so th
 
 Kept **separate** from traditional DLP so the Copilot-specific conditions/actions don't bloat the common workflow. These govern what **Microsoft 365 Copilot and Copilot Chat** may process or ground responses on — protecting against sensitive prompts and sensitive/labeled content being used by Copilot. Same `*-DlpCompliancePolicy`/`*-DlpComplianceRule` cmdlets; the policy is scoped to Copilot via a `Locations` template + `EnforcementPlanes=("CopilotExperiences")`, and label conditions stay in hashtable form (no raw JSON).
 
-> Covers 3 of the 4 documented Copilot protections. **Not yet covered:** blocking external-email grounding (preview) — pending condition-parameter discovery. The Copilot location GUID and `RestrictAccess` setting string are encoded from Microsoft's docs and should be verified against a live tenant.
+> Covers 3 of the 4 documented Copilot protections. **Not yet covered:** blocking external-email grounding (preview) — pending condition-parameter discovery. The Copilot location GUID and the `RestrictAccess` setting (`ExcludeContentProcessing`/`Block`) match [Microsoft's `New-DlpCompliancePolicy` reference, Example 4](https://learn.microsoft.com/powershell/module/exchangepowershell/new-dlpcompliancepolicy).
 
 #### `create_copilot_dlp_policy`
 
@@ -580,25 +623,43 @@ Resources here deliberately mirror **classification vocabulary** — the labels 
 **Stand up a new DLP control in test mode:**
 > Call `create_dlp_policy` with `mode: "TestWithNotifications"`, then `create_dlp_rule` with the sensitive information types to detect and `block_access: true`.
 
+## Hosting on Azure Functions
+
+The same server deploys as a **remote MCP server** on Azure Functions using the [self-hosted MCP servers pattern](https://learn.microsoft.com/azure/azure-functions/scenario-host-mcp-server-sdks) (public preview): a custom handler (`host.json`) launches `functions/server.js`, which serves the MCP protocol over **stateless streamable HTTP** at `POST /mcp` — a fresh server + transport per request, mirroring [Azure-Samples/mcp-sdk-functions-hosting-node](https://github.com/Azure-Samples/mcp-sdk-functions-hosting-node).
+
+Two deployment shapes:
+
+| Shape | Plan | Tool surface |
+| --- | --- | --- |
+| **Code-only** (`func azd`/zip deploy of this repo) | Flex Consumption | Graph label reads only — the plan cannot carry `pwsh` |
+| **Container** ([`Containerfile`](Containerfile)) | Elastic Premium / Dedicated / Azure Container Apps | Full surface, subject to the Linux IPPS caveat in [Platform support](#platform-support) |
+
+Remote hosting is headless, so **app-only auth is required** — set the app-only variables from [Auth environment variables](#auth-environment-variables) as app settings. Note `Connect-IPPSSession` does **not** support managed identity; the certificate path is the only unattended option for the PowerShell plane.
+
+**Secure the endpoint.** `host.json` sets the authorization level to `function` (callers need a function key). These are tenant-admin tools running as an app identity: for anything beyond a demo, add [built-in auth (Easy Auth)](https://learn.microsoft.com/azure/app-service/overview-authentication-authorization) in front, and scope the app's compliance role tightly. Local smoke test: `node functions/server.js`, then POST MCP JSON-RPC to `http://localhost:3000/mcp` (see `test/functions.test.js`).
+
 ## Architecture
 
 ```
-index.js          MCP server: tool/prompt handlers, stdio transport
-src/graph.js      Delegated Graph token (@azure/identity) + raw beta fetch
-src/powershell.js Persistent pwsh IPPSSession bridge (sentinel-framed, base64 params)
-src/labels.js     Sensitivity-label data access + formatters
-src/dlp.js        DLP data access (read/write) + formatters
-src/format.js     Shared token-efficient formatting helpers
+index.js            stdio entry point (local MCP server)
+functions/server.js Azure Functions custom-handler entry (stateless streamable HTTP)
+host.json           Functions custom-handler wiring
+src/server.js       Tool/prompt/resource definitions + dispatch + createServer() factory
+src/graph.js        Graph token (@azure/identity, delegated or app-only cert) + raw beta fetch
+src/powershell.js   Persistent pwsh IPPSSession bridge (request-scoped frames, base64 params)
+src/labels.js       Sensitivity-label data access + formatters
+src/dlp.js          DLP data access (read/write) + formatters
+src/format.js       Shared token-efficient formatting helpers
 ```
 
-The PowerShell bridge passes model-supplied parameters as a base64-encoded JSON blob rebuilt with `ConvertFrom-Json -AsHashtable`, keeping arguments out of the executable script text (no command injection), and serialises requests so framed output blocks never interleave.
+The PowerShell bridge passes model-supplied parameters as a base64-encoded JSON blob rebuilt with `ConvertFrom-Json -AsHashtable`, keeping arguments out of the executable script text (no command injection). Requests are serialised, and every request's output is framed with **request-scoped unique markers** — a timed-out command's late output can never be mis-attributed to a later call, and marker-lookalike text in tenant data cannot spoof a frame. On a command timeout the pwsh child is killed and the next call reconnects cleanly. All 26 tools declare MCP annotations (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`) so hosts can gate destructive calls.
 
 ## Roadmap
 
 Planned work is tracked in **[ROADMAP.md](ROADMAP.md)**, organised by feasibility
 tier — whether a documented API surface actually exists to build on. In brief:
 
-- 🟢 **Ready next:** sensitivity-label **write** and publishing (`New-/Set-Label`, `*-LabelPolicy`), plus DLP delete (`Remove-DlpCompliancePolicy/Rule`). *Changing a DLP policy's mode (`set_dlp_policy`) is now shipped.*
+- 🟢 **Ready next:** auto-labeling (`*-AutoSensitivityLabelPolicy`), keyword dictionaries, richer DLP rule conditions, and migrating label reads to the GA Graph `dataSecurityAndGovernance` surface. *(Label write/publish/read-back, DLP delete, policy-location editing, and endpoint-rule tuning have all shipped.)*
 - 🟡 **Feasible but complex:** custom SIT write (requires hand-built rule-package XML), retention labels.
 - 🔴 **Blocked:** trainable classifier catalog — no confirmed cmdlet or Graph API; portal-only today, needs live-tenant discovery first.
 - 🔭 **New planes:** Insider Risk Management, Communications Compliance, DSPM / DSPM for AI.

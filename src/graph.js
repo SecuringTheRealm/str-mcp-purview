@@ -5,14 +5,26 @@
 // the SDK. A raw fetch against the beta endpoint with a bearer token from
 // @azure/identity is cleaner and mirrors the raw-fetch idiom of nvd-mcp-local.
 
-import { InteractiveBrowserCredential, DeviceCodeCredential } from "@azure/identity";
+import {
+  InteractiveBrowserCredential,
+  DeviceCodeCredential,
+  ClientCertificateCredential,
+} from "@azure/identity";
 
 const GRAPH_BETA = "https://graph.microsoft.com/beta";
 
 // Scopes required for the sensitivity-label read tools. Delegated permission
 // InformationProtectionPolicy.Read is the least-privileged option per the
-// Graph reference for the sensitivityLabel resource.
+// Graph reference for the sensitivityLabel resource. In app-only mode the
+// token must be requested for .default (the app's granted application
+// permissions, i.e. InformationProtectionPolicy.Read.All).
 const LABEL_SCOPES = ["https://graph.microsoft.com/InformationProtectionPolicy.Read"];
+const APP_SCOPES = ["https://graph.microsoft.com/.default"];
+
+// App-only (certificate) mode — for headless hosts (e.g. the Azure Functions
+// host) where no human can complete an interactive sign-in. /me/ paths do not
+// exist for app tokens, so label reads switch to the tenant-wide path.
+export const appOnly = Boolean(process.env.AZURE_CLIENT_CERTIFICATE_PATH);
 
 let credential = null;
 
@@ -27,6 +39,13 @@ function getCredential() {
         "to the tenant and a public-client app registration that has the " +
         "delegated InformationProtectionPolicy.Read permission granted."
     );
+  }
+
+  if (appOnly) {
+    credential = new ClientCertificateCredential(tenantId, clientId, {
+      certificatePath: process.env.AZURE_CLIENT_CERTIFICATE_PATH,
+    });
+    return credential;
   }
 
   // PURVIEW_AUTH_MODE=devicecode is useful on headless boxes where no browser
@@ -51,8 +70,8 @@ function getCredential() {
   return credential;
 }
 
-async function bearer(scopes) {
-  const token = await getCredential().getToken(scopes);
+async function bearer() {
+  const token = await getCredential().getToken(appOnly ? APP_SCOPES : LABEL_SCOPES);
   if (!token?.token) throw new Error("Failed to acquire a Microsoft Graph access token.");
   return token.token;
 }
@@ -63,13 +82,13 @@ async function bearer(scopes) {
  * @param {object} [params]  Query string parameters (OData $select, $filter, ...).
  */
 export async function graphGet(path, params = {}) {
-  const url = new URL(`${GRAPH_BETA}${path}`);
+  const url = new URL(path.startsWith("https://") ? path : `${GRAPH_BETA}${path}`);
   for (const [k, v] of Object.entries(params)) {
     if (v != null) url.searchParams.set(k, String(v));
   }
   const res = await fetch(url.toString(), {
     headers: {
-      Authorization: `Bearer ${await bearer(LABEL_SCOPES)}`,
+      Authorization: `Bearer ${await bearer()}`,
       Accept: "application/json",
     },
   });
@@ -78,6 +97,20 @@ export async function graphGet(path, params = {}) {
     throw new Error(`Graph ${res.status} ${res.statusText}${detail ? `: ${truncateError(detail)}` : ""}`);
   }
   return res.json();
+}
+
+/**
+ * GET a Graph collection, following @odata.nextLink so large tenants are not
+ * silently truncated to the first page.
+ */
+export async function graphGetAll(path, params = {}) {
+  const items = [];
+  let data = await graphGet(path, params);
+  for (;;) {
+    items.push(...(data.value ?? []));
+    if (!data["@odata.nextLink"]) return items;
+    data = await graphGet(data["@odata.nextLink"]);
+  }
 }
 
 function truncateError(text) {
