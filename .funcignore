@@ -1,0 +1,7 @@
+.git
+.github
+test
+Containerfile
+*.md
+.env.template
+.mcp.json.example

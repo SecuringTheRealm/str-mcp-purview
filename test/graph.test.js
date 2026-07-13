@@ -20,10 +20,11 @@ mock.module("@azure/identity", {
   namedExports: {
     InteractiveBrowserCredential: FakeCredential,
     DeviceCodeCredential: FakeCredential,
+    ClientCertificateCredential: FakeCredential,
   },
 });
 
-const { graphGet } = await import("../src/graph.js");
+const { graphGet, graphGetAll } = await import("../src/graph.js");
 
 function withEnv(vars, fn) {
   const saved = {};
@@ -86,6 +87,26 @@ test("graphGet", async (t) => {
         text: async () => JSON.stringify({ error: { message: "Insufficient privileges" } }),
       });
       await assert.rejects(() => graphGet("/foo"), /Graph 403 Forbidden: Insufficient privileges/);
+    });
+  });
+
+  await t.test("graphGetAll follows @odata.nextLink until the collection is exhausted", async () => {
+    await withEnv({ AZURE_TENANT_ID: "tenant-1", AZURE_CLIENT_ID: "client-1" }, async () => {
+      const urls = [];
+      const pages = {
+        "https://graph.microsoft.com/beta/labels": {
+          value: [{ id: "1" }],
+          "@odata.nextLink": "https://graph.microsoft.com/beta/labels?$skiptoken=p2",
+        },
+        "https://graph.microsoft.com/beta/labels?$skiptoken=p2": { value: [{ id: "2" }, { id: "3" }] },
+      };
+      globalThis.fetch = async (url) => {
+        urls.push(url);
+        return { ok: true, json: async () => pages[url] };
+      };
+      const result = await graphGetAll("/labels");
+      assert.deepEqual(result.map((l) => l.id), ["1", "2", "3"]);
+      assert.equal(urls.length, 2);
     });
   });
 

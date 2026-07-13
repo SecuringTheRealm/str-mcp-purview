@@ -43,9 +43,10 @@ Three rules follow from this:
 
 ## Ships today
 
-Baseline so the gaps below are legible. **24 tools, 2 prompts, 3 resources.**
+Baseline so the gaps below are legible. **26 tools, 2 prompts, 3 resources.** All
+tools declare MCP annotations (`readOnlyHint`/`destructiveHint`/`idempotentHint`/`openWorldHint`).
 
-- **Labels (read):** `list_sensitivity_labels`, `get_sensitivity_label`, `get_label_policy_settings`
+- **Labels (read):** `list_sensitivity_labels`, `get_sensitivity_label` (incl. protection-settings read-back), `get_label_policy_settings`, `list_label_policies`, `get_label_policy`
 - **Labels (write):** `create_sensitivity_label`, `set_sensitivity_label`, `create_label_policy`, `set_label_policy`
 - **DLP (read):** `list_dlp_policies`, `get_dlp_policy`, `list_dlp_rules`
 - **DLP (write):** `create_dlp_policy`, `set_dlp_policy`, `create_dlp_rule`, `set_dlp_rule`
@@ -66,10 +67,11 @@ Every remaining DLP / label / classification gap, mapped to the tier it belongs 
 | --- | --- | --- | --- |
 | DLP CRUD | ✅ Rule read `get_dlp_rule` — **shipped** (single rule by `identity`, or all rules in a `policy`) | `Get-DlpComplianceRule` | ✅ done |
 | DLP CRUD | ✅ Delete policy / rule — **shipped** (`remove_dlp_policy`, `remove_dlp_rule`) | `Remove-DlpCompliancePolicy` / `-DlpComplianceRule` | ✅ done |
-| DLP CRUD | Edit policy **locations** (today `set_dlp_policy` = mode/comment only) | `Set-DlpCompliancePolicy` | 🟢 T1 |
-| DLP CRUD | `set_`/`remove_` for endpoint & Copilot rules | `Set-DlpComplianceRule` | 🟢 T1 |
+| DLP CRUD | ✅ Edit policy **locations** — **shipped** (`set_dlp_policy` `add_locations`/`remove_locations`, incl. Teams & Endpoint) | `Set-DlpCompliancePolicy` | ✅ done |
+| DLP CRUD | ✅ `set_`/`remove_` for endpoint & Copilot rules — **shipped** (`set_dlp_rule` handles endpoint restrictions + SIT changes; `remove_dlp_rule` was already generic) | `Set-DlpComplianceRule` | ✅ done |
 | DLP conditions | Richer rule conditions/actions (labels, doc-props, sender/recipient, file-type; encrypt/RMS, quarantine, incident report) | `*-DlpComplianceRule` | 🟢 T1 → 🟡 |
-| DLP locations | Teams, on-prem scanner, PowerBI, 3rd-party-app locations + exceptions/adaptive scopes | `New-DlpCompliancePolicy` | 🟢 T1 |
+| DLP locations | On-prem scanner, PowerBI, 3rd-party-app locations + exceptions/adaptive scopes (Teams ✅ shipped on create/set) | `New-DlpCompliancePolicy` | 🟢 T1 |
+| Labels | Migrate label reads from `/beta` `informationProtection` to the GA v1.0 `dataSecurityAndGovernance` surface (new `SensitivityLabel.Read` scopes; richer label object; **no GA equivalent for `labelPolicySettings`** — that read stays beta). Needs live-tenant shape validation before switching. | Graph v1.0 | 🟢 T1 |
 | Labels | ✅ Delete label / policy — **shipped** (`remove_sensitivity_label`, `remove_label_policy`) | `Remove-Label` / `Remove-LabelPolicy` | ✅ done |
 | Labels | **Auto-labeling** (apply by condition) | `*-AutoSensitivityLabelPolicy` + `...Rule` | 🟢 T1 |
 | Classification | Keyword dictionaries | `*-DlpKeywordDictionary` | 🟢 T1 |
@@ -123,7 +125,8 @@ No new plane, no XML, no new auth.
   summarised by the formatters — list reads stay lean. Unblocks scope/exception
   hygiene (dimension **C**) for the DLP deep-dive analysis. *(Verify exact
   `ExceptIf*`/location property names on a live tenant.)*
-- **Remaining gap:** policy **location** editing (`set_dlp_policy` = mode/comment only).
+- **✅ Done — location editing:** `set_dlp_policy` now adds/removes Exchange,
+  SharePoint, OneDrive, Teams, and Endpoint locations (`Add*/Remove*Location`).
 
 ### DLP surface coverage (locations & enforcement planes)
 The traditional and endpoint surfaces are done; the rest ride the *same*
@@ -131,9 +134,9 @@ The traditional and endpoint surfaces are done; the rest ride the *same*
 location params, enforcement planes, and action shapes.
 
 - **✅ Done — traditional M365:** Exchange / SharePoint / OneDrive locations, block/notify/alert actions.
-- **✅ Done — Endpoint & Microsoft Edge:** `create_endpoint_dlp_policy` (`EndpointDlpLocation`) + `create_endpoint_dlp_rule` (`EndpointDlpRestrictions`). Covers on-device activities and Edge inline browser DLP (`PasteToBrowser`, cloud upload). Kept as **separate tools** so the traditional DLP schemas stay lean.
-  - *Follow-ups:* `set_endpoint_dlp_rule` (tune audit→block); Teams location on the traditional policy; `OnPremisesScannerDlpRestrictions`.
-  - *Out of tool scope:* blocking *specific* AI/cloud domains needs tenant sensitive-service-domain settings, configured in the portal.
+- **✅ Done — Endpoint:** `create_endpoint_dlp_policy` (`EndpointDlpLocation`) + `create_endpoint_dlp_rule` (`EndpointDlpRestrictions`), covering the documented device activities (`Print`, `CopyPaste`, `ScreenCapture`, `RemovableMedia`, `NetworkShare`). Kept as **separate tools** so the traditional DLP schemas stay lean. Rule tuning (audit→block) ✅ shipped via `set_dlp_rule` `endpoint_restrictions`; Teams location ✅ shipped on create/set.
+  - *Follow-ups:* `OnPremisesScannerDlpRestrictions`; `UnallowedApps` (different value shape).
+  - *Out of tool scope:* browser/AI-site restrictions (paste-to-browser, cloud upload, sensitive service domains) are portal-configured settings, not rule-level `EndpointDlpRestrictions` — revisit if `Get/Set-PolicyConfig` proves automatable.
 - **🟡 AI DLP (Copilot / Foundry / enterprise AI):** all ride the same
   `*-DlpCompliancePolicy` / `*-DlpComplianceRule` cmdlets; the common enabler is a
   **`Locations` + `AdvancedRule` JSON builder** plus the AI-specific actions
@@ -154,8 +157,9 @@ location params, enforcement planes, and action shapes.
      `labels` group — **no AdvancedRule JSON needed** (that's only for cross-
      condition-type Boolean logic). Constraint enforced: SIT and label conditions
      can't share a rule. *Deferred:* external-email grounding (preview) — needs
-     condition-param discovery. *Verify on live tenant:* Copilot location GUID,
-     `ExcludeContentProcessing` setting string.
+     condition-param discovery. Copilot location GUID and
+     `ExcludeContentProcessing` setting string confirmed against the
+     New-DlpCompliancePolicy/-Rule references.
   3. **Prompt/response capture (DSPM for AI).** A **separate cmdlet family** —
      `New`/`Set`/`Get`/`Remove-FeatureConfiguration` with a `ScenarioConfig` JSON.
      Enables capturing prompts/responses for enterprise & unmanaged AI apps. New

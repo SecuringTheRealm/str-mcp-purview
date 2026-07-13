@@ -1,0 +1,14 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "FUNCTIONS_WORKER_RUNTIME": "node",
+    "AzureWebJobsFeatureFlags": "EnableMcpCustomHandlerPreview",
+    "AZURE_TENANT_ID": "<tenant-id>",
+    "AZURE_CLIENT_ID": "<app-client-id>",
+    "AZURE_CLIENT_CERTIFICATE_PATH": "/path/to/graph-cert.pem",
+    "PURVIEW_APP_ID": "<app-client-id>",
+    "PURVIEW_ORGANIZATION": "<tenant>.onmicrosoft.com",
+    "PURVIEW_CERT_PATH": "/path/to/ipps-cert.pfx",
+    "PURVIEW_CERT_PASSWORD": "<pfx-password>"
+  }
+}
