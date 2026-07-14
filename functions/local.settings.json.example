@@ -3,12 +3,12 @@
   "Values": {
     "FUNCTIONS_WORKER_RUNTIME": "node",
     "AzureWebJobsFeatureFlags": "EnableMcpCustomHandlerPreview",
-    "AZURE_TENANT_ID": "<tenant-id>",
-    "AZURE_CLIENT_ID": "<app-client-id>",
-    "AZURE_CLIENT_CERTIFICATE_PATH": "/path/to/graph-cert.pem",
-    "PURVIEW_APP_ID": "<app-client-id>",
+
+    "// auth": "Managed identity: the platform mints the token, so there is no certificate or password to store here. Assign the Function App's identity the application permissions (InformationProtectionPolicy.Read.All, Exchange.ManageAsApp) and the Compliance Administrator role. AZURE_CLIENT_ID is only needed for a USER-assigned identity.",
+    "PURVIEW_AUTH_MODE": "managedidentity",
+    "AZURE_CLIENT_ID": "<user-assigned-identity-client-id, omit if system-assigned>",
     "PURVIEW_ORGANIZATION": "<tenant>.onmicrosoft.com",
-    "PURVIEW_CERT_PATH": "/path/to/ipps-cert.pfx",
-    "PURVIEW_CERT_PASSWORD": "<pfx-password>"
+
+    "// platform": "A Linux Functions host serves the Graph label tools only. Connect-IPPSSession is Windows-only, so the DLP tools fail fast here — see README 'Platform support'."
   }
 }

@@ -21,6 +21,7 @@ mock.module("@azure/identity", {
     InteractiveBrowserCredential: FakeCredential,
     DeviceCodeCredential: FakeCredential,
     ClientCertificateCredential: FakeCredential,
+    ManagedIdentityCredential: FakeCredential,
   },
 });
 
@@ -52,7 +53,7 @@ test("graphGet", async (t) => {
       delete process.env.AZURE_CLIENT_ID;
       await assert.rejects(
         () => graphGet("/me/security/informationProtection/sensitivityLabels"),
-        /Graph auth is not configured/
+        /Auth is not configured/
       );
     });
   });

@@ -22,17 +22,44 @@
 // README "Platform support". The gate below fails fast with a clear message
 // instead of a confusing sign-in error; PURVIEW_ALLOW_UNSUPPORTED_OS=1 skips
 // it for anyone whose module version proves otherwise.
+//
+// AUTH: this bridge spawns pwsh with piped stdio, so the child has no console
+// and Connect-IPPSSession's own interactive sign-in cannot complete there —
+// WAM fails on the missing window handle and the -DisableWAM browser fallback
+// hangs. So we do not ask it to sign in. We acquire the Security & Compliance
+// token here in Node (which can sign in) and hand it over via -AccessToken.
+// The credential behind that token is chosen in auth.js — interactive, device
+// code, managed identity, or certificate — which is what makes the same bridge
+// work locally and on a hosted, human-less box.
+//
+// Certificate app-only is the one exception: Connect-IPPSSession reads it from
+// the Windows certificate store by thumbprint, which Node cannot do, so that
+// path stays cmdlet-native.
 
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { getToken } from "./auth.js";
 
 const EXEC_TIMEOUT_MS = Number(process.env.PURVIEW_EXEC_TIMEOUT_MS) || 60_000;
-// The first Connect-IPPSSession opens a browser and blocks on a human sign-in,
-// so it needs a far larger budget than a normal cmdlet's EXEC_TIMEOUT_MS.
+// The connect can block on an interactive sign-in, so it needs a far larger
+// budget than a normal cmdlet's EXEC_TIMEOUT_MS.
 const CONNECT_TIMEOUT_MS = Number(process.env.PURVIEW_CONNECT_TIMEOUT_MS) || 300_000;
+// Resource scope for a Security & Compliance access token.
+const EXO_SCOPE = process.env.PURVIEW_EXO_SCOPE || "https://outlook.office365.com/.default";
 
 /** Escape a value for inclusion inside a single-quoted PowerShell string. */
 const q = (s) => String(s).replace(/'/g, "''");
+
+/**
+ * An error raised by the bridge itself rather than by a cmdlet. Flagged so the
+ * retry path can tell "the session went stale, safely re-run" apart from "the
+ * command timed out and may already have applied" — see isAuthExpiry.
+ */
+function bridgeError(message) {
+  const err = new Error(message);
+  err.bridge = true;
+  return err;
+}
 
 const PLATFORM_ERROR =
   "The DLP and label write/read-back tools need Security & Compliance PowerShell " +
@@ -40,6 +67,18 @@ const PLATFORM_ERROR =
   "available in PowerShell 7 on macOS or Linux. The sensitivity-label read tools " +
   "(Microsoft Graph) still work on this platform. See README → 'Platform support'. " +
   "Set PURVIEW_ALLOW_UNSUPPORTED_OS=1 to attempt the connection anyway.";
+
+// Derive the tenant org domain (Connect-IPPSSession -Organization) from the
+// token's upn claim, so token mode works without an explicit PURVIEW_ORGANIZATION.
+function orgFromToken(token) {
+  try {
+    const claims = JSON.parse(Buffer.from(token.split(".")[1], "base64url").toString("utf8"));
+    const upn = claims.upn || claims.unique_name || "";
+    return upn.includes("@") ? upn.split("@")[1] : null;
+  } catch {
+    return null;
+  }
+}
 
 class PowerShellBridge {
   constructor() {
@@ -92,7 +131,7 @@ class PowerShellBridge {
       // in flight, and we must keep using the same streams we attached to.
       const proc = this.proc;
       if (!proc) {
-        reject(new Error("PowerShell (pwsh) is not available. Install PowerShell 7+ or set PURVIEW_PWSH."));
+        reject(bridgeError("PowerShell (pwsh) is not available. Install PowerShell 7+ or set PURVIEW_PWSH."));
         return;
       }
 
@@ -116,7 +155,7 @@ class PowerShellBridge {
       const timer = setTimeout(() => {
         // Settle before killing: kill() triggers the 'exit' listener, which
         // must not win the race and mask the timeout message.
-        settle(reject, new Error(
+        settle(reject, bridgeError(
           `PowerShell command timed out after ${timeoutMs}ms. The PowerShell session was reset; the next call will reconnect.`
         ));
         // The command is still running inside the child and would keep the
@@ -125,7 +164,7 @@ class PowerShellBridge {
         proc.kill();
       }, timeoutMs);
       const onExit = () => {
-        settle(reject, new Error("The PowerShell process exited before responding. The next call will start a fresh session."));
+        settle(reject, bridgeError("The PowerShell process exited before responding. The next call will start a fresh session."));
       };
       const onData = (chunk) => {
         buffer += chunk.toString();
@@ -175,64 +214,95 @@ class PowerShellBridge {
       try {
         proc.stdin.write(wrapped);
       } catch (err) {
-        settle(reject, new Error(`Failed to send command to PowerShell: ${err.message}`));
+        settle(reject, bridgeError(`Failed to send command to PowerShell: ${err.message}`));
       }
     });
   }
 
   /**
-   * Build the Connect-IPPSSession invocation. Two modes:
-   *  - App-only (unattended/hosted): PURVIEW_APP_ID + PURVIEW_ORGANIZATION +
-   *    a certificate (PURVIEW_CERT_THUMBPRINT, or PURVIEW_CERT_PATH with
-   *    optional PURVIEW_CERT_PASSWORD). No browser, no human.
-   *  - Delegated (default): interactive browser sign-in as the operator.
+   * Build the Connect-IPPSSession invocation. Three modes, in precedence order:
+   *
+   *  1. Certificate app-only — PURVIEW_APP_ID + PURVIEW_ORGANIZATION +
+   *     PURVIEW_CERT_THUMBPRINT. Cmdlet-native, because the certificate is read
+   *     from the Windows certificate store and Node cannot do that. Unattended
+   *     Windows hosts. No browser, no human, no secret in the script text.
+   *  2. Token injection (default) — we sign in here in Node and pass the token
+   *     over. See the AUTH note at the top of this file for why the child
+   *     cannot sign in itself. Works locally (interactive/device code) and on a
+   *     hosted box (managed identity), with the credential chosen in auth.js.
+   *  3. Interactive — PURVIEW_DLP_AUTH_MODE=interactive. Lets the pwsh child do
+   *     its own sign-in. Retained for a host that gives pwsh a real console;
+   *     it HANGS on this server's piped-stdio child, so it is not the default.
    */
-  #connectCommand() {
+  #certCommand() {
     const appId = process.env.PURVIEW_APP_ID;
     const org = process.env.PURVIEW_ORGANIZATION;
     const thumbprint = process.env.PURVIEW_CERT_THUMBPRINT;
-    const certPath = process.env.PURVIEW_CERT_PATH;
-    if (appId && org && (thumbprint || certPath)) {
-      const cert = thumbprint
-        ? `-CertificateThumbprint '${q(thumbprint)}'`
-        : `-CertificateFilePath '${q(certPath)}'` +
-          (process.env.PURVIEW_CERT_PASSWORD
-            ? ` -CertificatePassword (ConvertTo-SecureString '${q(process.env.PURVIEW_CERT_PASSWORD)}' -AsPlainText -Force)`
-            : "");
-      return `Connect-IPPSSession -AppId '${q(appId)}' ${cert} -Organization '${q(org)}' -ShowBanner:$false`;
-    }
+    if (!appId || !org || !thumbprint) return null;
+    return (
+      `Connect-IPPSSession -AppId '${q(appId)}' -CertificateThumbprint '${q(thumbprint)}' ` +
+      `-Organization '${q(org)}' -ShowBanner:$false`
+    );
+  }
 
+  // Acquire a Security & Compliance token in Node and hand it to the child. The
+  // token and org travel as a base64 JSON blob rebuilt inside pwsh, so the
+  // bearer token never appears in the script text or in process arguments.
+  async #tokenCommand() {
+    const token = await getToken(EXO_SCOPE);
+    const org = process.env.PURVIEW_ORGANIZATION || orgFromToken(token);
+    if (!org) {
+      throw new Error(
+        "DLP auth needs the tenant's organization domain. Set PURVIEW_ORGANIZATION " +
+          "to your <tenant>.onmicrosoft.com domain."
+      );
+    }
+    const b64 = Buffer.from(JSON.stringify({ token, org }), "utf8").toString("base64");
+    return [
+      `$__c = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${b64}')) | ConvertFrom-Json`,
+      "Connect-IPPSSession -AccessToken $__c.token -Organization $__c.org -ShowBanner:$false",
+    ].join("\n");
+  }
+
+  // ExchangeOnlineManagement 3.7+ defaults to the WAM broker, which needs an
+  // interactive window handle; -DisableWAM falls back to the MSAL system-browser
+  // flow. Neither completes from a piped-stdio child — see the AUTH note above.
+  #interactiveCommand() {
     const upn = process.env.PURVIEW_UPN;
-    // ExchangeOnlineManagement 3.7+ defaults to the WAM broker, which needs an
-    // interactive window handle. This server runs pwsh as a windowless child
-    // (piped stdio), so WAM fails instantly with "A window handle must be
-    // configured." -DisableWAM (added in 3.7.2) falls back to the MSAL
-    // system-browser flow, which works from a headless child (external browser
-    // + localhost redirect). Set PURVIEW_ENABLE_WAM=1 to opt back in on an
-    // interactive host.
     const noWam = process.env.PURVIEW_ENABLE_WAM === "1" ? "" : " -DisableWAM";
     return upn
       ? `Connect-IPPSSession -UserPrincipalName '${q(upn)}'${noWam} -ShowBanner:$false`
       : `Connect-IPPSSession${noWam} -ShowBanner:$false`;
   }
 
+  async #connectCommand() {
+    const cert = this.#certCommand();
+    if (cert) return cert;
+    const mode = (process.env.PURVIEW_DLP_AUTH_MODE || "token").toLowerCase();
+    return mode === "interactive" ? this.#interactiveCommand() : this.#tokenCommand();
+  }
+
   /** Connect the IPPSSession on first use (single-flight, safe under concurrency). */
   #ensureConnected() {
     if (this.connecting) return this.connecting;
     if (process.platform !== "win32" && process.env.PURVIEW_ALLOW_UNSUPPORTED_OS !== "1") {
-      return Promise.reject(new Error(PLATFORM_ERROR));
+      return Promise.reject(bridgeError(PLATFORM_ERROR));
     }
-    const script = [
-      "if (-not (Get-Module -ListAvailable -Name ExchangeOnlineManagement)) {",
-      "  throw 'The ExchangeOnlineManagement module is not installed. Run: Install-Module ExchangeOnlineManagement -Scope CurrentUser'",
-      "}",
-      "Import-Module ExchangeOnlineManagement -ErrorAction Stop",
-      this.#connectCommand(),
-      "'connected'",
-    ].join("\n");
-    // The delegated connect blocks on an interactive browser sign-in, so give
-    // it the longer connect budget rather than the per-cmdlet timeout.
-    this.connecting = this.#enqueue(script, CONNECT_TIMEOUT_MS).catch((err) => {
+    // Acquiring the token is async, so the whole build-and-connect runs inside
+    // the single-flight promise: concurrent first calls share one sign-in.
+    this.connecting = (async () => {
+      const script = [
+        "if (-not (Get-Module -ListAvailable -Name ExchangeOnlineManagement)) {",
+        "  throw 'The ExchangeOnlineManagement module is not installed. Run: Install-Module ExchangeOnlineManagement -Scope CurrentUser'",
+        "}",
+        "Import-Module ExchangeOnlineManagement -ErrorAction Stop",
+        await this.#connectCommand(),
+        "'connected'",
+      ].join("\n");
+      // The sign-in behind the token can block on a human, so give the connect
+      // the longer budget rather than the per-cmdlet timeout.
+      return this.#enqueue(script, CONNECT_TIMEOUT_MS);
+    })().catch((err) => {
       this.connecting = null; // allow a retry on the next call
       throw err;
     });
@@ -245,7 +315,7 @@ class PowerShellBridge {
    * @param {object} [params]  Splatted parameters; values may be nested arrays/objects.
    * @param {string[]} [selectProps]  If given, pipe through Select-Object to trim output.
    */
-  async invoke(cmdlet, params = {}, selectProps = null) {
+  async invoke(cmdlet, params = {}, selectProps = null, retried = false) {
     await this.#ensureConnected();
     const b64 = Buffer.from(JSON.stringify(params ?? {}), "utf8").toString("base64");
     const select = selectProps?.length ? ` | Select-Object ${selectProps.join(",")}` : "";
@@ -254,8 +324,43 @@ class PowerShellBridge {
       "if ($null -eq $__p) { $__p = @{} }",
       `${cmdlet} @__p${select}`,
     ].join("\n");
-    return this.#enqueue(script);
+    try {
+      return await this.#enqueue(script);
+    } catch (err) {
+      // An injected access token lasts about an hour; when it lapses the cmdlet
+      // rejects the call outright. Drop the stale session and reconnect once
+      // (which mints a fresh token) before giving up.
+      if (!retried && isAuthExpiry(err)) {
+        this.connecting = null;
+        return this.invoke(cmdlet, params, selectProps, true);
+      }
+      throw err;
+    }
   }
+}
+
+/**
+ * Does this error mean the session/token lapsed, so a reconnect-and-retry is
+ * both safe and likely to succeed?
+ *
+ * Only cmdlet-reported auth rejections qualify. Errors the bridge raised itself
+ * are excluded: a timed-out cmdlet may already have applied its change inside
+ * the child, so retrying it could double-write a New-/Set- call. Keep this
+ * matcher narrow — words like "session" appear in the bridge's own messages.
+ */
+function isAuthExpiry(err) {
+  if (!err || err.bridge) return false;
+  const m = String(err.message || "").toLowerCase();
+  return (
+    m.includes("unauthorized") ||
+    m.includes("access token") ||
+    m.includes("token has expired") ||
+    m.includes("token is expired") ||
+    m.includes("invalid token") ||
+    m.includes("authentication failed") ||
+    m.includes("re-authenticate") ||
+    m.includes("reauthenticate")
+  );
 }
 
 export const powershell = new PowerShellBridge();

@@ -143,53 +143,66 @@ Runs the unit and integration test suite with Node's built-in test runner (`node
 
 ## Authentication flow
 
-The two auth planes sign in independently and the first call on each triggers its own sign-in:
+The two auth planes sign in independently:
 
-- **Labels (Graph):** the first label tool call triggers an interactive browser sign-in via `@azure/identity`. The token is cached in memory for the session.
-- **DLP (PowerShell):** the first DLP tool call starts a single background `pwsh` process and runs `Connect-IPPSSession`, which opens an interactive browser sign-in **once**. That session is reused for every later DLP command. Sign-in prompts and URLs are written to **stderr** so they never corrupt the MCP stdio channel.
+- **Labels (Graph):** the first label tool call triggers an interactive browser sign-in via `@azure/identity`, in this Node process. The token is cached in memory for the session.
+- **DLP (PowerShell):** the DLP tools run `Connect-IPPSSession` inside a background `pwsh` child. That child is spawned with piped stdio and **no interactive console**, and `Connect-IPPSSession`'s own interactive sign-in (browser *or* WAM) requires a console — so it hangs. The server therefore signs in **here in Node** (which can), acquires a Security & Compliance access token, and passes it to `Connect-IPPSSession -AccessToken`. This is **token-injection mode**, and it is the default.
 
-Because the sign-in **blocks the tool call** until you complete it, the first call on each plane can sit for a while. Later calls in the same session are fast (cached).
+> **Why not just let `Connect-IPPSSession` sign in?** It can't from this server. A pwsh child launched by Node has no window station, so WAM fails with *"A window handle must be configured"* and the `-DisableWAM` browser fallback hangs forever. Interactive `Connect-IPPSSession` only works on a host that gives pwsh a real console — not this one.
 
-### Auth environment variables
+### Local setup (default)
 
-| Variable | Plane | Default | Purpose |
-| --- | --- | --- | --- |
-| `PURVIEW_AUTH_MODE` | Graph | `interactive` | Set to `devicecode` to sign in with a URL + code instead of a browser popup (see troubleshooting). |
-| `AZURE_REDIRECT_URI` | Graph | `http://localhost` | Redirect URI for the interactive browser flow. |
-| `AZURE_CLIENT_CERTIFICATE_PATH` | Graph | *(none)* | Switches the Graph plane to **certificate app-only** auth (headless hosts). Label reads then use the tenant-wide path and need the application permission `InformationProtectionPolicy.Read.All`. |
-| `PURVIEW_UPN` | DLP | *(none)* | Pre-fills the account for `Connect-IPPSSession`. |
-| `PURVIEW_APP_ID` | DLP | *(none)* | With `PURVIEW_ORGANIZATION` + a certificate below, switches the PowerShell plane to **certificate app-only** auth (`Connect-IPPSSession -AppId …`). |
-| `PURVIEW_ORGANIZATION` | DLP | *(none)* | Tenant for app-only auth, e.g. `contoso.onmicrosoft.com`. |
-| `PURVIEW_CERT_THUMBPRINT` | DLP | *(none)* | App-only cert by thumbprint (Windows cert store only). |
-| `PURVIEW_CERT_PATH` / `PURVIEW_CERT_PASSWORD` | DLP | *(none)* | App-only cert by file path (portable), with optional password. |
-| `PURVIEW_ENABLE_WAM` | DLP | *(off)* | Set to `1` to use the Windows WAM broker instead of the browser (only works on an interactive desktop host — see troubleshooting). |
-| `PURVIEW_CONNECT_TIMEOUT_MS` | DLP | `300000` | How long the interactive `Connect-IPPSSession` may take before timing out (5 min). |
-| `PURVIEW_EXEC_TIMEOUT_MS` | DLP | `60000` | Per-cmdlet timeout for DLP commands once connected. On timeout the pwsh session is reset; the next call reconnects. |
-| `PURVIEW_PWSH` | DLP | `pwsh` | Path to the PowerShell 7+ executable. |
-| `PURVIEW_ALLOW_UNSUPPORTED_OS` | DLP | *(off)* | Set to `1` to attempt `Connect-IPPSSession` on macOS/Linux despite Microsoft not supporting it there. |
-
-**App-only (unattended) auth** — for headless hosts, or local unattended use: give the app registration the **application** permissions `InformationProtectionPolicy.Read.All` (Graph) and **Office 365 Exchange Online → Exchange.ManageAsApp**, grant admin consent, upload a certificate, and assign the app's service principal the **Compliance Administrator** Entra role. Then set the app-only variables above. Every action runs as the app, not a signed-in admin — scope its role accordingly. See [Microsoft's app-only auth guide](https://learn.microsoft.com/powershell/exchange/app-only-auth-powershell-v2).
-
-### Troubleshooting sign-in
-
-**The browser opens in the wrong profile / you want to pick where you sign in (Graph label tools).**
-Switch the Graph plane to device code: it prints a URL and a code to stderr, and you open the URL in whatever browser/profile you like. Add `PURVIEW_AUTH_MODE=devicecode` to the server's `env` block:
+1. **App registration:** add a **delegated** permission for **Office 365 Exchange Online** (the Exchange management scope, e.g. `Exchange.Manage`) and grant admin consent. Without it, token acquisition fails with `AADSTS650057: Invalid resource`.
+2. **Configure the server** with your tenant and app registration:
 
 ```jsonc
 "env": {
   "AZURE_TENANT_ID": "<tenant-id>",
   "AZURE_CLIENT_ID": "<client-id>",
-  "PURVIEW_AUTH_MODE": "devicecode"
+  "PURVIEW_ORGANIZATION": "<tenant>.onmicrosoft.com"
 }
 ```
 
-This requires **Allow public client flows = Yes** on the app registration (step 1.4). Restart the MCP host after editing. Note the device-code prompt is written to the server's **stderr** — view it in your MCP host's server logs. *Device code applies to the Graph label tools only;* `Connect-IPPSSession` (the DLP/Copilot plane) does not support it.
+The first DLP call does one interactive sign-in **in Node** (browser, or device code via `PURVIEW_AUTH_MODE=devicecode`) to acquire the token; the pwsh child connects silently with it, and the token refreshes automatically as it expires. Conditional Access, MFA and device compliance all still apply, because the token belongs to *you*.
 
-**`Connect-IPPSSession` fails instantly with "A window handle must be configured."**
-This is the WAM broker (default since ExchangeOnlineManagement 3.7.0) failing because the server runs `pwsh` as a windowless child — WAM needs a native window handle to parent its sign-in dialog. The server works around it by passing `-DisableWAM` (added in module 3.7.2), which uses the system-browser flow instead — this is the default and needs no configuration. Only set `PURVIEW_ENABLE_WAM=1` if you are running on a fully interactive desktop where the WAM popup can appear. For unattended use, Microsoft's recommended fix is certificate app-only auth (see [Auth environment variables](#auth-environment-variables)) rather than any interactive flow.
+### Unattended and hosted setup
 
-**The first DLP call "takes ages" / times out.**
-That is the interactive `Connect-IPPSSession` browser sign-in blocking the call. Look for a browser window (it may open behind your terminal or in another profile) and complete it — do not cancel the tool call. For **unattended / headless** use where no browser is available, `Connect-IPPSSession` also supports certificate-based app-only auth (`-AppId` / `-CertificateThumbprint` / `-Organization`); wiring that into the server requires a code change and a certificate uploaded to the app registration plus a Purview admin role assigned to the app.
+Both planes take their token from the same credential, so an unattended host only has to change *which credential* — the bridge still connects the same way.
+
+- **Managed identity** (`PURVIEW_AUTH_MODE=managedidentity`) — the platform mints the token. No certificate, no password, nothing at rest to rotate or leak. **Prefer this for any Azure-hosted deployment.**
+- **Certificate app-only** — for a non-Azure unattended host. On the PowerShell plane, `Connect-IPPSSession` reads the certificate from the **Windows certificate store by thumbprint** (`PURVIEW_APP_ID` + `PURVIEW_ORGANIZATION` + `PURVIEW_CERT_THUMBPRINT`); on the Graph plane, point `AZURE_CLIENT_CERTIFICATE_PATH` at the certificate file.
+
+Either way, grant the app registration the **application** permissions `InformationProtectionPolicy.Read.All` (Graph) and **Office 365 Exchange Online → Exchange.ManageAsApp**, consent to them, and assign the service principal the **Compliance Administrator** Entra role. See [Microsoft's app-only auth guide](https://learn.microsoft.com/powershell/exchange/app-only-auth-powershell-v2).
+
+> **App-only auth is a real privilege trade.** Every action runs as the app, not as a signed-in admin, so Conditional Access, MFA and sign-in risk **do not apply**, and `Exchange.ManageAsApp` cannot be scoped down below tenant-wide compliance administration. Use a delegated sign-in wherever a human is present, and prefer managed identity over a certificate when a human is not. The server deliberately does **not** support supplying a certificate password in an environment variable: per Microsoft, storing it in plain text ["defeats the purpose of a secure connection method"](https://learn.microsoft.com/powershell/exchange/app-only-auth-powershell-v2#connection-examples).
+
+### Auth environment variables
+
+| Variable | Plane | Default | Purpose |
+| --- | --- | --- | --- |
+| `PURVIEW_AUTH_MODE` | Both | `interactive` | `devicecode` signs in with a URL + code instead of a browser popup. `managedidentity` uses the host's managed identity (no secret at rest). Chooses the credential for **both** planes. |
+| `AZURE_REDIRECT_URI` | Both | `http://localhost` | Redirect URI for the interactive browser flow. |
+| `AZURE_CLIENT_CERTIFICATE_PATH` | Both | *(none)* | Switches the credential to **certificate app-only**. Graph label reads then use the tenant-wide path and need `InformationProtectionPolicy.Read.All`. |
+| `PURVIEW_ORGANIZATION` | DLP | *(from token)* | Your `<tenant>.onmicrosoft.com` domain for `-Organization`. Derived from the token's `upn` claim if unset. |
+| `PURVIEW_EXO_SCOPE` | DLP | `https://outlook.office365.com/.default` | Resource scope for the Security & Compliance access token. |
+| `PURVIEW_DLP_AUTH_MODE` | DLP | `token` | `token` injects a Node-acquired access token into `Connect-IPPSSession` — the only mode that works from this server. `interactive` lets pwsh sign in itself; see the warning above. |
+| `PURVIEW_APP_ID` + `PURVIEW_CERT_THUMBPRINT` | DLP | *(none)* | With `PURVIEW_ORGANIZATION`, uses cmdlet-native certificate app-only auth (Windows cert store). |
+| `PURVIEW_UPN` | DLP | *(none)* | Interactive mode only: pre-fills the account for `Connect-IPPSSession`. |
+| `PURVIEW_ENABLE_WAM` | DLP | *(off)* | Interactive mode only: `1` uses the Windows WAM broker (needs a desktop host). |
+| `PURVIEW_CONNECT_TIMEOUT_MS` | DLP | `300000` | Timeout budget for the connect step (5 min). |
+| `PURVIEW_EXEC_TIMEOUT_MS` | DLP | `60000` | Per-cmdlet timeout once connected. On timeout the pwsh session is reset; the next call reconnects. |
+| `PURVIEW_PWSH` | DLP | `pwsh` | Path to the PowerShell 7+ executable. |
+| `PURVIEW_ALLOW_UNSUPPORTED_OS` | DLP | *(off)* | Set to `1` to attempt `Connect-IPPSSession` on macOS/Linux despite Microsoft not supporting it there. |
+
+> **`PURVIEW_DLP_AUTH_MODE=interactive` does not work on this server** and is not the default. It asks the `pwsh` child to run its own sign-in, but that child is spawned with piped stdio and has no console: WAM fails with *"A window handle must be configured"*, and the `-DisableWAM` browser fallback hangs until the connect timeout. It is retained only for a host that gives `pwsh` a real console.
+
+### Troubleshooting sign-in
+
+**The browser opens in the wrong profile.** Sign-in launches your **default** browser/profile. In Edge, set **Settings → Profiles → Profile preferences → Default profile for external links** to the admin profile. Or switch to device code (`PURVIEW_AUTH_MODE=devicecode`) and open the URL in whatever profile you like — the URL + code are written to the server's **stderr** (view it in your MCP host's server logs).
+
+**DLP calls hang or time out.** You are almost certainly in interactive DLP mode on a console-less host — unset `PURVIEW_DLP_AUTH_MODE` to return to the default token mode.
+
+**`AADSTS650057: Invalid resource`.** The app registration lacks the Office 365 Exchange Online permission — add it and grant consent (step 1 above).
 
 ## How the tools work
 

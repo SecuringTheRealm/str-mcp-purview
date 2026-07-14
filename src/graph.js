@@ -5,11 +5,10 @@
 // the SDK. A raw fetch against the beta endpoint with a bearer token from
 // @azure/identity is cleaner and mirrors the raw-fetch idiom of nvd-mcp-local.
 
-import {
-  InteractiveBrowserCredential,
-  DeviceCodeCredential,
-  ClientCertificateCredential,
-} from "@azure/identity";
+import { getToken, appOnly } from "./auth.js";
+
+// Re-exported so labels.js can pick the tenant-wide path in app-only mode.
+export { appOnly };
 
 const GRAPH_BETA = "https://graph.microsoft.com/beta";
 
@@ -21,60 +20,7 @@ const GRAPH_BETA = "https://graph.microsoft.com/beta";
 const LABEL_SCOPES = ["https://graph.microsoft.com/InformationProtectionPolicy.Read"];
 const APP_SCOPES = ["https://graph.microsoft.com/.default"];
 
-// App-only (certificate) mode — for headless hosts (e.g. the Azure Functions
-// host) where no human can complete an interactive sign-in. /me/ paths do not
-// exist for app tokens, so label reads switch to the tenant-wide path.
-export const appOnly = Boolean(process.env.AZURE_CLIENT_CERTIFICATE_PATH);
-
-let credential = null;
-
-function getCredential() {
-  if (credential) return credential;
-
-  const tenantId = process.env.AZURE_TENANT_ID;
-  const clientId = process.env.AZURE_CLIENT_ID;
-  if (!tenantId || !clientId) {
-    throw new Error(
-      "Graph auth is not configured. Set AZURE_TENANT_ID and AZURE_CLIENT_ID " +
-        "to the tenant and a public-client app registration that has the " +
-        "delegated InformationProtectionPolicy.Read permission granted."
-    );
-  }
-
-  if (appOnly) {
-    credential = new ClientCertificateCredential(tenantId, clientId, {
-      certificatePath: process.env.AZURE_CLIENT_CERTIFICATE_PATH,
-    });
-    return credential;
-  }
-
-  // PURVIEW_AUTH_MODE=devicecode is useful on headless boxes where no browser
-  // can be launched; the default opens the system browser for interactive login.
-  if ((process.env.PURVIEW_AUTH_MODE || "").toLowerCase() === "devicecode") {
-    credential = new DeviceCodeCredential({
-      tenantId,
-      clientId,
-      userPromptCallback: (info) => {
-        // Device-code prompts must reach the operator without corrupting the
-        // stdio JSON-RPC channel, so they go to stderr.
-        process.stderr.write(`\n[purview] ${info.message}\n`);
-      },
-    });
-  } else {
-    credential = new InteractiveBrowserCredential({
-      tenantId,
-      clientId,
-      redirectUri: process.env.AZURE_REDIRECT_URI || "http://localhost",
-    });
-  }
-  return credential;
-}
-
-async function bearer() {
-  const token = await getCredential().getToken(appOnly ? APP_SCOPES : LABEL_SCOPES);
-  if (!token?.token) throw new Error("Failed to acquire a Microsoft Graph access token.");
-  return token.token;
-}
+const bearer = () => getToken(appOnly ? APP_SCOPES : LABEL_SCOPES);
 
 /**
  * GET a Graph beta path as the signed-in admin.
