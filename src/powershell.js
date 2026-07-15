@@ -260,6 +260,11 @@ class PowerShellBridge {
     const b64 = Buffer.from(JSON.stringify({ token, org }), "utf8").toString("base64");
     return [
       `$__c = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${b64}')) | ConvertFrom-Json`,
+      // Without this, Connect-IPPSSession ignores -AccessToken and falls back to
+      // an interactive prompt, which hangs in the console-less child. Microsoft
+      // documents the workaround: "If a Connect-IPPSSession command presents a
+      // sign in prompt, run the command: $Global:IsWindows = $true before it."
+      "$Global:IsWindows = $true",
       "Connect-IPPSSession -AccessToken $__c.token -Organization $__c.org -ShowBanner:$false",
     ].join("\n");
   }
