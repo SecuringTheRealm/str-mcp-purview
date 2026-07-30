@@ -398,6 +398,50 @@ test("PowerShellBridge auth-expiry retry", async (t) => {
     assert.equal(connects.length, 2);
   });
 
+  await t.test("retries a READ when the module chokes on a non-JSON error page", async () => {
+    // What a rejected token actually looks like in practice: the endpoint
+    // answers with HTML and the module's JSON reader fails on it. Observed
+    // verbatim against ExchangeOnlineManagement 3.10.0. The message names no
+    // cause, so it is only safe to re-run for a read.
+    const bridge = await freshBridge("opaque-retry-read");
+    spawnImpl = () => {
+      lastProc = new FakeChildProcess();
+      return lastProc;
+    };
+
+    const invokePromise = bridge.invoke("Get-DlpCompliancePolicy", {});
+    await tick();
+    lastProc.respondOk("connected");
+    await tick();
+    lastProc.respondErr("Unexpected character encountered while parsing value: <. Path '', line 0, position 0.");
+    await tick();
+    lastProc.respondOk("connected");
+    await tick();
+    lastProc.respondOk([{ Name: "P1" }]);
+
+    assert.deepEqual(await invokePromise, [{ Name: "P1" }]);
+    assert.equal(lastProc.writes.join("").match(/Connect-IPPSSession/g).length, 2);
+  });
+
+  await t.test("does NOT retry a WRITE on that same opaque failure", async () => {
+    // No evidence the cmdlet failed to reach the service, so re-running it
+    // risks creating the rule twice. Surface the error instead.
+    const bridge = await freshBridge("opaque-no-retry-write");
+    spawnImpl = () => {
+      lastProc = new FakeChildProcess();
+      return lastProc;
+    };
+
+    const invokePromise = bridge.invoke("New-DlpComplianceRule", { Name: "R1" });
+    await tick();
+    lastProc.respondOk("connected");
+    await tick();
+    lastProc.respondErr("Unexpected character encountered while parsing value: <. Path '', line 0, position 0.");
+
+    await assert.rejects(invokePromise, /Unexpected character/);
+    assert.equal(lastProc.writes.join("").match(/Connect-IPPSSession/g).length, 1);
+  });
+
   await t.test("does NOT retry a timed-out cmdlet, which may already have applied", async () => {
     // The bridge's own timeout message contains the word "session", which a
     // loose auth-expiry matcher would read as a stale session and retry — and

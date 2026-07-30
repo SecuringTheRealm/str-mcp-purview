@@ -45,11 +45,11 @@ Before you start, have these ready:
 
 ## Setup
 
-The server has two auth planes and this walkthrough wires up both: an **Entra app registration** for the Graph label-read tools (steps 1–2), and the **local install + credentials** the whole server needs (steps 3–5). If you only ever call the DLP tools, the app registration (steps 1–2's app part) is optional — those tools authenticate through `Connect-IPPSSession` instead — but you still need the Purview roles in step 2.
+The server has two auth planes and this walkthrough wires up both: an **Entra app registration** that backs both planes (steps 1–2), and the **local install + credentials** the whole server needs (steps 3–5). The app registration is **required either way** — the DLP tools do not sign in through `Connect-IPPSSession`; the server acquires their token from this same app registration and injects it (see [Authentication flow](#authentication-flow)). Each plane needs its own permission, so grant both in step 1.
 
 ### 1. Register the Microsoft Entra app
 
-This app registration backs the **sensitivity-label read tools** (Microsoft Graph). It is a **public client** — no client secret or certificate is ever created.
+This app registration backs **both** planes: the sensitivity-label read tools (Microsoft Graph) and the DLP tools (Security & Compliance PowerShell). It is a **public client** — no client secret or certificate is ever created.
 
 In the [Microsoft Entra admin center](https://entra.microsoft.com) → **Identity → Applications → App registrations → New registration**:
 
@@ -60,9 +60,10 @@ In the [Microsoft Entra admin center](https://entra.microsoft.com) → **Identit
 On the new registration:
 
 4. **Authentication** blade → **Advanced settings** → set **Allow public client flows** to **Yes** → **Save**. (Required for the optional `PURVIEW_AUTH_MODE=devicecode` sign-in; harmless otherwise.)
-5. **API permissions** blade → **Add a permission** → **Microsoft Graph** → **Delegated permissions** → search and add **`InformationProtectionPolicy.Read`**. This is the only permission the server uses.
-6. Still on **API permissions**, click **Grant admin consent for \<tenant\>** and confirm the row shows a green **✔ Granted**. (Needs Global Administrator, Privileged Role Administrator, or Cloud Application Administrator.)
-7. Open the **Overview** blade and copy the **Application (client) ID** and **Directory (tenant) ID** — you need both in step 4.
+5. **API permissions** blade → **Add a permission** → **Microsoft Graph** → **Delegated permissions** → search and add **`InformationProtectionPolicy.Read`**. *(Label tools.)*
+6. **Add a permission** again → **APIs my organization uses** tab → search **Office 365 Exchange Online** → **Delegated permissions** → expand the **Exchange** group → add **`Exchange.ManageV2`**. *(DLP tools. The permissions are collapsed into groups, so it is not visible until you expand **Exchange**.)*
+7. Still on **API permissions**, click **Grant admin consent for \<tenant\>** and confirm **both** rows show a green **✔ Granted**. (Needs Global Administrator, Privileged Role Administrator, or Cloud Application Administrator.)
+8. Open the **Overview** blade and copy the **Application (client) ID** and **Directory (tenant) ID** — you need both in step 4.
 
 ### 2. Give the sign-in account its Purview roles
 
@@ -152,7 +153,7 @@ The two auth planes sign in independently:
 
 ### Local setup (default)
 
-1. **App registration:** add a **delegated** permission for **Office 365 Exchange Online** (the Exchange management scope, e.g. `Exchange.Manage`) and grant admin consent. Without it, token acquisition fails with `AADSTS650057: Invalid resource`.
+1. **App registration:** add the **delegated** permission **Office 365 Exchange Online → Exchange → `Exchange.ManageV2`** and grant admin consent. Without it, token acquisition fails with `AADSTS650057: Invalid resource`. This is a *different* permission from the app-only `Exchange.ManageAsApp` used by the [unattended paths](#unattended-and-hosted-setup) below — delegated and app-only are not interchangeable here.
 2. **Configure the server** with your tenant and app registration:
 
 ```jsonc
@@ -189,7 +190,8 @@ Either way, grant the app registration the **application** permissions `Informat
 | `PURVIEW_APP_ID` + `PURVIEW_CERT_THUMBPRINT` | DLP | *(none)* | With `PURVIEW_ORGANIZATION`, uses cmdlet-native certificate app-only auth (Windows cert store). |
 | `PURVIEW_UPN` | DLP | *(none)* | Interactive mode only: pre-fills the account for `Connect-IPPSSession`. |
 | `PURVIEW_ENABLE_WAM` | DLP | *(off)* | Interactive mode only: `1` uses the Windows WAM broker (needs a desktop host). |
-| `PURVIEW_CONNECT_TIMEOUT_MS` | DLP | `300000` | Timeout budget for the connect step (5 min). |
+| `PURVIEW_SIGNIN_TIMEOUT_MS` | DLP | *(as connect)* | Bound on acquiring the access token in Node — i.e. how long an unanswered interactive sign-in can block the tool call. |
+| `PURVIEW_CONNECT_TIMEOUT_MS` | DLP | `300000` | Timeout budget for the connect step in `pwsh` (module import + session handshake). Does not cover the sign-in above, which happens first. |
 | `PURVIEW_EXEC_TIMEOUT_MS` | DLP | `60000` | Per-cmdlet timeout once connected. On timeout the pwsh session is reset; the next call reconnects. |
 | `PURVIEW_PWSH` | DLP | `pwsh` | Path to the PowerShell 7+ executable. |
 | `PURVIEW_ALLOW_UNSUPPORTED_OS` | DLP | *(off)* | Set to `1` to attempt `Connect-IPPSSession` on macOS/Linux despite Microsoft not supporting it there. |
@@ -200,9 +202,13 @@ Either way, grant the app registration the **application** permissions `Informat
 
 **The browser opens in the wrong profile.** Sign-in launches your **default** browser/profile. In Edge, set **Settings → Profiles → Profile preferences → Default profile for external links** to the admin profile. Or switch to device code (`PURVIEW_AUTH_MODE=devicecode`) and open the URL in whatever profile you like — the URL + code are written to the server's **stderr** (view it in your MCP host's server logs).
 
-**DLP calls hang or time out.** You are almost certainly in interactive DLP mode on a console-less host — unset `PURVIEW_DLP_AUTH_MODE` to return to the default token mode.
+**DLP calls hang or time out.** Two causes, in order of likelihood. First, an interactive sign-in is waiting on a browser window you never saw open — complete it, or switch to `PURVIEW_AUTH_MODE=devicecode` and read the code from the server's stderr. Second, you are in interactive DLP mode on a console-less host — unset `PURVIEW_DLP_AUTH_MODE` to return to the default token mode.
 
 **`AADSTS650057: Invalid resource`.** The app registration lacks the Office 365 Exchange Online permission — add it and grant consent (step 1 above).
+
+**`Unexpected character encountered while parsing value: <`.** The Security & Compliance endpoint answered with an HTML error page instead of JSON, which is what a rejected or lapsed access token usually looks like from inside the module. The bridge reconnects and retries this automatically for read tools; for writes it surfaces the error rather than risk applying a change twice.
+
+**`Cannot overwrite variable IsWindows because it is read-only or constant`.** Microsoft's [app-only auth guide](https://learn.microsoft.com/powershell/exchange/app-only-auth-powershell-v2) says to run `$Global:IsWindows = $true` before `Connect-IPPSSession` if it presents a sign-in prompt. That advice only applies to **Windows PowerShell 5.1**, where `$IsWindows` does not exist and the assignment creates an ordinary variable. This server requires **PowerShell 7**, where `$IsWindows` is a read-only automatic variable on every platform — so under the bridge's `$ErrorActionPreference = 'Stop'` the assignment kills the connect on its first line. Do not add it.
 
 ## How the tools work
 

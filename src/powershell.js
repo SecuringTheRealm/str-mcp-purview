@@ -13,6 +13,8 @@
 // from a timed-out earlier command can never be mis-read as the current
 // response, and payload data containing a marker string cannot spoof a frame.
 // Requests are serialised through a promise queue so blocks never interleave.
+// The exact framing pwsh will accept over piped stdin is subtle — see
+// wrapScript() below before changing anything about how a request is written.
 // Cmdlet parameters are passed as a base64-encoded JSON blob and rebuilt with
 // ConvertFrom-Json -AsHashtable, which keeps model-supplied values out of the
 // executable script text (no command injection).
@@ -41,9 +43,14 @@ import { randomUUID } from "node:crypto";
 import { getToken } from "./auth.js";
 
 const EXEC_TIMEOUT_MS = Number(process.env.PURVIEW_EXEC_TIMEOUT_MS) || 60_000;
-// The connect can block on an interactive sign-in, so it needs a far larger
-// budget than a normal cmdlet's EXEC_TIMEOUT_MS.
+// Connecting does more work than a normal cmdlet (module import, session
+// handshake), so it gets a larger budget than EXEC_TIMEOUT_MS.
 const CONNECT_TIMEOUT_MS = Number(process.env.PURVIEW_CONNECT_TIMEOUT_MS) || 300_000;
+// Acquiring the token happens HERE in Node, before anything is sent to pwsh, so
+// CONNECT_TIMEOUT_MS does not cover it. An interactive sign-in blocks on a human
+// finding a browser window they may never have seen open, and without a bound of
+// its own that blocks the agent's tool call forever.
+const SIGNIN_TIMEOUT_MS = Number(process.env.PURVIEW_SIGNIN_TIMEOUT_MS) || CONNECT_TIMEOUT_MS;
 // Resource scope for a Security & Compliance access token.
 const EXO_SCOPE = process.env.PURVIEW_EXO_SCOPE || "https://outlook.office365.com/.default";
 
@@ -59,6 +66,53 @@ function bridgeError(message) {
   const err = new Error(message);
   err.bridge = true;
   return err;
+}
+
+/**
+ * Wrap a script in the framed request/response block the bridge parses back.
+ *
+ * The trailing BLANK line is load-bearing. `pwsh -Command -` executes piped
+ * input incrementally, but only flushes a MULTI-LINE block once it reads an
+ * empty line — a block terminated by a single newline is held in the parser
+ * forever, so every request hangs until its timeout and the child is killed.
+ * For the same reason, no script passed in here may contain a blank line of its
+ * own: that would flush this wrapper early and split the block.
+ *
+ * Exported so the smoke test can drive a real pwsh with it; a mocked child
+ * process cannot see this class of bug.
+ */
+export function wrapScript(script, start, end) {
+  return [
+    "try {",
+    "  $ErrorActionPreference = 'Stop'",
+    `  $__out = & {`,
+    script,
+    "  }",
+    "  $__json = $__out | ConvertTo-Json -Depth 8 -Compress",
+    `  [Console]::Out.WriteLine('${start}')`,
+    "  [Console]::Out.WriteLine('__OK__')",
+    "  if ($null -ne $__json) { [Console]::Out.WriteLine($__json) } else { [Console]::Out.WriteLine('null') }",
+    `  [Console]::Out.WriteLine('${end}')`,
+    "} catch {",
+    `  [Console]::Out.WriteLine('${start}')`,
+    "  [Console]::Out.WriteLine('__ERR__')",
+    "  [Console]::Out.WriteLine($_.Exception.Message)",
+    `  [Console]::Out.WriteLine('${end}')`,
+    "}",
+    "", // terminates the block — see above
+    "",
+  ].join("\n");
+}
+
+/** Reject if `promise` has not settled within `ms`, so a tool call cannot hang. */
+function withTimeout(promise, ms, message) {
+  let timer;
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      timer = setTimeout(() => reject(bridgeError(message)), ms);
+    }),
+  ]).finally(() => clearTimeout(timer));
 }
 
 const PLATFORM_ERROR =
@@ -191,28 +245,8 @@ class PowerShellBridge {
       proc.stdout.on("data", onData);
       proc.on("exit", onExit);
 
-      const wrapped = [
-        "try {",
-        "  $ErrorActionPreference = 'Stop'",
-        `  $__out = & {`,
-        script,
-        "  }",
-        "  $__json = $__out | ConvertTo-Json -Depth 8 -Compress",
-        `  [Console]::Out.WriteLine('${START}')`,
-        "  [Console]::Out.WriteLine('__OK__')",
-        "  if ($null -ne $__json) { [Console]::Out.WriteLine($__json) } else { [Console]::Out.WriteLine('null') }",
-        `  [Console]::Out.WriteLine('${END}')`,
-        "} catch {",
-        `  [Console]::Out.WriteLine('${START}')`,
-        "  [Console]::Out.WriteLine('__ERR__')",
-        "  [Console]::Out.WriteLine($_.Exception.Message)",
-        `  [Console]::Out.WriteLine('${END}')`,
-        "}",
-        "",
-      ].join("\n");
-
       try {
-        proc.stdin.write(wrapped);
+        proc.stdin.write(wrapScript(script, START, END));
       } catch (err) {
         settle(reject, bridgeError(`Failed to send command to PowerShell: ${err.message}`));
       }
@@ -249,22 +283,34 @@ class PowerShellBridge {
   // token and org travel as a base64 JSON blob rebuilt inside pwsh, so the
   // bearer token never appears in the script text or in process arguments.
   async #tokenCommand() {
-    const token = await getToken(EXO_SCOPE);
+    const token = await withTimeout(
+      getToken(EXO_SCOPE),
+      SIGNIN_TIMEOUT_MS,
+      `Timed out after ${SIGNIN_TIMEOUT_MS}ms acquiring a Security & Compliance access token. ` +
+        "If PURVIEW_AUTH_MODE is interactive, a browser sign-in window is waiting for you — " +
+        "complete it and call the tool again, or switch to PURVIEW_AUTH_MODE=devicecode."
+    );
     const org = process.env.PURVIEW_ORGANIZATION || orgFromToken(token);
     if (!org) {
       throw new Error(
-        "DLP auth needs the tenant's organization domain. Set PURVIEW_ORGANIZATION " +
-          "to your <tenant>.onmicrosoft.com domain."
+        "DLP auth needs the tenant's organization domain. Set PURVIEW_ORGANIZATION to a " +
+          "domain verified in your tenant — either <tenant>.onmicrosoft.com or the domain " +
+          "of the signing-in admin's UPN."
       );
     }
     const b64 = Buffer.from(JSON.stringify({ token, org }), "utf8").toString("base64");
     return [
       `$__c = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${b64}')) | ConvertFrom-Json`,
-      // Without this, Connect-IPPSSession ignores -AccessToken and falls back to
-      // an interactive prompt, which hangs in the console-less child. Microsoft
-      // documents the workaround: "If a Connect-IPPSSession command presents a
-      // sign in prompt, run the command: $Global:IsWindows = $true before it."
-      "$Global:IsWindows = $true",
+      // NOTE: Microsoft's app-only auth guide says "If a Connect-IPPSSession
+      // command presents a sign in prompt, run the command: $Global:IsWindows =
+      // $true before it." That advice must NOT be applied here. It only works in
+      // Windows PowerShell 5.1, where $IsWindows does not exist and the
+      // assignment creates an ordinary variable. In PowerShell 7 — which this
+      // bridge requires — $IsWindows is a read-only automatic variable on every
+      // platform, so the assignment is a terminating error under
+      // $ErrorActionPreference='Stop' and the connect dies on its first line.
+      // We do not need it regardless: the prompt it suppresses comes from the
+      // module falling back to interactive auth, which -AccessToken avoids.
       "Connect-IPPSSession -AccessToken $__c.token -Organization $__c.org -ShowBanner:$false",
     ].join("\n");
   }
@@ -287,6 +333,26 @@ class PowerShellBridge {
     return mode === "interactive" ? this.#interactiveCommand() : this.#tokenCommand();
   }
 
+  /**
+   * The full connect script: module presence check, import, the mode-specific
+   * Connect-IPPSSession call, and a sentinel.
+   *
+   * Kept as its own method rather than inlined in #ensureConnected so the smoke
+   * test can run it against a real pwsh with the cmdlet stubbed. That is the
+   * only thing that catches a connect line PowerShell rejects outright, which a
+   * mocked child process will happily accept.
+   */
+  async connectScript() {
+    return [
+      "if (-not (Get-Module -ListAvailable -Name ExchangeOnlineManagement)) {",
+      "  throw 'The ExchangeOnlineManagement module is not installed. Run: Install-Module ExchangeOnlineManagement -Scope CurrentUser'",
+      "}",
+      "Import-Module ExchangeOnlineManagement -ErrorAction Stop",
+      await this.#connectCommand(),
+      "'connected'",
+    ].join("\n");
+  }
+
   /** Connect the IPPSSession on first use (single-flight, safe under concurrency). */
   #ensureConnected() {
     if (this.connecting) return this.connecting;
@@ -296,16 +362,9 @@ class PowerShellBridge {
     // Acquiring the token is async, so the whole build-and-connect runs inside
     // the single-flight promise: concurrent first calls share one sign-in.
     this.connecting = (async () => {
-      const script = [
-        "if (-not (Get-Module -ListAvailable -Name ExchangeOnlineManagement)) {",
-        "  throw 'The ExchangeOnlineManagement module is not installed. Run: Install-Module ExchangeOnlineManagement -Scope CurrentUser'",
-        "}",
-        "Import-Module ExchangeOnlineManagement -ErrorAction Stop",
-        await this.#connectCommand(),
-        "'connected'",
-      ].join("\n");
-      // The sign-in behind the token can block on a human, so give the connect
-      // the longer budget rather than the per-cmdlet timeout.
+      // The sign-in inside connectScript() is bounded by SIGNIN_TIMEOUT_MS; this
+      // budget covers only the module import and session handshake in pwsh.
+      const script = await this.connectScript();
       return this.#enqueue(script, CONNECT_TIMEOUT_MS);
     })().catch((err) => {
       this.connecting = null; // allow a retry on the next call
@@ -335,7 +394,7 @@ class PowerShellBridge {
       // An injected access token lasts about an hour; when it lapses the cmdlet
       // rejects the call outright. Drop the stale session and reconnect once
       // (which mints a fresh token) before giving up.
-      if (!retried && isAuthExpiry(err)) {
+      if (!retried && isAuthExpiry(err, cmdlet)) {
         this.connecting = null;
         return this.invoke(cmdlet, params, selectProps, true);
       }
@@ -344,28 +403,44 @@ class PowerShellBridge {
   }
 }
 
+// Auth rejections the service names outright. The cmdlet demonstrably never
+// ran, so reconnecting and re-running is safe even for a New-/Set-/Remove-.
+const AUTH_REJECTIONS = [
+  "unauthorized",
+  "access token",
+  "token has expired",
+  "token is expired",
+  "invalid token",
+  "authentication failed",
+  "re-authenticate",
+  "reauthenticate",
+];
+
+// What a lapsed or rejected token ACTUALLY looks like most of the time: the
+// endpoint answers with an HTML error page and the module's JSON reader chokes
+// on it ("Unexpected character encountered while parsing value: <"). The message
+// names no cause, so we cannot prove the cmdlet did not run — see isAuthExpiry.
+const OPAQUE_NON_JSON_RESPONSE = "unexpected character encountered while parsing";
+
 /**
  * Does this error mean the session/token lapsed, so a reconnect-and-retry is
  * both safe and likely to succeed?
  *
- * Only cmdlet-reported auth rejections qualify. Errors the bridge raised itself
- * are excluded: a timed-out cmdlet may already have applied its change inside
- * the child, so retrying it could double-write a New-/Set- call. Keep this
- * matcher narrow — words like "session" appear in the bridge's own messages.
+ * Errors the bridge raised itself are always excluded: a timed-out cmdlet may
+ * already have applied its change inside the child, so retrying it could
+ * double-write. Keep the matchers narrow — words like "session" appear in the
+ * bridge's own messages.
+ *
+ * The opaque non-JSON failure is retried for READS ONLY. It is the common way a
+ * stale token surfaces, but it carries no evidence about whether the cmdlet
+ * reached the service, and re-running an unproven New-/Set-/Remove- is a worse
+ * outcome than returning the error.
  */
-function isAuthExpiry(err) {
+function isAuthExpiry(err, cmdlet = "") {
   if (!err || err.bridge) return false;
   const m = String(err.message || "").toLowerCase();
-  return (
-    m.includes("unauthorized") ||
-    m.includes("access token") ||
-    m.includes("token has expired") ||
-    m.includes("token is expired") ||
-    m.includes("invalid token") ||
-    m.includes("authentication failed") ||
-    m.includes("re-authenticate") ||
-    m.includes("reauthenticate")
-  );
+  if (AUTH_REJECTIONS.some((s) => m.includes(s))) return true;
+  return m.includes(OPAQUE_NON_JSON_RESPONSE) && /^get-/i.test(cmdlet);
 }
 
 export const powershell = new PowerShellBridge();
