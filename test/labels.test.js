@@ -13,6 +13,12 @@ mock.module("../src/graph.js", {
       graphGetCalls.push({ path, params });
       return graphGetImpl(path, params);
     },
+    // listLabels uses the paginating variant; collapse it onto the same stub.
+    graphGetAll: async (path, params) => {
+      graphGetCalls.push({ path, params });
+      return (await graphGetImpl(path, params)).value ?? [];
+    },
+    appOnly: false,
   },
 });
 
@@ -249,5 +255,75 @@ test("formatPolicySettings", async (t) => {
   await t.test("normalises a single non-array settings object via asArray", () => {
     const out = labels.formatPolicySettings({ id: "s1" });
     assert.match(out, /- \*\*ID:\*\* s1/);
+  });
+});
+
+test("label policy read-back", async (t) => {
+  await t.test("listLabelPolicies invokes Get-LabelPolicy and normalises to an array", async () => {
+    invokeCalls.length = 0;
+    invokeImpl = async () => ({ Name: "Global", Labels: ["Public", "Internal"], Mode: "Enable" });
+    const result = await labels.listLabelPolicies();
+    assert.equal(invokeCalls.at(-1).cmdlet, "Get-LabelPolicy");
+    assert.deepEqual(result.map((p) => p.Name), ["Global"]);
+  });
+
+  await t.test("getLabelPolicy passes the identity through", async () => {
+    invokeCalls.length = 0;
+    invokeImpl = async () => [{ Name: "Global" }];
+    await labels.getLabelPolicy("Global");
+    assert.deepEqual(invokeCalls.at(-1).params, { Identity: "Global" });
+  });
+
+  await t.test("formatLabelPolicyList renders one line per policy with label count", () => {
+    const out = labels.formatLabelPolicyList([
+      { Name: "Global", Enabled: true, Mode: "Enable", Labels: ["A", "B"], WhenCreated: "2026-07-01T00:00:00Z" },
+    ]);
+    assert.match(out, /1 label publishing policy:/);
+    assert.match(out, /Global/);
+    assert.match(out, /2 label\(s\)/);
+  });
+
+  await t.test("formatLabelPolicyDetail renders labels, locations, and settings", () => {
+    const out = labels.formatLabelPolicyDetail({
+      Name: "Global",
+      Guid: "g1",
+      Labels: ["Public", "Internal"],
+      ExchangeLocation: ["All"],
+      Settings: ["[mandatory, true]"],
+    });
+    assert.match(out, /^# Label policy: Global/);
+    assert.match(out, /\*\*Published labels:\*\* Public, Internal/);
+    assert.match(out, /\*\*Settings:\*\* \[mandatory, true\]/);
+  });
+
+  await t.test("formatLabelPolicyDetail handles a missing policy", () => {
+    assert.equal(labels.formatLabelPolicyDetail(undefined), "Label policy not found.");
+  });
+});
+
+test("label protection settings read-back", async (t) => {
+  await t.test("getLabelProtectionSettings invokes Get-Label with the identity", async () => {
+    invokeCalls.length = 0;
+    invokeImpl = async () => [{ Name: "Secret", EncryptionEnabled: true }];
+    const result = await labels.getLabelProtectionSettings("Secret");
+    assert.equal(invokeCalls.at(-1).cmdlet, "Get-Label");
+    assert.deepEqual(invokeCalls.at(-1).params, { Identity: "Secret" });
+    assert.equal(result.EncryptionEnabled, true);
+  });
+
+  await t.test("formatLabelProtectionSettings renders configured protection", () => {
+    const out = labels.formatLabelProtectionSettings({
+      EncryptionEnabled: true,
+      EncryptionProtectionType: "Template",
+      ApplyWaterMarkingEnabled: true,
+      EncryptionRightsDefinitions: [{ Identity: "staff@contoso.com" }],
+    });
+    assert.match(out, /^## Protection settings/);
+    assert.match(out, /\*\*Encryption:\*\* true/);
+    assert.match(out, /\*\*Rights definitions:\*\* staff@contoso\.com/);
+  });
+
+  await t.test("formatLabelProtectionSettings reports an unprotected label", () => {
+    assert.match(labels.formatLabelProtectionSettings({}), /No protection configured/);
   });
 });

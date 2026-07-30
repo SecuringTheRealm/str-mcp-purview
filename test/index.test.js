@@ -49,10 +49,12 @@ test("MCP server over stdio", async (t) => {
         "create_sensitivity_label",
         "get_dlp_policy",
         "get_dlp_rule",
+        "get_label_policy",
         "get_label_policy_settings",
         "get_sensitivity_label",
         "list_dlp_policies",
         "list_dlp_rules",
+        "list_label_policies",
         "list_sensitive_information_types",
         "list_sensitivity_labels",
         "remove_dlp_policy",
@@ -72,11 +74,50 @@ test("MCP server over stdio", async (t) => {
     });
   });
 
+  await t.test("every tool declares full MCP annotations consistent with its verb", async () => {
+    await withClient(async (client) => {
+      const { tools } = await client.listTools();
+      for (const tool of tools) {
+        const a = tool.annotations;
+        assert.ok(a, `${tool.name} should have annotations`);
+        assert.ok(a.title && a.title !== tool.name, `${tool.name} should have a meaningful title`);
+        for (const hint of ["readOnlyHint", "destructiveHint", "idempotentHint", "openWorldHint"]) {
+          assert.equal(typeof a[hint], "boolean", `${tool.name} should declare ${hint}`);
+        }
+        const verb = tool.name.split("_")[0];
+        assert.equal(a.readOnlyHint, verb === "list" || verb === "get", `${tool.name} readOnlyHint`);
+        if (verb === "remove" || verb === "set") assert.equal(a.destructiveHint, true, `${tool.name} destructiveHint`);
+        if (verb === "create") {
+          assert.equal(a.destructiveHint, false, `${tool.name} destructiveHint`);
+          assert.equal(a.idempotentHint, false, `${tool.name} idempotentHint`);
+        }
+        assert.equal(a.openWorldHint, true, `${tool.name} openWorldHint`);
+      }
+    });
+  });
+
+  await t.test("rejects endpoint restrictions that block without notifying users", async () => {
+    await withClient(async (client) => {
+      const result = await client.callTool({
+        name: "create_endpoint_dlp_rule",
+        arguments: {
+          name: "r1",
+          policy: "p1",
+          endpoint_restrictions: [{ activity: "CopyPaste", action: "Block" }],
+        },
+      });
+      assert.equal(result.isError, true);
+      assert.match(result.content[0].text, /require notify_user/);
+    });
+  });
+
   await t.test("marks required arguments on tools that need them", async () => {
     await withClient(async (client) => {
       const { tools } = await client.listTools();
       const byName = Object.fromEntries(tools.map((tool) => [tool.name, tool]));
       assert.deepEqual(byName.get_sensitivity_label.inputSchema.required, ["label_id"]);
+      assert.deepEqual(byName.get_label_policy.inputSchema.required, ["identity"]);
+      assert.equal(byName.list_label_policies.inputSchema.required, undefined);
       assert.deepEqual(byName.get_dlp_policy.inputSchema.required, ["identity"]);
       assert.equal(byName.get_dlp_rule.inputSchema.required, undefined);
       assert.deepEqual(byName.create_dlp_policy.inputSchema.required, ["name"]);

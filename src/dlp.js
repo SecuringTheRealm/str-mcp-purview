@@ -138,8 +138,9 @@ export async function removeRule(params) {
 // differ. Both stay in hashtable/array land the bridge already marshals.
 
 // Well-known Microsoft 365 Copilot & Copilot Chat DLP location (Workload
-// "Applications"), from Microsoft's New-DlpCompliancePolicy Copilot example.
-// VERIFY against a live tenant before relying on it.
+// "Applications"), confirmed against Microsoft's New-DlpCompliancePolicy
+// reference (Example 4):
+// https://learn.microsoft.com/powershell/module/exchangepowershell/new-dlpcompliancepolicy
 const COPILOT_LOCATION_ID = "470f2276-e011-4e9d-a6ec-20768be3a4b0";
 
 /** Build the -Locations JSON string that scopes a DLP policy to Microsoft 365 Copilot. */
@@ -186,14 +187,21 @@ export async function listSensitiveInformationTypes(scope = "all", nameContains 
 // ---- formatters ------------------------------------------------------------
 
 function sitName(sit) {
-  // ContentContainsSensitiveInformation is an array of groups; surface names.
+  // ContentContainsSensitiveInformation is an array of groups holding SITs
+  // and/or sensitivity labels (Copilot label rules); surface both, or the
+  // condition reads as empty and the rule looks like it detects nothing.
   if (!sit) return "";
-  const names = asArray(sit)
-    .flatMap((g) => asArray(g?.groups ?? g))
-    .flatMap((g) => asArray(g?.sensitivetypes ?? g?.Name ?? g?.name))
-    .map((t) => (typeof t === "string" ? t : t?.name ?? t?.Name))
-    .filter(Boolean);
-  return names.length ? ` [SIT: ${[...new Set(names)].join(", ")}]` : "";
+  const groups = asArray(sit).flatMap((g) => asArray(g?.groups ?? g));
+  const pick = (entries) =>
+    asArray(entries)
+      .map((t) => (typeof t === "string" ? t : t?.name ?? t?.Name))
+      .filter(Boolean);
+  const sits = groups.flatMap((g) => pick(g?.sensitivetypes ?? g?.Name ?? g?.name));
+  const labels = groups.flatMap((g) => pick(g?.labels));
+  const parts = [];
+  if (sits.length) parts.push(`SIT: ${[...new Set(sits)].join(", ")}`);
+  if (labels.length) parts.push(`labels: ${[...new Set(labels)].join(", ")}`);
+  return parts.length ? ` [${parts.join("; ")}]` : "";
 }
 
 function policyLine(p) {
