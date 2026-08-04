@@ -9,6 +9,10 @@
     "AZURE_CLIENT_ID": "<user-assigned-identity-client-id, omit if system-assigned>",
     "PURVIEW_ORGANIZATION": "<tenant>.onmicrosoft.com",
 
-    "// platform": "A Linux Functions host serves the Graph label tools only. Connect-IPPSSession is Windows-only, so the DLP tools fail fast here — see README 'Platform support'."
+    "MCP_ALLOWED_ORIGINS": "https://<approved-client-host>",
+    "MCP_CURSOR_SECRET": "<store-in-Key-Vault-reference-in-Azure>",
+    "MCP_MAX_CONCURRENT_REQUESTS": "8",
+
+    "// platform": "Azure Functions and PowerShell-backed execution remain In UAT until the deployed authentication and all-tool matrix passes."
   }
 }

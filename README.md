@@ -644,18 +644,27 @@ Resources here deliberately mirror **classification vocabulary** — the labels 
 
 ## Hosting on Azure Functions
 
-The same server deploys as a **remote MCP server** on Azure Functions using the [self-hosted MCP servers pattern](https://learn.microsoft.com/azure/azure-functions/scenario-host-mcp-server-sdks) (public preview): a custom handler (`host.json`) launches `functions/server.js`, which serves the MCP protocol over **stateless streamable HTTP** at `POST /mcp` — a fresh server + transport per request, mirroring [Azure-Samples/mcp-sdk-functions-hosting-node](https://github.com/Azure-Samples/mcp-sdk-functions-hosting-node).
+> **Status: In UAT.** The HTTP host exposes the same 26 tools, two prompts, and three resources as stdio, and local transport/protocol tests pass. Azure Functions is not production-validated until every Graph- and PowerShell-backed operation passes the deployed disposable-object UAT suite.
+
+The custom handler (`host.json`) launches `functions/server.js` and serves stateless MCP at `POST /mcp`. One canonical factory in `src/server.js` backs both transports.
+
+| Transport | Legacy 2025 clients | MCP `2026-07-28` |
+| --- | --- | --- |
+| stdio | Tested locally | Tested locally (`server/discover`, no modern `initialize`) |
+| HTTP / Functions custom handler | Tested locally | Tested locally through the Node adapter; deployed Azure proxy validation remains In UAT |
 
 Two deployment shapes:
 
 | Shape | Plan | Tool surface |
 | --- | --- | --- |
-| **Code-only** (`func azd`/zip deploy of this repo) | Flex Consumption | Graph label reads only — the plan cannot carry `pwsh` |
-| **Container** ([`Containerfile`](Containerfile)) | Elastic Premium / Dedicated / Azure Container Apps | Full surface, subject to the Linux IPPS caveat in [Platform support](#platform-support) |
+| **Code-only** (`func`/zip deploy of this repo) | Flex Consumption | Advertises the canonical full surface; PowerShell execution remains UAT-dependent |
+| **Container** ([`Containerfile`](Containerfile)) | Elastic Premium / Dedicated / Azure Container Apps | Advertises the canonical full surface; tenant connectivity and all-tool execution remain In UAT |
 
-Remote hosting is headless, so **app-only auth is required** — set the app-only variables from [Auth environment variables](#auth-environment-variables) as app settings. Note `Connect-IPPSSession` does **not** support managed identity; the certificate path is the only unattended option for the PowerShell plane.
+Remote hosting is headless, so use a renewable app identity and configure the Graph and PowerShell planes independently. Managed identity and certificate combinations are deployment candidates, not claimed as fully supported until the UAT authentication matrix proves all 26 tools.
 
-**Secure the endpoint.** `host.json` sets the authorization level to `function` (callers need a function key). These are tenant-admin tools running as an app identity: for anything beyond a demo, add [built-in auth (Easy Auth)](https://learn.microsoft.com/azure/app-service/overview-authentication-authorization) in front, and scope the app's compliance role tightly. Local smoke test: `node functions/server.js`, then POST MCP JSON-RPC to `http://localhost:3000/mcp` (see `test/functions.test.js`).
+**Secure the endpoint.** A function key is not sufficient production caller authentication. Put Entra/Easy Auth in front, validate its token audience and allowed client applications, and scope backend permissions tightly. Set `MCP_ALLOWED_ORIGINS` to a comma-separated browser-origin allowlist, `MCP_CURSOR_SECRET` to a shared secret for multi-instance pagination, and optionally `MCP_MAX_CONCURRENT_REQUESTS` (default `8`). Missing `Origin` remains valid for non-browser clients; a present unlisted origin receives 403. Local smoke test: `node functions/server.js`, then POST MCP JSON-RPC to `http://127.0.0.1:3000/mcp`.
+
+Every delete tool requires `confirm: true`. The five catalog list tools default to 25 items (maximum 100), return signed opaque cursors, and include schema-backed `structuredContent` alongside concise text.
 
 ## Architecture
 

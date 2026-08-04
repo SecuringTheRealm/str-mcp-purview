@@ -53,3 +53,12 @@ as a trust boundary:
 - Keep credentials in your local `.env` or MCP client configuration. Never
   commit them. `.env` and `.mcp.json` are gitignored for this reason.
 - Review what an agent proposes before approving a destructive tool call.
+- Keep the MCP-level `confirm: true` requirement on delete tools; backend
+  non-interactive confirmation is permitted only after that check succeeds.
+- For remote hosting, require Entra/Easy Auth and audience validation. A
+  function key alone is not production caller authentication.
+- Configure an explicit browser origin allowlist, edge rate limits, and a
+  shared cursor-signing secret. Do not log tokens, certificate paths, raw
+  tenant payloads, or full PowerShell diagnostics.
+- Use an isolated UAT tenant and run-specific disposable objects for destructive
+  tests. Do not run destructive parity tests against production.

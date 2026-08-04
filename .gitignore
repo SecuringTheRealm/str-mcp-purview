@@ -277,3 +277,5 @@ npm-debug.log*
 
 # Local MCP host config with tenant/client IDs (use .mcp.json.example as the template)
 .mcp.json
+# Personal tenant provisioning output (not part of the project)
+/scripts/New-PurviewClassificationLabels.ps1

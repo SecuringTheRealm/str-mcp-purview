@@ -19,17 +19,13 @@
 // surface can be served over stdio (index.js) or per-request streamable HTTP
 // (functions/server.js).
 
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import {
-  CallToolRequestSchema,
-  ListToolsRequestSchema,
-  ListPromptsRequestSchema,
-  GetPromptRequestSchema,
-  ListResourcesRequestSchema,
-  ReadResourceRequestSchema,
-  McpError,
-  ErrorCode,
-} from "@modelcontextprotocol/sdk/types.js";
+  Server,
+  ProtocolError,
+  ProtocolErrorCode,
+} from "@modelcontextprotocol/server";
+import Ajv from "ajv";
+import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 
 import * as labels from "./labels.js";
 import * as dlp from "./dlp.js";
@@ -44,6 +40,11 @@ const READ = { readOnlyHint: true, destructiveHint: false, idempotentHint: true,
 const CREATE = { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true };
 const UPDATE = { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true };
 const DESTROY = { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true };
+const CONFIRM_DELETE = {
+  type: "boolean",
+  const: true,
+  description: "Must be true after the user explicitly confirms permanent deletion.",
+};
 
 // Shared, category-grouped settings for the label write tools. Keeps the large
 // New-/Set-Label surface organised (encryption, content marking, container and
@@ -253,9 +254,10 @@ const TOOLS = [
     annotations: { title: "Delete sensitivity label", ...DESTROY },
     inputSchema: {
       type: "object",
-      required: ["identity"],
+      required: ["identity", "confirm"],
       properties: {
         identity: { type: "string", description: "Sensitivity label name or GUID to delete" },
+        confirm: CONFIRM_DELETE,
       },
     },
   },
@@ -266,9 +268,10 @@ const TOOLS = [
     annotations: { title: "Delete label publishing policy", ...DESTROY },
     inputSchema: {
       type: "object",
-      required: ["identity"],
+      required: ["identity", "confirm"],
       properties: {
         identity: { type: "string", description: "Label policy name or GUID to delete" },
+        confirm: CONFIRM_DELETE,
       },
     },
   },
@@ -291,13 +294,19 @@ const TOOLS = [
   },
   {
     name: "get_dlp_policy",
-    description: "Get details of a single DLP policy by name or GUID, including its per-workload locations and exclusions.",
+    description:
+      "Get details of a single DLP policy by name or GUID, including its per-workload locations and exclusions. Set include_distribution_detail to also fetch the per-location distribution/sync status — use this to diagnose a policy stuck or reporting a sync failure in the portal.",
     annotations: { title: "Get DLP policy", ...READ },
     inputSchema: {
       type: "object",
       required: ["identity"],
       properties: {
         identity: { type: "string", description: "DLP policy name or GUID" },
+        include_distribution_detail: {
+          type: "boolean",
+          description:
+            "Also fetch per-location distribution/sync status and results (Get-DlpCompliancePolicy -DistributionDetail). Slower; use when a policy shows a sync problem.",
+        },
       },
     },
   },
@@ -488,9 +497,10 @@ const TOOLS = [
     annotations: { title: "Delete DLP policy", ...DESTROY },
     inputSchema: {
       type: "object",
-      required: ["identity"],
+      required: ["identity", "confirm"],
       properties: {
         identity: { type: "string", description: "DLP policy name or GUID to delete" },
+        confirm: CONFIRM_DELETE,
       },
     },
   },
@@ -501,9 +511,10 @@ const TOOLS = [
     annotations: { title: "Delete DLP rule", ...DESTROY },
     inputSchema: {
       type: "object",
-      required: ["identity"],
+      required: ["identity", "confirm"],
       properties: {
         identity: { type: "string", description: "DLP rule name or GUID to delete" },
+        confirm: CONFIRM_DELETE,
       },
     },
   },
@@ -658,10 +669,146 @@ const TOOLS = [
   },
 ];
 
+function closeObjectSchemas(schema) {
+  if (!schema || typeof schema !== "object") return;
+  if (schema.type === "object" && schema.additionalProperties === undefined) {
+    schema.additionalProperties = false;
+  }
+  for (const child of Object.values(schema.properties ?? {})) closeObjectSchemas(child);
+  if (schema.items) closeObjectSchemas(schema.items);
+  for (const keyword of ["allOf", "anyOf", "oneOf"]) {
+    for (const child of schema[keyword] ?? []) closeObjectSchemas(child);
+  }
+  if (schema.not) closeObjectSchemas(schema.not);
+}
+
+for (const tool of TOOLS) closeObjectSchemas(tool.inputSchema);
+
+const toolsByName = new Map(TOOLS.map((tool) => [tool.name, tool]));
+const LIST_TOOL_NAMES = [
+  "list_sensitivity_labels",
+  "list_label_policies",
+  "list_dlp_policies",
+  "list_dlp_rules",
+  "list_sensitive_information_types",
+];
+const LIST_OUTPUT_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["items", "count", "next_cursor"],
+  properties: {
+    items: { type: "array", items: { type: "object", additionalProperties: true } },
+    count: { type: "integer", minimum: 0 },
+    next_cursor: { type: ["string", "null"] },
+  },
+};
+for (const name of LIST_TOOL_NAMES) {
+  const tool = toolsByName.get(name);
+  tool.inputSchema.properties.limit = { type: "integer", minimum: 1, maximum: 100, default: 25 };
+  tool.inputSchema.properties.cursor = {
+    type: "string",
+    minLength: 1,
+    maxLength: 2048,
+    description: "Opaque cursor returned by the previous call with the same filters.",
+  };
+  tool.outputSchema = LIST_OUTPUT_SCHEMA;
+}
+toolsByName.get("get_dlp_rule").inputSchema.oneOf = [
+  { required: ["identity"], not: { required: ["policy"] } },
+  { required: ["policy"], not: { required: ["identity"] } },
+];
+toolsByName.get("create_copilot_dlp_rule").inputSchema.oneOf = [
+  { required: ["sensitive_information_types"], not: { required: ["sensitivity_labels"] } },
+  { required: ["sensitivity_labels"], not: { required: ["sensitive_information_types"] } },
+];
+toolsByName.get("list_sensitive_information_types").inputSchema.properties.scope.default = "all";
+
+const ajv = new Ajv({ allErrors: true, strict: false, useDefaults: true });
+const inputValidators = new Map(TOOLS.map((tool) => [tool.name, ajv.compile(tool.inputSchema)]));
+
+function validateToolInput(name, args) {
+  const validate = inputValidators.get(name);
+  if (!validate) throw new ProtocolError(ProtocolErrorCode.MethodNotFound, `Unknown tool: ${name}`);
+  if (!validate(args)) {
+    const detail = validate.errors
+      .map((error) => `${error.instancePath || "arguments"} ${error.message}`)
+      .join("; ");
+    throw new Error(`Invalid arguments for ${name}: ${detail}. Correct the arguments and retry.`);
+  }
+}
+
 // ---- tool dispatch ---------------------------------------------------------
 
 function text(t) {
   return { content: [{ type: "text", text: t }] };
+}
+
+const cursorSecret = process.env.MCP_CURSOR_SECRET || randomBytes(32).toString("base64url");
+
+function canonical(value) {
+  if (Array.isArray(value)) return value.map(canonical);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([k, v]) => [k, canonical(v)]));
+  }
+  return value;
+}
+
+function cursorSignature(encoded) {
+  return createHmac("sha256", cursorSecret).update(encoded).digest("base64url");
+}
+
+function makeCursor(tool, filters, offset) {
+  const encoded = Buffer.from(JSON.stringify({ tool, filters: canonical(filters), offset, exp: Date.now() + 15 * 60_000 })).toString("base64url");
+  return `${encoded}.${cursorSignature(encoded)}`;
+}
+
+function readCursor(cursor, tool, filters) {
+  try {
+    const [encoded, supplied] = cursor.split(".");
+    const expected = cursorSignature(encoded);
+    if (!supplied || supplied.length !== expected.length || !timingSafeEqual(Buffer.from(supplied), Buffer.from(expected))) throw new Error();
+    const payload = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8"));
+    if (payload.tool !== tool || payload.exp < Date.now() || JSON.stringify(payload.filters) !== JSON.stringify(canonical(filters))) throw new Error();
+    if (!Number.isSafeInteger(payload.offset) || payload.offset < 0) throw new Error();
+    return payload.offset;
+  } catch {
+    throw new Error(`The pagination cursor for ${tool} is invalid, expired, or belongs to different filters. Restart from the first page.`);
+  }
+}
+
+function itemKey(item) {
+  return String(item?.displayName ?? item?.DisplayName ?? item?.Name ?? item?.name ?? item?.Identity ?? item?.id ?? item?.Id ?? "").toLocaleLowerCase();
+}
+
+function normalizeListItem(item) {
+  const fields = {
+    id: item?.id ?? item?.Id ?? item?.Guid ?? item?.Identity,
+    name: item?.name ?? item?.Name,
+    display_name: item?.displayName ?? item?.DisplayName,
+    mode: item?.Mode ?? item?.mode,
+    enabled: item?.Enabled ?? item?.enabled,
+    state: item?.State ?? item?.state,
+    workload: item?.Workload ?? item?.workload,
+    policy: item?.Policy ?? item?.policy,
+    priority: item?.Priority ?? item?.priority,
+    publisher: item?.Publisher ?? item?.publisher,
+    sensitivity: item?.sensitivity ?? item?.Sensitivity,
+  };
+  return Object.fromEntries(Object.entries(fields).filter(([, value]) => value !== undefined && value !== null && value !== ""));
+}
+
+function pageResult(tool, args, items, formatPage) {
+  const limit = args.limit;
+  const filters = Object.fromEntries(Object.entries(args).filter(([key]) => key !== "limit" && key !== "cursor"));
+  const offset = args.cursor ? readCursor(args.cursor, tool, filters) : 0;
+  const sorted = [...items].sort((a, b) => itemKey(a).localeCompare(itemKey(b)));
+  const page = sorted.slice(offset, offset + limit);
+  const nextCursor = offset + page.length < sorted.length ? makeCursor(tool, filters, offset + page.length) : null;
+  const suffix = nextCursor ? `\n\nMore results are available. Call ${tool} again with the returned next_cursor as cursor.` : "";
+  return {
+    content: [{ type: "text", text: `${formatPage(page)}${suffix}` }],
+    structuredContent: { items: page.map(normalizeListItem), count: page.length, next_cursor: nextCursor },
+  };
 }
 
 // Per New-DlpComplianceRule, Block/Warn endpoint restrictions require NotifyUser;
@@ -675,12 +822,10 @@ function assertEndpointNotify(args) {
 
 async function dispatch(name, args) {
   switch (name) {
-    case "list_sensitivity_labels":
-      return text(
-        labels.formatLabelList(
-          labels.filterLabels(await labels.listLabels(), { active: args.active, parent: args.parent })
-        )
-      );
+    case "list_sensitivity_labels": {
+      const items = labels.filterLabels(await labels.listLabels(), { active: args.active, parent: args.parent });
+      return pageResult(name, args, items, labels.formatLabelList);
+    }
 
     case "get_sensitivity_label": {
       const detail = labels.formatLabelDetail(await labels.getLabel(args.label_id));
@@ -697,7 +842,7 @@ async function dispatch(name, args) {
     }
 
     case "list_label_policies":
-      return text(labels.formatLabelPolicyList(await labels.listLabelPolicies()));
+      return pageResult(name, args, await labels.listLabelPolicies(), labels.formatLabelPolicyList);
 
     case "get_label_policy":
       return text(labels.formatLabelPolicyDetail(await labels.getLabelPolicy(args.identity)));
@@ -742,20 +887,20 @@ async function dispatch(name, args) {
       await labels.removeLabelPolicy({ Identity: args.identity, Confirm: false });
       return text(`Deleted label policy: ${args.identity}`);
 
-    case "list_dlp_policies":
-      return text(
-        dlp.formatPolicyList(dlp.filterPolicies(await dlp.listPolicies(), { mode: args.mode, workload: args.workload }))
-      );
+    case "list_dlp_policies": {
+      const items = dlp.filterPolicies(await dlp.listPolicies(), { mode: args.mode, workload: args.workload });
+      return pageResult(name, args, items, dlp.formatPolicyList);
+    }
 
     case "get_dlp_policy":
-      return text(dlp.formatPolicyDetail(await dlp.getPolicy(args.identity)));
-
-    case "list_dlp_rules":
       return text(
-        dlp.formatRuleList(
-          dlp.filterRules(await dlp.listRules(args.policy), { disabledOnly: args.disabled_only, blockingOnly: args.blocking_only })
-        )
+        dlp.formatPolicyDetail(await dlp.getPolicy(args.identity, { distributionDetail: args.include_distribution_detail }))
       );
+
+    case "list_dlp_rules": {
+      const items = dlp.filterRules(await dlp.listRules(args.policy), { disabledOnly: args.disabled_only, blockingOnly: args.blocking_only });
+      return pageResult(name, args, items, dlp.formatRuleList);
+    }
 
     case "get_dlp_rule": {
       if (args.identity) return text(dlp.formatRuleDetail(await dlp.getRule(args.identity)));
@@ -883,7 +1028,8 @@ async function dispatch(name, args) {
 
     case "list_sensitive_information_types": {
       const scope = args.scope === "custom" ? "custom" : "all";
-      return text(dlp.formatSitList(await dlp.listSensitiveInformationTypes(scope, args.name_contains), scope));
+      const items = await dlp.listSensitiveInformationTypes(scope, args.name_contains);
+      return pageResult(name, args, items, (page) => dlp.formatSitList(page, scope));
     }
 
     default:
@@ -1015,7 +1161,7 @@ Within each group, present findings — do NOT rank them.
     }
 
     default:
-      throw new McpError(ErrorCode.InvalidParams, `Unknown prompt: ${name}`);
+      throw new ProtocolError(ProtocolErrorCode.InvalidParams, `Unknown prompt: ${name}`);
   }
 }
 
@@ -1056,7 +1202,7 @@ async function readResource(uri) {
     case "purview://sit-catalog/custom":
       return dlp.formatSitList(await dlp.listSensitiveInformationTypes("custom"), "custom");
     default:
-      throw new McpError(ErrorCode.InvalidParams, `Unknown resource: ${uri}`);
+      throw new ProtocolError(ProtocolErrorCode.InvalidParams, `Unknown resource: ${uri}`);
   }
 }
 
@@ -1072,25 +1218,37 @@ export { TOOLS, PROMPTS, RESOURCES };
 export function createServer() {
   const server = new Server(
     { name: "str-mcp-purview", version: "1.0.0" },
-    { capabilities: { tools: {}, prompts: {}, resources: {} } }
+    {
+      capabilities: { tools: {}, prompts: {}, resources: {} },
+      cacheHints: {
+        "server/discover": { ttlMs: 300_000, cacheScope: "public" },
+        "tools/list": { ttlMs: 300_000, cacheScope: "public" },
+        "prompts/list": { ttlMs: 300_000, cacheScope: "public" },
+        "resources/list": { ttlMs: 300_000, cacheScope: "public" },
+        "resources/read": { ttlMs: 0, cacheScope: "private" },
+      },
+    }
   );
 
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }));
+  server.setRequestHandler("tools/list", async () => ({ tools: TOOLS }));
 
-  server.setRequestHandler(CallToolRequestSchema, async (request) => {
+  server.setRequestHandler("tools/call", async (request) => {
     const { name, arguments: args } = request.params;
     try {
-      return await dispatch(name, args ?? {});
+      const input = args ?? {};
+      validateToolInput(name, input);
+      return await dispatch(name, input);
     } catch (err) {
+      if (err instanceof ProtocolError) throw err;
       return { content: [{ type: "text", text: `Error: ${err.message}` }], isError: true };
     }
   });
 
-  server.setRequestHandler(ListPromptsRequestSchema, async () => ({ prompts: PROMPTS }));
-  server.setRequestHandler(GetPromptRequestSchema, async (request) => getPrompt(request.params.name, request.params.arguments));
+  server.setRequestHandler("prompts/list", async () => ({ prompts: PROMPTS }));
+  server.setRequestHandler("prompts/get", async (request) => getPrompt(request.params.name, request.params.arguments));
 
-  server.setRequestHandler(ListResourcesRequestSchema, async () => ({ resources: RESOURCES }));
-  server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
+  server.setRequestHandler("resources/list", async () => ({ resources: RESOURCES }));
+  server.setRequestHandler("resources/read", async (request) => {
     const { uri } = request.params;
     return { contents: [{ uri, mimeType: "text/markdown", text: await readResource(uri) }] };
   });

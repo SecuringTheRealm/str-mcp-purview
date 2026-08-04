@@ -66,8 +66,18 @@ export async function listPolicies() {
   return asArray(await powershell.invoke("Get-DlpCompliancePolicy", {}, POLICY_PROPS));
 }
 
-export async function getPolicy(identity) {
-  return asArray(await powershell.invoke("Get-DlpCompliancePolicy", { Identity: identity }, POLICY_DETAIL_PROPS))[0];
+export async function getPolicy(identity, { distributionDetail = false } = {}) {
+  const params = { Identity: identity };
+  let props = POLICY_DETAIL_PROPS;
+  if (distributionDetail) {
+    // -DistributionDetail populates DistributionResults with a per-location
+    // breakdown (used to diagnose e.g. a "sync failed" status in the portal).
+    // Per Microsoft's own docs this property is "unreliable and prone to
+    // errors", so it is opt-in rather than always fetched.
+    params.DistributionDetail = true;
+    props = [...POLICY_DETAIL_PROPS, "DistributionStatus", "DistributionResults"];
+  }
+  return asArray(await powershell.invoke("Get-DlpCompliancePolicy", params, props))[0];
 }
 
 export async function listRules(policy) {
@@ -206,7 +216,12 @@ function sitName(sit) {
 
 function policyLine(p) {
   const state = p.Enabled === false ? "disabled" : (p.Mode ?? "enabled");
-  return `${truncate(p.Name, 44).padEnd(44)}  ${String(state).padEnd(12)}  ${truncate(p.Workload, 30) || "-"}  ${shortDate(p.WhenCreated)}`;
+  // Name/Workload get generous widths (rather than the old 44/30) so a
+  // realistic policy name and its full per-workload scope are never cut off —
+  // truncated to an ellipsis, the name can't be used as the exact Identity a
+  // follow-up get_dlp_policy call needs, and a truncated Workload can hide
+  // that Endpoint is (or isn't) in scope.
+  return `${truncate(p.Name, 70).padEnd(70)}  ${String(state).padEnd(12)}  ${truncate(p.Workload, 60) || "-"}  ${shortDate(p.WhenCreated)}`;
 }
 
 export function formatPolicyList(policies) {
@@ -248,11 +263,30 @@ export function formatPolicyDetail(p) {
       ["CreatedBy", "Created by"],
       ["WhenCreated", "Created"],
       ["WhenChangedUTC", "Last changed (UTC)"],
+      ["DistributionStatus", "Distribution status"],
     ]),
   ];
   const locs = locationSummary(p);
   if (locs) lines.push(`- **Locations:** ${locs}`);
+  const dist = formatDistributionResults(p.DistributionResults);
+  if (dist) lines.push(dist);
   return lines.filter(Boolean).join("\n");
+}
+
+// Per-location distribution breakdown from get_dlp_policy(..., { distributionDetail: true }).
+// Shape isn't documented by Microsoft beyond the examples, so render whatever
+// fields each entry carries rather than assuming specific ones — the error
+// detail on a failed location is exactly what this exists to surface.
+function formatDistributionResults(results) {
+  const items = asArray(results);
+  if (!items.length) return "";
+  const lines = items.map((r) => {
+    const parts = Object.entries(r)
+      .filter(([, v]) => v != null && v !== "")
+      .map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(", ") : v}`);
+    return `  - ${parts.join(" | ")}`;
+  });
+  return `- **Distribution results:**\n${lines.join("\n")}`;
 }
 
 function ruleLine(r) {
