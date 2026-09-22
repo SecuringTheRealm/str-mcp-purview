@@ -3,8 +3,8 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { Client } from "@modelcontextprotocol/client";
+import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 
 // index.js wires up an MCP server over stdio and calls server.connect()
 // immediately at import time, so it cannot be imported in-process without
@@ -33,7 +33,34 @@ async function withClient(fn) {
   }
 }
 
+async function withModernClient(fn) {
+  const transport = new StdioClientTransport({
+    command: process.execPath,
+    args: [serverEntry],
+    env: { PATH: process.env.PATH ?? "" },
+  });
+  const client = new Client(
+    { name: "modern-test-client", version: "1.0.0" },
+    { capabilities: {}, versionNegotiation: { mode: { pin: "2026-07-28" } } }
+  );
+  await client.connect(transport);
+  try {
+    await fn(client);
+  } finally {
+    await client.close();
+  }
+}
+
 test("MCP server over stdio", async (t) => {
+  await t.test("negotiates modern 2026-07-28 through server/discover", async () => {
+    await withModernClient(async (client) => {
+      assert.equal(client.getProtocolEra(), "modern");
+      assert.equal(client.getNegotiatedProtocolVersion(), "2026-07-28");
+      const { tools } = await client.listTools();
+      assert.equal(tools.length, 26);
+    });
+  });
+
   await t.test("lists all expected tools with schemas", async () => {
     await withClient(async (client) => {
       const { tools } = await client.listTools();
@@ -70,6 +97,29 @@ test("MCP server over stdio", async (t) => {
         assert.equal(typeof tool.description, "string");
         assert.ok(tool.description.length > 0, `${tool.name} should have a description`);
         assert.equal(tool.inputSchema.type, "object");
+      }
+      for (const name of [
+        "list_sensitivity_labels",
+        "list_label_policies",
+        "list_dlp_policies",
+        "list_dlp_rules",
+        "list_sensitive_information_types",
+      ]) {
+        const tool = tools.find((candidate) => candidate.name === name);
+        assert.deepEqual(tool.inputSchema.properties.limit, {
+          type: "integer",
+          minimum: 1,
+          maximum: 100,
+          default: 25,
+        });
+        assert.equal(tool.inputSchema.properties.cursor.type, "string");
+        assert.deepEqual(tool.outputSchema.required, [
+          "items",
+          "count",
+          "total_count",
+          "has_more",
+          "next_cursor",
+        ]);
       }
     });
   });
@@ -130,10 +180,10 @@ test("MCP server over stdio", async (t) => {
       assert.deepEqual(byName.set_sensitivity_label.inputSchema.required, ["identity"]);
       assert.deepEqual(byName.create_label_policy.inputSchema.required, ["name", "labels"]);
       assert.deepEqual(byName.set_label_policy.inputSchema.required, ["identity"]);
-      assert.deepEqual(byName.remove_dlp_policy.inputSchema.required, ["identity"]);
-      assert.deepEqual(byName.remove_dlp_rule.inputSchema.required, ["identity"]);
-      assert.deepEqual(byName.remove_sensitivity_label.inputSchema.required, ["identity"]);
-      assert.deepEqual(byName.remove_label_policy.inputSchema.required, ["identity"]);
+      assert.deepEqual(byName.remove_dlp_policy.inputSchema.required, ["identity", "confirm"]);
+      assert.deepEqual(byName.remove_dlp_rule.inputSchema.required, ["identity", "confirm"]);
+      assert.deepEqual(byName.remove_sensitivity_label.inputSchema.required, ["identity", "confirm"]);
+      assert.deepEqual(byName.remove_label_policy.inputSchema.required, ["identity", "confirm"]);
       assert.deepEqual(byName.set_dlp_policy.inputSchema.required, ["identity"]);
       assert.deepEqual(byName.set_dlp_rule.inputSchema.required, ["identity"]);
       assert.equal(byName.list_dlp_rules.inputSchema.required, undefined);
@@ -185,15 +235,30 @@ test("MCP server over stdio", async (t) => {
     await withClient(async (client) => {
       const result = await client.callTool({ name: "get_dlp_rule", arguments: {} });
       assert.equal(result.isError, true);
-      assert.match(result.content[0].text, /either 'identity'.*or 'policy'/);
+      assert.match(result.content[0].text, /required property 'identity'.*required property 'policy'/);
     });
   });
 
-  await t.test("reports an unknown tool name as an error result, not a crash", async () => {
+  await t.test("reports an unknown tool name as a protocol error", async () => {
     await withClient(async (client) => {
-      const result = await client.callTool({ name: "not_a_real_tool", arguments: {} });
-      assert.equal(result.isError, true);
-      assert.match(result.content[0].text, /Unknown tool: not_a_real_tool/);
+      await assert.rejects(
+        () => client.callTool({ name: "not_a_real_tool", arguments: {} }),
+        /Unknown tool: not_a_real_tool/
+      );
+    });
+  });
+
+  await t.test("requires explicit true confirmation for every destructive delete", async () => {
+    await withClient(async (client) => {
+      for (const name of ["remove_dlp_policy", "remove_dlp_rule", "remove_sensitivity_label", "remove_label_policy"]) {
+        for (const confirm of [undefined, false]) {
+          const arguments_ = { identity: "do-not-delete" };
+          if (confirm !== undefined) arguments_.confirm = confirm;
+          const result = await client.callTool({ name, arguments: arguments_ });
+          assert.equal(result.isError, true, `${name} should reject confirm=${confirm}`);
+          assert.match(result.content[0].text, /Invalid arguments/);
+        }
+      }
     });
   });
 

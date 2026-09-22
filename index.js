@@ -7,7 +7,7 @@
 //   Chris Lloyd-Jones (Sealjay) & Josh McDonald (KnowledgeRatio).
 // Licensed under MIT — this attribution notice must be retained (see LICENCE).
 
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import { createServer } from "./src/server.js";
 
-await createServer().connect(new StdioServerTransport());
+await serveStdio(createServer);

@@ -1,6 +1,6 @@
 {
   "name": "str-mcp-purview",
-  "version": "1.0.1",
+  "version": "2.0.0",
   "description": "Local MCP server for Microsoft Purview data security — sensitivity labels (Microsoft Graph) and DLP policies (Security & Compliance PowerShell), for use by coding agents.",
   "type": "module",
   "author": "Securing the Realm (https://securing.quest/) — Chris Lloyd-Jones (Sealjay) & Josh McDonald (KnowledgeRatio)",
@@ -19,7 +19,9 @@
   },
   "dependencies": {
     "@azure/identity": "^4.5.0",
-    "@modelcontextprotocol/sdk": "^1.30.0"
+    "@modelcontextprotocol/node": "^2.0.0",
+    "@modelcontextprotocol/server": "^2.0.0",
+    "ajv": "^8.20.0"
   },
   "engines": {
     "node": ">=20.0.0"
@@ -34,5 +36,8 @@
     "information-protection",
     "compliance"
   ],
-  "license": "MIT"
+  "license": "MIT",
+  "devDependencies": {
+    "@modelcontextprotocol/client": "^2.0.0"
+  }
 }
