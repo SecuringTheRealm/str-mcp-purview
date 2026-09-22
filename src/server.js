@@ -1071,7 +1071,7 @@ export { TOOLS, PROMPTS, RESOURCES };
  */
 export function createServer() {
   const server = new Server(
-    { name: "str-mcp-purview", version: "1.0.0" },
+    { name: "str-mcp-purview", version: "1.0.1" },
     { capabilities: { tools: {}, prompts: {}, resources: {} } }
   );
 
