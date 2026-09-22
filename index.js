@@ -10,4 +10,4 @@
 import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import { createServer } from "./src/server.js";
 
-await serveStdio(createServer);
+await serveStdio((context) => createServer({ ...context, transport: "stdio" }));

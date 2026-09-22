@@ -45,7 +45,10 @@ const allowedOrigins = new Set(
     .map((origin) => origin.trim())
     .filter(Boolean)
 );
-const mcpHandler = createMcpHandler(createServer, { responseMode: "json" });
+const mcpHandler = createMcpHandler(
+  (context) => createServer({ ...context, transport: "http" }),
+  { responseMode: "json" }
+);
 const handleMcp = toNodeHandler(mcpHandler);
 
 function rpcError(code, message) {

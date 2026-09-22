@@ -13,6 +13,7 @@
     "MCP_ALLOWED_ORIGINS": "https://<approved-client-host>",
     "MCP_CURSOR_SECRET": "<store-in-Key-Vault-reference-in-Azure>",
     "MCP_MAX_CONCURRENT_REQUESTS": "8",
+    "MCP_REQUEST_LOGGING": "true",
 
     "// platform": "Azure Functions and PowerShell-backed execution remain In UAT until the deployed authentication and all-tool matrix passes."
   }

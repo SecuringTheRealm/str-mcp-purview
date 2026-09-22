@@ -29,6 +29,7 @@ import Ajv from "ajv";
 import * as labels from "./labels.js";
 import * as dlp from "./dlp.js";
 import { createListPaginator } from "./pagination.js";
+import { createRequestLogger } from "./request-logging.js";
 
 // ---- tool definitions ------------------------------------------------------
 
@@ -327,7 +328,7 @@ const TOOLS = [
   {
     name: "get_dlp_rule",
     description:
-      "Get full DLP rule detail (Get-DlpComplianceRule): state, priority, parent policy, block action/scope, notified users, alert/severity, exceptions, and detected sensitive information types or labels. Provide EITHER identity (one rule) OR policy (full detail for every rule in that policy). Use list_dlp_rules first to find names.",
+      "Get full DLP rule detail (Get-DlpComplianceRule): state, priority, parent policy, block action/scope, notified users, alert/severity, exceptions, and detected sensitive information types or labels. Provide EITHER identity (one rule) OR policy (paginated full detail for rules in that policy). Use list_dlp_rules first to find names.",
     annotations: { title: "Get DLP rule detail", ...READ },
     inputSchema: {
       type: "object",
@@ -692,6 +693,7 @@ const LIST_TOOL_NAMES = [
   "list_dlp_rules",
   "list_sensitive_information_types",
 ];
+const PAGINATED_TOOL_NAMES = [...LIST_TOOL_NAMES, "get_dlp_rule"];
 const LIST_OUTPUT_SCHEMA = {
   type: "object",
   additionalProperties: false,
@@ -704,7 +706,7 @@ const LIST_OUTPUT_SCHEMA = {
     next_cursor: { type: ["string", "null"] },
   },
 };
-for (const name of LIST_TOOL_NAMES) {
+for (const name of PAGINATED_TOOL_NAMES) {
   const tool = toolsByName.get(name);
   tool.inputSchema.properties.limit = { type: "integer", minimum: 1, maximum: 100, default: 25 };
   tool.inputSchema.properties.cursor = {
@@ -839,8 +841,25 @@ async function dispatch(name, args) {
     }
 
     case "get_dlp_rule": {
-      if (args.identity) return text(dlp.formatRuleDetail(await dlp.getRule(args.identity)));
-      if (args.policy) return text(dlp.formatRuleDetails(await dlp.listRules(args.policy), args.policy));
+      if (args.identity) {
+        const rule = await dlp.getRule(args.identity);
+        return pageResult(
+          name,
+          args,
+          rule ? [rule] : [],
+          (page) => dlp.formatRuleDetail(page[0]),
+          (item) => item
+        );
+      }
+      if (args.policy) {
+        return pageResult(
+          name,
+          args,
+          await dlp.listRules(args.policy, { detail: true }),
+          (page) => dlp.formatRuleDetails(page, args.policy),
+          (item) => item
+        );
+      }
       throw new Error("get_dlp_rule requires either 'identity' (one rule) or 'policy' (all rules in a policy).");
     }
 
@@ -1151,7 +1170,11 @@ export { TOOLS, PROMPTS, RESOURCES };
  * creates one for the process; the streamable-HTTP host (functions/server.js)
  * creates one per request, as stateless transports require.
  */
-export function createServer() {
+export function createServer(factoryContext = {}) {
+  const withRequestLogging = createRequestLogger({
+    transport: factoryContext.transport,
+    era: factoryContext.era,
+  });
   const server = new Server(
     { name: "str-mcp-purview", version: "2.0.0" },
     {
@@ -1166,9 +1189,9 @@ export function createServer() {
     }
   );
 
-  server.setRequestHandler("tools/list", async () => ({ tools: TOOLS }));
+  server.setRequestHandler("tools/list", withRequestLogging("tools/list", async () => ({ tools: TOOLS })));
 
-  server.setRequestHandler("tools/call", async (request) => {
+  server.setRequestHandler("tools/call", withRequestLogging("tools/call", async (request) => {
     const { name, arguments: args } = request.params;
     try {
       const input = args ?? {};
@@ -1178,16 +1201,20 @@ export function createServer() {
       if (err instanceof ProtocolError) throw err;
       return { content: [{ type: "text", text: `Error: ${err.message}` }], isError: true };
     }
-  });
+  }, (request) => ({ tool: request.params.name })));
 
-  server.setRequestHandler("prompts/list", async () => ({ prompts: PROMPTS }));
-  server.setRequestHandler("prompts/get", async (request) => getPrompt(request.params.name, request.params.arguments));
+  server.setRequestHandler("prompts/list", withRequestLogging("prompts/list", async () => ({ prompts: PROMPTS })));
+  server.setRequestHandler("prompts/get", withRequestLogging(
+    "prompts/get",
+    async (request) => getPrompt(request.params.name, request.params.arguments),
+    (request) => ({ prompt: request.params.name })
+  ));
 
-  server.setRequestHandler("resources/list", async () => ({ resources: RESOURCES }));
-  server.setRequestHandler("resources/read", async (request) => {
+  server.setRequestHandler("resources/list", withRequestLogging("resources/list", async () => ({ resources: RESOURCES })));
+  server.setRequestHandler("resources/read", withRequestLogging("resources/read", async (request) => {
     const { uri } = request.params;
     return { contents: [{ uri, mimeType: "text/markdown", text: await readResource(uri) }] };
-  });
+  }, (request) => ({ resource: request.params.uri })));
 
   return server;
 }

@@ -137,6 +137,16 @@ test("Azure Functions streamable HTTP host", async (t) => {
           "next_cursor",
         ]);
       }
+      const ruleDetail = list.body.result.tools.find((tool) => tool.name === "get_dlp_rule");
+      assert.equal(ruleDetail.inputSchema.properties.limit.default, 25);
+      assert.equal(ruleDetail.inputSchema.properties.cursor.type, "string");
+      assert.deepEqual(ruleDetail.outputSchema.required, [
+        "items",
+        "count",
+        "total_count",
+        "has_more",
+        "next_cursor",
+      ]);
     });
   });
 

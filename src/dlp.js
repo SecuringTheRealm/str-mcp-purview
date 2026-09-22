@@ -80,9 +80,9 @@ export async function getPolicy(identity, { distributionDetail = false } = {}) {
   return asArray(await powershell.invoke("Get-DlpCompliancePolicy", params, props))[0];
 }
 
-export async function listRules(policy) {
+export async function listRules(policy, { detail = false } = {}) {
   const params = policy ? { Policy: policy } : {};
-  return asArray(await powershell.invoke("Get-DlpComplianceRule", params, RULE_PROPS));
+  return asArray(await powershell.invoke("Get-DlpComplianceRule", params, detail ? RULE_DETAIL_PROPS : RULE_PROPS));
 }
 
 export async function getRule(identity) {
@@ -354,4 +354,3 @@ export function formatSitList(sits, scope = "all") {
   const label = scope === "custom" ? "custom sensitive information type(s)" : "sensitive information type(s)";
   return `${sits.length} ${label}:\n${sits.map(sitLine).join("\n")}`;
 }
-

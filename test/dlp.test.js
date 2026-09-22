@@ -65,6 +65,14 @@ test("listRules", async (t) => {
     await dlp.listRules("MyPolicy");
     assert.deepEqual(invokeCalls.at(-1).params, { Policy: "MyPolicy" });
   });
+
+  await t.test("selects full rule properties for a paginated policy detail read", async () => {
+    invokeImpl = async () => [];
+    await dlp.listRules("MyPolicy", { detail: true });
+    assert.deepEqual(invokeCalls.at(-1).params, { Policy: "MyPolicy" });
+    assert.ok(invokeCalls.at(-1).selectProps.includes("StopPolicyProcessing"));
+    assert.ok(invokeCalls.at(-1).selectProps.includes("ExceptIfSenderDomainIs"));
+  });
 });
 
 test("getRule", async (t) => {

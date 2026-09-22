@@ -90,7 +90,7 @@ export function createListPaginator({
     }
   }
 
-  return function paginateList(tool, args, items, formatPage) {
+  return function paginateList(tool, args, items, formatPage, normalizeItem = normalizeListItem) {
     const limit = args.limit;
     const filters = Object.fromEntries(
       Object.entries(args).filter(([key]) => key !== "limit" && key !== "cursor")
@@ -112,7 +112,7 @@ export function createListPaginator({
     return {
       content: [{ type: "text", text: `${formatPage(page)}${suffix}` }],
       structuredContent: {
-        items: page.map(normalizeListItem),
+        items: page.map(normalizeItem),
         count: page.length,
         total_count: sorted.length,
         has_more: hasMore,
