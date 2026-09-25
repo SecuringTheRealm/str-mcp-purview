@@ -15,7 +15,7 @@ Every capability here is scored against the two planes the server can act on:
 
 | Plane | Auth | Reads | Writes |
 | --- | --- | --- | --- |
-| **Microsoft Graph** (`/beta/security/informationProtection`) | delegated token (`@azure/identity`) | ✅ labels, policy settings | ❌ none exposed |
+| **Microsoft Graph** (`/beta/security/informationProtection`) | delegated token (`@azure/identity`) | ✅ per-user label policy settings | ❌ none exposed |
 | **Security & Compliance PowerShell** (`Connect-IPPSSession`) | delegated sign-in, one persistent `pwsh` | ✅ DLP, SITs, labels | ✅ DLP, SITs, labels |
 
 Three rules follow from this:
@@ -46,7 +46,7 @@ Three rules follow from this:
 Baseline so the gaps below are legible. **26 tools, 2 prompts, 3 resources.** All
 tools declare MCP annotations (`readOnlyHint`/`destructiveHint`/`idempotentHint`/`openWorldHint`).
 
-- **Labels (read):** `list_sensitivity_labels`, `get_sensitivity_label` (incl. protection-settings read-back), `get_label_policy_settings`, `list_label_policies`, `get_label_policy`
+- **Labels (read):** `list_sensitivity_labels`, `get_sensitivity_label` (authoritative `Get-Label`, including protection), `get_label_policy_settings` (Graph), `list_label_policies`, `get_label_policy`
 - **Labels (write):** `create_sensitivity_label`, `set_sensitivity_label`, `create_label_policy`, `set_label_policy`
 - **DLP (read):** `list_dlp_policies`, `get_dlp_policy`, `list_dlp_rules`
 - **DLP (write):** `create_dlp_policy`, `set_dlp_policy`, `create_dlp_rule`, `set_dlp_rule`
@@ -69,9 +69,9 @@ Every remaining DLP / label / classification gap, mapped to the tier it belongs 
 | DLP CRUD | ✅ Delete policy / rule — **shipped** (`remove_dlp_policy`, `remove_dlp_rule`) | `Remove-DlpCompliancePolicy` / `-DlpComplianceRule` | ✅ done |
 | DLP CRUD | ✅ Edit policy **locations** — **shipped** (`set_dlp_policy` `add_locations`/`remove_locations`, incl. Teams & Endpoint) | `Set-DlpCompliancePolicy` | ✅ done |
 | DLP CRUD | ✅ `set_`/`remove_` for endpoint & Copilot rules — **shipped** (`set_dlp_rule` handles endpoint restrictions + SIT changes; `remove_dlp_rule` was already generic) | `Set-DlpComplianceRule` | ✅ done |
-| DLP conditions | Richer rule conditions/actions (labels, doc-props, sender/recipient, file-type; encrypt/RMS, quarantine, incident report) | `*-DlpComplianceRule` | 🟢 T1 → 🟡 |
-| DLP locations | On-prem scanner, PowerBI, 3rd-party-app locations + exceptions/adaptive scopes (Teams ✅ shipped on create/set) | `New-DlpCompliancePolicy` | 🟢 T1 |
-| Labels | Migrate label reads from `/beta` `informationProtection` to the GA v1.0 `dataSecurityAndGovernance` surface (new `SensitivityLabel.Read` scopes; richer label object; **no GA equivalent for `labelPolicySettings`** — that read stays beta). Needs live-tenant shape validation before switching. | Graph v1.0 | 🟢 T1 |
+| DLP conditions | Per-SIT tuning, access scope, severity, custom notifications and common exceptions ✅ shipped; remaining: labels, richer positive conditions/actions, encrypt/RMS, quarantine, incident report | `*-DlpComplianceRule` | 🟢 T1 → 🟡 |
+| DLP locations | SharePoint/OneDrive/Teams/Endpoint exceptions ✅ shipped; remaining: on-prem scanner, PowerBI, 3rd-party apps and adaptive scopes | `*-DlpCompliancePolicy` | 🟢 T1 |
+| Labels | ✅ Move catalogue/detail reads to authoritative `Get-Label` so SCC name, GUID, display name, and protection are immediately consistent with writes; `labelPolicySettings` remains Graph-backed. | `Get-Label` + Graph beta | ✅ done |
 | Labels | ✅ Delete label / policy — **shipped** (`remove_sensitivity_label`, `remove_label_policy`) | `Remove-Label` / `Remove-LabelPolicy` | ✅ done |
 | Labels | **Auto-labeling** (apply by condition) | `*-AutoSensitivityLabelPolicy` + `...Rule` | 🟢 T1 |
 | Classification | Keyword dictionaries | `*-DlpKeywordDictionary` | 🟢 T1 |
@@ -107,8 +107,8 @@ No new plane, no XML, no new auth.
   exposed as category-grouped objects flattened to the flat `New-Label` params.
 - **Publishing:** create = publish (no separate step); behaviour via
   `advanced_settings` hashtable; targets Exchange + M365 Groups.
-- **Note:** labels are now hybrid — read via Graph, **write via PowerShell**
-  (writes need `pwsh` + IPPSSession, unlike the Graph-only reads).
+- **Note:** label configuration is read and written via PowerShell so identities
+  and post-write reads remain consistent; only `labelPolicySettings` stays on Graph.
 - **✅ Delete — shipped:** `remove_sensitivity_label`, `remove_label_policy`.
 - **Remaining label gap:** **auto-labeling**
   (`New-/Set-/Remove-AutoSensitivityLabelPolicy` + `...Rule`) — see coverage below.
@@ -127,6 +127,11 @@ No new plane, no XML, no new auth.
   `ExceptIf*`/location property names on a live tenant.)*
 - **✅ Done — location editing:** `set_dlp_policy` now adds/removes Exchange,
   SharePoint, OneDrive, Teams, and Endpoint locations (`Add*/Remove*Location`).
+- **✅ Done — P1 rule parity:** per-SIT count/confidence tuning, `AccessScope`,
+  `ReportSeverityLevel`, custom notification subject/body and policy tip, plus a
+  structured common `ExceptIf*` surface on `create_dlp_rule` / `set_dlp_rule`.
+- **✅ Done — location exceptions:** create/add/remove exclusions for the
+  documented SharePoint, OneDrive, Teams, and Endpoint location surfaces.
 
 ### DLP surface coverage (locations & enforcement planes)
 The traditional and endpoint surfaces are done; the rest ride the *same*

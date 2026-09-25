@@ -15,7 +15,9 @@
   },
   "scripts": {
     "start": "node index.js",
-    "test": "node --experimental-test-module-mocks --test"
+    "test": "node --experimental-test-module-mocks --test",
+    "benchmark:retrieval": "node benchmarks/retrieval.js",
+    "benchmark:simulation": "node benchmarks/simulate-agent.js"
   },
   "dependencies": {
     "@azure/identity": "^4.5.0",

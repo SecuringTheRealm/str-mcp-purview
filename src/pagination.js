@@ -31,7 +31,8 @@ export function normalizeListItem(item) {
   const fields = {
     id: item?.id ?? item?.Id ?? item?.Guid ?? item?.Identity,
     name: item?.name ?? item?.Name,
-    display_name: item?.displayName ?? item?.DisplayName,
+    display_name: item?.display_name ?? item?.displayName ?? item?.DisplayName,
+    scc_name: item?.scc_name,
     mode: item?.Mode ?? item?.mode,
     enabled: item?.Enabled ?? item?.enabled,
     state: item?.State ?? item?.state,

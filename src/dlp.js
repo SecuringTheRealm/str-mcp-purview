@@ -3,6 +3,7 @@
 
 import { powershell } from "./powershell.js";
 import { truncate, shortDate, asArray, bulletFields, formatWriteResult } from "./format.js";
+import { CapabilityError } from "./dispatch/errors.js";
 
 // Re-exported so index.js can keep calling dlp.formatWriteResult; the shared
 // implementation lives in format.js (also used by the label write tools).
@@ -16,7 +17,7 @@ const POLICY_PROPS = [
 ];
 const RULE_PROPS = [
   "Name", "Guid", "Policy", "ParentPolicyName", "Disabled", "Mode",
-  "Priority", "BlockAccess", "BlockAccessScope", "NotifyUser",
+  "Priority", "BlockAccess", "BlockAccessScope", "AccessScope", "NotifyUser",
   "GenerateAlert", "ReportSeverityLevel", "ContentContainsSensitiveInformation",
 ];
 const SIT_PROPS = ["Name", "Id", "Publisher", "Description"];
@@ -48,11 +49,13 @@ const RULE_EXCEPTION_FIELDS = [
   ["ExceptIfSenderDomainIs", "sender-domain"],
 ];
 
-const POLICY_DETAIL_PROPS = [...POLICY_PROPS, ...POLICY_LOCATION_FIELDS.flatMap(([f, , e]) => (e ? [f, e] : [f]))];
+const POLICY_DETAIL_PROPS = [...POLICY_PROPS, ...POLICY_LOCATION_FIELDS.flatMap(([f, , e]) => (e ? [f, e] : [f])),
+  "OneDriveSharedBy", "OneDriveSharedByMemberOf", "ExceptIfOneDriveSharedBy", "ExceptIfOneDriveSharedByMemberOf"];
 const RULE_DETAIL_PROPS = [
   ...RULE_PROPS,
   "StopPolicyProcessing", "RestrictAccess", "EncryptRMSTemplate", "Quarantine",
-  "GenerateIncidentReport", "NotifyPolicyTipCustomText",
+  "GenerateIncidentReport", "IncidentReportContent", "NotifyEmailCustomSubject",
+  "NotifyEmailCustomText", "NotifyPolicyTipCustomText",
   ...RULE_EXCEPTION_FIELDS.map(([f]) => f),
 ];
 
@@ -130,6 +133,109 @@ export async function createRule(params) {
 export async function setRule(params) {
   // params: { Identity, ...properties to change }
   return powershell.invoke("Set-DlpComplianceRule", params, RULE_PROPS);
+}
+
+/** Map string and tuned per-SIT inputs to the PswsHashtable[] cmdlet shape. */
+export function sensitiveInformationTypeConditions(items = []) {
+  const tuned = items.some((item) => typeof item !== "string" && item.confidence_level !== undefined);
+  const conditions = items.map((item) => {
+    if (typeof item === "string") return { Name: item };
+    if (
+      item.max_count !== undefined &&
+      item.max_count !== -1 &&
+      item.min_count !== undefined &&
+      item.max_count < item.min_count
+    ) {
+      throw new Error(
+        `max_count must be -1 (unlimited) or at least min_count for sensitive information type "${item.name}".`
+      );
+    }
+    const condition = { Name: item.name };
+    if (item.min_count !== undefined) condition.minCount = item.min_count;
+    if (item.max_count !== undefined) condition.maxCount = item.max_count;
+    if (item.confidence_level !== undefined) {
+      condition.minConfidence = { Low: 65, Medium: 75, High: 85 }[item.confidence_level];
+      if (!condition.minConfidence) throw new CapabilityError("VALIDATION_ERROR", "Unknown SIT confidence level.");
+      condition.maxConfidence = 100;
+    }
+    return condition;
+  });
+  // Microsoft's grouped PswsHashtable[] syntax preserves OR semantics across
+  // SITs and supports min/max confidence. Keep simple string/count inputs intact.
+  return tuned ? [{ operator: "And", groups: [{ operator: "Or", name: "Default", sensitivetypes: conditions }] }] : conditions;
+}
+
+const RULE_EXCEPTION_PARAMS = {
+  sensitive_information_types: "ExceptIfContentContainsSensitiveInformation",
+  content_property_contains_words: "ExceptIfContentPropertyContainsWords",
+  document_name_matches_words: "ExceptIfDocumentNameMatchesWords",
+  document_name_matches_patterns: "ExceptIfDocumentNameMatchesPatterns",
+  document_matches_patterns: "ExceptIfDocumentMatchesPatterns",
+  content_extension_matches_words: "ExceptIfContentExtensionMatchesWords",
+  from: "ExceptIfFrom",
+  from_member_of: "ExceptIfFromMemberOf",
+  sent_to: "ExceptIfSentTo",
+  recipient_domain_is: "ExceptIfRecipientDomainIs",
+  sender_domain_is: "ExceptIfSenderDomainIs",
+};
+
+/** Build optional parameters shared by create_dlp_rule and set_dlp_rule. */
+export function ruleWriteParams(args = {}) {
+  const params = {};
+  if (args.sensitive_information_types?.length) {
+    params.ContentContainsSensitiveInformation = sensitiveInformationTypeConditions(args.sensitive_information_types);
+  }
+  if (args.block_access != null) params.BlockAccess = args.block_access;
+  if (args.notify_user?.length) params.NotifyUser = args.notify_user;
+  if (args.generate_alert != null) {
+    if (!Array.isArray(args.generate_alert) || !args.generate_alert.length || args.generate_alert.some((v) => typeof v !== "string" || !/^(SiteAdmin|[^\s@]+@[^\s@]+)$/.test(v))) {
+      throw new CapabilityError("VALIDATION_ERROR", "generate_alert must contain recipient email addresses or SiteAdmin, not a boolean.");
+    }
+    params.GenerateAlert = args.generate_alert;
+  }
+  if (args.priority != null) params.Priority = args.priority;
+  if (args.disabled != null) params.Disabled = args.disabled;
+  if (args.access_scope) params.AccessScope = args.access_scope;
+  if (args.report_severity_level) params.ReportSeverityLevel = args.report_severity_level;
+  if (args.notification_email_subject != null) params.NotifyEmailCustomSubject = args.notification_email_subject;
+  if (args.notification_email_body != null) params.NotifyEmailCustomText = args.notification_email_body;
+  if (args.policy_tip_text != null) params.NotifyPolicyTipCustomText = args.policy_tip_text;
+  if (args.endpoint_restrictions?.length) {
+    params.EndpointDlpRestrictions = args.endpoint_restrictions.map((r) => ({ Setting: r.activity, Value: r.action }));
+  }
+  for (const [key, psName] of Object.entries(RULE_EXCEPTION_PARAMS)) {
+    const values = args.exceptions?.[key];
+    if (!values?.length) continue;
+    params[psName] = key === "sensitive_information_types"
+      ? sensitiveInformationTypeConditions(values)
+      : values;
+  }
+  return params;
+}
+
+const POLICY_EXCEPTION_PARAMS = {
+  sharepoint: "SharePointLocationException",
+  teams: "TeamsLocationException",
+  endpoint: "EndpointDlpLocationException",
+};
+
+export function createPolicyLocationExceptionParams(exceptions = {}) {
+  const params = {};
+  for (const [key, psName] of Object.entries(POLICY_EXCEPTION_PARAMS)) {
+    if (exceptions[key]?.length) params[psName] = exceptions[key];
+  }
+  if (exceptions.onedrive?.length) params.ExceptIfOneDriveSharedBy = exceptions.onedrive;
+  return params;
+}
+
+export function updatePolicyLocationExceptionParams(add = {}, remove = {}) {
+  if (add.onedrive?.length || remove.onedrive?.length) throw new CapabilityError("VALIDATION_ERROR", "OneDrive exceptions require current-policy reconciliation.");
+  const params = {};
+  for (const [key, psName] of Object.entries(POLICY_EXCEPTION_PARAMS)) {
+    if (add[key]?.length) params[`Add${psName}`] = add[key];
+    if (remove[key]?.length) params[`Remove${psName}`] = remove[key];
+  }
+  return params;
 }
 
 // Deletes: pass { Identity, Confirm: false } so the cmdlet's built-in
@@ -216,12 +322,7 @@ function sitName(sit) {
 
 function policyLine(p) {
   const state = p.Enabled === false ? "disabled" : (p.Mode ?? "enabled");
-  // Name/Workload get generous widths (rather than the old 44/30) so a
-  // realistic policy name and its full per-workload scope are never cut off —
-  // truncated to an ellipsis, the name can't be used as the exact Identity a
-  // follow-up get_dlp_policy call needs, and a truncated Workload can hide
-  // that Endpoint is (or isn't) in scope.
-  return `${truncate(p.Name, 70).padEnd(70)}  ${String(state).padEnd(12)}  ${truncate(p.Workload, 60) || "-"}  ${shortDate(p.WhenCreated)}`;
+  return `${p.Guid ?? "-"}  ${p.Name ?? "(unknown)"}  ${state}  workload:${p.Workload || "-"}  ${shortDate(p.WhenCreated)}`;
 }
 
 export function formatPolicyList(policies) {
@@ -238,8 +339,13 @@ function locationSummary(p) {
   for (const [field, label, excField] of POLICY_LOCATION_FIELDS) {
     const locs = asArray(p?.[field]);
     if (!locs.length) continue;
-    const scope = locs.length === 1 && isAll(locs[0]) ? "All" : String(locs.length);
-    const exc = excField ? asArray(p?.[excField]).length : 0;
+    let scope = locs.length === 1 && isAll(locs[0]) ? "All" : String(locs.length);
+    let exc = excField ? asArray(p?.[excField]).length : 0;
+    if (field === "OneDriveLocation") {
+      const users = asArray(p.OneDriveSharedBy).length, groups = asArray(p.OneDriveSharedByMemberOf).length;
+      if (users || groups) scope = `${users} users, ${groups} groups`;
+      exc += asArray(p.ExceptIfOneDriveSharedBy).length + asArray(p.ExceptIfOneDriveSharedByMemberOf).length;
+    }
     parts.push(`${label} (${scope}${exc ? `, excluded: ${exc}` : ""})`);
   }
   return parts.join(", ");
@@ -293,7 +399,7 @@ function ruleLine(r) {
   const state = r.Disabled === true ? "disabled" : "enabled";
   const block = r.BlockAccess === true ? " BLOCK" : "";
   const prio = r.Priority != null ? `p${r.Priority}` : "p?";
-  return `${truncate(r.Name, 40).padEnd(40)}  ${state.padEnd(9)}  ${prio.padEnd(4)}  policy:${truncate(r.ParentPolicyName ?? r.Policy, 24)}${block}${sitName(r.ContentContainsSensitiveInformation)}`;
+  return `${r.Guid ?? "-"}  ${r.Name ?? "(unknown)"}  ${state}  ${prio}  policy:${r.ParentPolicyName ?? r.Policy ?? "-"}${block}${sitName(r.ContentContainsSensitiveInformation)}`;
 }
 
 export function formatRuleList(rules) {
@@ -314,6 +420,7 @@ export function formatRuleDetail(r) {
       ["Priority", "Priority"],
       ["BlockAccess", "Block access"],
       ["BlockAccessScope", "Block-access scope"],
+      ["AccessScope", "Access scope"],
       ["NotifyUser", "Notify users"],
       ["GenerateAlert", "Generate alert"],
       ["ReportSeverityLevel", "Severity"],
@@ -331,6 +438,7 @@ export function formatRuleDetail(r) {
   if (restrict.length) lines.push(`- **Restrict access:** ${restrict.join(", ")}`);
   const exc = exceptionSummary(r);
   if (exc) lines.push(`- **Exceptions:** ${exc}`);
+  if (r.NotifyEmailCustomSubject || r.NotifyEmailCustomText) lines.push("- **Notification email:** customised");
   if (r.NotifyPolicyTipCustomText) lines.push("- **Policy tip:** configured");
   return lines.filter(Boolean).join("\n");
 }
@@ -344,7 +452,7 @@ export function formatRuleDetails(rules, policy) {
 
 function sitLine(s) {
   const kind = s.Publisher !== BUILTIN_SIT_PUBLISHER ? "custom" : "built-in";
-  return `${truncate(s.Name, 44).padEnd(44)}  ${kind.padEnd(9)}  ${truncate(s.Description, 60) || "-"}`;
+  return `${s.Id ?? "-"}  ${s.Name ?? "(unknown)"}  ${kind}  ${truncate(s.Description, 60) || "-"}`;
 }
 
 export function formatSitList(sits, scope = "all") {

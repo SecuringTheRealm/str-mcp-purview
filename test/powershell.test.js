@@ -116,6 +116,8 @@ test("PowerShellBridge.invoke", async (t) => {
     // The child never signs in itself: it has no console, so both WAM and the
     // -DisableWAM browser fallback would hang. It gets a Node-acquired token.
     assert.match(scripts, /Connect-IPPSSession -AccessToken/);
+    assert.match(scripts, /Import-Module ExchangeOnlineManagement -MinimumVersion 3\.8\.0/);
+    assert.match(scripts, /Parameters.ContainsKey\('AccessToken'\)/);
     assert.doesNotMatch(scripts, /-DisableWAM/);
     assert.match(scripts, /Get-DlpCompliancePolicy @__p \| Select-Object Name/);
   });
@@ -267,7 +269,7 @@ test("PowerShellBridge.invoke", async (t) => {
     lastProc.respondOk([]);
     await Promise.all([a, b]);
 
-    const connects = lastProc.writes.join("").match(/Connect-IPPSSession/g);
+    const connects = lastProc.writes.join("").match(/^Connect-IPPSSession -/gm);
     assert.equal(connects.length, 1);
   });
 
@@ -394,7 +396,7 @@ test("PowerShellBridge auth-expiry retry", async (t) => {
     lastProc.respondOk([{ Name: "P1" }]);
 
     assert.deepEqual(await invokePromise, [{ Name: "P1" }]);
-    const connects = lastProc.writes.join("").match(/Connect-IPPSSession/g);
+    const connects = lastProc.writes.join("").match(/^Connect-IPPSSession -/gm);
     assert.equal(connects.length, 2);
   });
 
@@ -420,7 +422,7 @@ test("PowerShellBridge auth-expiry retry", async (t) => {
     lastProc.respondOk([{ Name: "P1" }]);
 
     assert.deepEqual(await invokePromise, [{ Name: "P1" }]);
-    assert.equal(lastProc.writes.join("").match(/Connect-IPPSSession/g).length, 2);
+    assert.equal(lastProc.writes.join("").match(/^Connect-IPPSSession -/gm).length, 2);
   });
 
   await t.test("does NOT retry a WRITE on that same opaque failure", async () => {
@@ -439,7 +441,7 @@ test("PowerShellBridge auth-expiry retry", async (t) => {
     lastProc.respondErr("Unexpected character encountered while parsing value: <. Path '', line 0, position 0.");
 
     await assert.rejects(invokePromise, /Unexpected character/);
-    assert.equal(lastProc.writes.join("").match(/Connect-IPPSSession/g).length, 1);
+    assert.equal(lastProc.writes.join("").match(/^Connect-IPPSSession -/gm).length, 1);
   });
 
   await t.test("does NOT retry a timed-out cmdlet, which may already have applied", async () => {

@@ -14,10 +14,10 @@ import { TOOLS, PROMPTS, RESOURCES } from "../src/server.js";
 const here = path.dirname(fileURLToPath(import.meta.url));
 const entry = path.join(here, "..", "functions", "server.js");
 
-async function withHttpServer(fn) {
+async function withHttpServer(fn, mode = "full", policy = {}) {
   const port = 3400 + Math.floor(Math.random() * 1000);
   const proc = spawn(process.execPath, [entry], {
-    env: { ...process.env, PORT: String(port) },
+    env: { ...process.env, PURVIEW_TOOL_MODE: mode, PORT: String(port), ...policy },
     stdio: ["ignore", "pipe", "pipe"],
   });
   try {
@@ -92,7 +92,9 @@ function modernRpc(base, id, method, params = {}) {
   return rpc(
     base,
     { jsonrpc: "2.0", id, method, params: { ...params, _meta: MODERN_META } },
-    { "MCP-Protocol-Version": "2026-07-28", "Mcp-Method": method }
+    { "MCP-Protocol-Version": "2026-07-28", "Mcp-Method": method,
+      ...(params.name ? { "Mcp-Name": params.name } : {}),
+      ...(params.uri ? { "Mcp-Uri": params.uri } : {}) }
   );
 }
 
@@ -102,6 +104,41 @@ const INIT = {
   method: "initialize",
   params: { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "smoke", version: "0" } },
 };
+
+for (const mode of ["compact", "dispatcher"]) {
+  test(`${mode} HTTP discovery and execution honour server restrictions`, async () => {
+    await withHttpServer(async (base) => {
+      const listed = await modernRpc(base, 20, "tools/list");
+      const names = listed.body.result.tools.map((tool) => tool.name);
+      assert.equal(names.length, 3);
+      const found = await modernRpc(base, 21, "tools/call", {
+        name: mode === "compact" ? "purview_search" : "purview_search_capabilities",
+        arguments: { query: "Check authentication status" },
+      });
+      assert.ok(found.body.result, JSON.stringify(found.body));
+      const items = JSON.parse(found.body.result.content[0].text).items;
+      assert.equal(items.length, 1);
+      assert.equal(items[0].input_schema, undefined);
+      const described = await modernRpc(base, 26, "tools/call", { name: "purview_describe_capability", arguments: { capability_id: items[0].capability_id } });
+      assert.equal(described.body.result.structuredContent.input_schema.type, "object");
+      const hidden = await modernRpc(base, 27, "tools/call", { name: "purview_describe_capability", arguments: { capability_id: "remove_dlp_rule" } });
+      assert.equal(hidden.body.result.structuredContent.error.code, "CAPABILITY_UNAVAILABLE");
+      const { tool, ...route } = items[0].invocation;
+      const called = await modernRpc(base, 22, "tools/call", { name: tool, arguments: { ...route, arguments: {} } });
+      assert.equal(JSON.parse(called.body.result.content[0].text).credentials_verified, false);
+      const resources = await modernRpc(base, 23, "resources/list");
+      assert.deepEqual(resources.body.result.resources, []);
+      const denied = await modernRpc(base, 24, "resources/read", { uri: "purview://label-catalog" });
+      assert.ok(denied.body.error);
+      const bypass = await modernRpc(base, 25, "tools/call", {
+        name: mode === "compact" ? "purview_auth" : "purview_execute_capability",
+        arguments: mode === "compact" ? { operation: "remove_dlp_rule", arguments: { identity: "test", confirm: true } }
+          : { capability_id: "remove_dlp_rule", arguments: { identity: "test", confirm: true } },
+      });
+      assert.equal(bypass.body.result.isError, true);
+    }, mode, { PURVIEW_ALLOWED_CAPABILITIES: "get_auth_status" });
+  });
+}
 
 test("Azure Functions streamable HTTP host", async (t) => {
   await t.test("initializes and lists the full tool surface", async () => {
@@ -117,7 +154,7 @@ test("Azure Functions streamable HTTP host", async (t) => {
       assert.ok(names.includes("list_sensitivity_labels"));
       assert.ok(names.includes("list_dlp_policies"));
       assert.ok(names.includes("list_label_policies"));
-      assert.equal(names.length, 26);
+      assert.equal(names.length, 27);
       assert.deepEqual(init.body.result.capabilities, { tools: {}, prompts: {}, resources: {} });
       assert.deepEqual(list.body.result.tools, TOOLS);
       for (const tool of list.body.result.tools) {
@@ -159,16 +196,16 @@ test("Azure Functions streamable HTTP host", async (t) => {
         JSON.stringify(discover.body)
       );
       assert.equal(discover.body.result.resultType, "complete");
-      assert.equal(discover.body.result.ttlMs, 300_000);
-      assert.equal(discover.body.result.cacheScope, "public");
+      assert.equal(discover.body.result.ttlMs, 0);
+      assert.equal(discover.body.result.cacheScope, "private");
       assert.equal(discover.body.result._meta["io.modelcontextprotocol/serverInfo"].name, "str-mcp-purview");
 
       const tools = await modernRpc(base, "tools", "tools/list");
       assert.equal(tools.status, 200);
       assert.deepEqual(tools.body.result.tools, TOOLS);
       assert.equal(tools.body.result.resultType, "complete");
-      assert.equal(tools.body.result.ttlMs, 300_000);
-      assert.equal(tools.body.result.cacheScope, "public");
+      assert.equal(tools.body.result.ttlMs, 0);
+      assert.equal(tools.body.result.cacheScope, "private");
       assert.equal(tools.body.result._meta["io.modelcontextprotocol/serverInfo"].name, "str-mcp-purview");
 
       const prompts = await modernRpc(base, "prompts", "prompts/list");

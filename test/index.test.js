@@ -18,11 +18,11 @@ import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 const here = path.dirname(fileURLToPath(import.meta.url));
 const serverEntry = path.join(here, "..", "index.js");
 
-async function withClient(fn) {
+async function withClient(fn, mode = "full") {
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [serverEntry],
-    env: { PATH: process.env.PATH ?? "" },
+    env: { PATH: process.env.PATH ?? "", PURVIEW_TOOL_MODE: mode },
   });
   const client = new Client({ name: "test-client", version: "1.0.0" }, { capabilities: {} });
   await client.connect(transport);
@@ -37,7 +37,7 @@ async function withModernClient(fn) {
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [serverEntry],
-    env: { PATH: process.env.PATH ?? "" },
+    env: { PATH: process.env.PATH ?? "", PURVIEW_TOOL_MODE: "full" },
   });
   const client = new Client(
     { name: "modern-test-client", version: "1.0.0" },
@@ -52,12 +52,30 @@ async function withModernClient(fn) {
 }
 
 test("MCP server over stdio", async (t) => {
+  for (const mode of ["compact", "dispatcher"]) {
+    await t.test(`${mode} supports search and execution over stdio`, async () => {
+      await withClient(async (client) => {
+        const { tools } = await client.listTools();
+        assert.equal(tools.length, mode === "compact" ? 8 : 3);
+        const found = await client.callTool({ name: mode === "compact" ? "purview_search" : "purview_search_capabilities", arguments: { query: "Check authentication status", limit: 1 } });
+        const candidate = JSON.parse(found.content[0].text).items[0];
+        assert.equal(candidate.capability_id, "get_auth_status");
+        assert.equal(candidate.input_schema, undefined);
+        const described = await client.callTool({ name: "purview_describe_capability", arguments: { capability_id: candidate.capability_id } });
+        assert.equal(described.structuredContent.input_schema.type, "object");
+        const { tool, ...route } = candidate.invocation;
+        const result = await client.callTool({ name: tool, arguments: { ...route, arguments: {} } });
+        assert.equal(JSON.parse(result.content[0].text).credentials_verified, false);
+        assert.ok(!result.isError);
+      }, mode);
+    });
+  }
   await t.test("negotiates modern 2026-07-28 through server/discover", async () => {
     await withModernClient(async (client) => {
       assert.equal(client.getProtocolEra(), "modern");
       assert.equal(client.getNegotiatedProtocolVersion(), "2026-07-28");
       const { tools } = await client.listTools();
-      assert.equal(tools.length, 26);
+      assert.equal(tools.length, 27);
     });
   });
 
@@ -74,6 +92,7 @@ test("MCP server over stdio", async (t) => {
         "create_endpoint_dlp_rule",
         "create_label_policy",
         "create_sensitivity_label",
+        "get_auth_status",
         "get_dlp_policy",
         "get_dlp_rule",
         "get_label_policy",
@@ -151,7 +170,7 @@ test("MCP server over stdio", async (t) => {
           assert.equal(a.destructiveHint, false, `${tool.name} destructiveHint`);
           assert.equal(a.idempotentHint, false, `${tool.name} idempotentHint`);
         }
-        assert.equal(a.openWorldHint, true, `${tool.name} openWorldHint`);
+        assert.equal(a.openWorldHint, tool.name !== "get_auth_status", `${tool.name} openWorldHint`);
       }
     });
   });
@@ -197,6 +216,42 @@ test("MCP server over stdio", async (t) => {
       assert.deepEqual(byName.set_dlp_policy.inputSchema.required, ["identity"]);
       assert.deepEqual(byName.set_dlp_rule.inputSchema.required, ["identity"]);
       assert.equal(byName.list_dlp_rules.inputSchema.required, undefined);
+    });
+  });
+
+  await t.test("exposes tuned SITs, rule controls, notifications, exceptions, and location exceptions", async () => {
+    await withClient(async (client) => {
+      const { tools } = await client.listTools();
+      const byName = Object.fromEntries(tools.map((tool) => [tool.name, tool]));
+      for (const name of ["create_dlp_rule", "set_dlp_rule"]) {
+        const props = byName[name].inputSchema.properties;
+        assert.equal(props.sensitive_information_types.items.oneOf[0].type, "string");
+        assert.deepEqual(
+          props.sensitive_information_types.items.oneOf[1].properties.confidence_level.enum,
+          ["Low", "Medium", "High"]
+        );
+        assert.deepEqual(props.access_scope.enum, ["InOrganization", "NotInOrganization", "None"]);
+        assert.deepEqual(props.report_severity_level.enum, ["None", "Low", "Medium", "High"]);
+        assert.equal(props.notification_email_body.maxLength, 5000);
+        assert.equal(props.policy_tip_text.maxLength, 256);
+        assert.ok(props.exceptions.properties.sender_domain_is);
+        assert.ok(props.exceptions.properties.sensitive_information_types);
+      }
+      assert.ok(byName.create_dlp_policy.inputSchema.properties.location_exceptions);
+      assert.ok(byName.set_dlp_policy.inputSchema.properties.add_location_exceptions);
+      assert.ok(byName.set_dlp_policy.inputSchema.properties.remove_location_exceptions);
+      assert.ok(byName.create_endpoint_dlp_policy.inputSchema.properties.endpoint_location_exception);
+    });
+  });
+
+  await t.test("rejects unsupported DLP access scope before calling PowerShell", async () => {
+    await withClient(async (client) => {
+      const result = await client.callTool({
+        name: "create_dlp_rule",
+        arguments: { name: "r1", policy: "p1", access_scope: "External" },
+      });
+      assert.equal(result.isError, true);
+      assert.match(result.content[0].text, /Invalid arguments/);
     });
   });
 
@@ -298,9 +353,8 @@ test("MCP server over stdio", async (t) => {
 
   await t.test("surfaces backend configuration errors as tool-call errors, not crashes", async () => {
     await withClient(async (client) => {
-      // With no AZURE_TENANT_ID/AZURE_CLIENT_ID configured, list_sensitivity_labels
-      // must fail gracefully with an MCP error content block rather than
-      // throwing an unhandled exception that kills the server process.
+      // With no tenant authentication configured, list_sensitivity_labels must
+      // fail gracefully rather than killing the server process.
       const result = await client.callTool({ name: "list_sensitivity_labels", arguments: {} });
       assert.equal(result.isError, true);
       assert.match(result.content[0].text, /Error:/);

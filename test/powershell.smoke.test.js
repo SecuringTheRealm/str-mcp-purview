@@ -114,7 +114,7 @@ test("real pwsh: connect script", SUITE, async (t) => {
     const stubs = [
       "function Get-Module { 'stubbed-module' }",
       "function Import-Module { }",
-      "function Connect-IPPSSession { }",
+      "function Connect-IPPSSession { param($AccessToken, $Organization, $ShowBanner) }",
     ].join("\n");
 
     const res = await runReal(`${stubs}\n${connect}`);

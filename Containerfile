@@ -1,9 +1,9 @@
 # Full-surface container for hosting str-mcp-purview on Azure Functions
 # (Elastic Premium / Dedicated with custom container, or Azure Container Apps).
 # The plain custom-handler deploy (host.json, no container) works on Flex
-# Consumption but cannot carry pwsh — only the Graph label-read tools work
-# there. This image adds PowerShell 7 + ExchangeOnlineManagement for the
-# DLP/label-write plane via certificate app-only auth.
+# Consumption but cannot carry pwsh — only the Graph-backed label-policy-settings
+# read works there. This image adds PowerShell 7 + ExchangeOnlineManagement for
+# sensitivity-label and DLP configuration via certificate app-only auth.
 #
 # NOTE: Microsoft documents Security & Compliance PowerShell as unsupported in
 # PowerShell 7 on Linux. Verify your ExchangeOnlineManagement version against a
@@ -23,7 +23,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends wget ca-certifi
     && ln -s /opt/microsoft/powershell/7/pwsh /usr/bin/pwsh \
     && rm /tmp/pwsh.tar.gz && rm -rf /var/lib/apt/lists/*
 
-RUN pwsh -NoLogo -NoProfile -Command "Install-Module ExchangeOnlineManagement -Scope AllUsers -Force"
+# 3.10+ requires PowerShell 7.6; keep this experimental image's 7.4 pair compatible.
+# This does not make Security & Compliance PowerShell supported on Linux.
+ARG EXO_MODULE_VERSION=3.9.2
+RUN pwsh -NoLogo -NoProfile -Command "Install-Module ExchangeOnlineManagement -RequiredVersion ${EXO_MODULE_VERSION} -Scope AllUsers -Force"
 
 ENV AzureWebJobsScriptRoot=/home/site/wwwroot \
     AzureFunctionsJobHost__Logging__Console__IsEnabled=true \

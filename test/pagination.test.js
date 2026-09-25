@@ -31,6 +31,19 @@ test("keyset pagination returns a complete ordered collection without overlap", 
   assert.equal(second.structuredContent.next_cursor, null);
 });
 
+test("normalised label results preserve GUID, SCC name, and display name", () => {
+  const page = paginator();
+  const result = page(
+    "list_sensitivity_labels",
+    { limit: 25 },
+    [{ id: "label-guid", scc_name: "internal-name", display_name: "Friendly label", name: "Friendly label" }],
+    () => "label"
+  );
+  assert.deepEqual(result.structuredContent.items, [
+    { id: "label-guid", name: "Friendly label", display_name: "Friendly label", scc_name: "internal-name" },
+  ]);
+});
+
 test("keyset cursor does not repeat earlier entries when the collection or item details change", () => {
   const page = paginator();
   const firstItems = [{ Name: "Bravo", Guid: "2" }, { Name: "Charlie", Guid: "3" }, { Name: "Delta", Guid: "4" }];

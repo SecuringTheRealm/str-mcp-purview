@@ -116,10 +116,10 @@ function withTimeout(promise, ms, message) {
 }
 
 const PLATFORM_ERROR =
-  "The DLP and label write/read-back tools need Security & Compliance PowerShell " +
+  "The DLP and sensitivity-label configuration tools need Security & Compliance PowerShell " +
   "(Connect-IPPSSession), which Microsoft only supports on Windows — it is not " +
-  "available in PowerShell 7 on macOS or Linux. The sensitivity-label read tools " +
-  "(Microsoft Graph) still work on this platform. See README → 'Platform support'. " +
+  "available in PowerShell 7 on macOS or Linux. The Graph-backed label-policy-settings " +
+  "tool still works on this platform. See README → 'Platform support'. " +
   "Set PURVIEW_ALLOW_UNSUPPORTED_OS=1 to attempt the connection anyway.";
 
 // Derive the tenant org domain (Connect-IPPSSession -Organization) from the
@@ -343,12 +343,15 @@ class PowerShellBridge {
    * mocked child process will happily accept.
    */
   async connectScript() {
+    const connect = await this.#connectCommand();
+    const tokenMode = connect.includes("Connect-IPPSSession -AccessToken");
     return [
       "if (-not (Get-Module -ListAvailable -Name ExchangeOnlineManagement)) {",
       "  throw 'The ExchangeOnlineManagement module is not installed. Run: Install-Module ExchangeOnlineManagement -Scope CurrentUser'",
       "}",
-      "Import-Module ExchangeOnlineManagement -ErrorAction Stop",
-      await this.#connectCommand(),
+      `Import-Module ExchangeOnlineManagement -MinimumVersion ${tokenMode ? "3.8.0" : "3.2.0"} -ErrorAction Stop`,
+      ...(tokenMode ? ["if (-not (Get-Command Connect-IPPSSession -ErrorAction Stop).Parameters.ContainsKey('AccessToken')) { throw 'ExchangeOnlineManagement 3.8.0 or later with Connect-IPPSSession -AccessToken is required.' }"] : []),
+      connect,
       "'connected'",
     ].join("\n");
   }

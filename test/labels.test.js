@@ -2,8 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mock } from "node:test";
 
-// labels.js delegates all network access to graph.js's graphGet; mock that
-// module so the data-access functions can be exercised deterministically.
+// Graph remains in labels.js only for label policy settings.
 const graphGetCalls = [];
 let graphGetImpl = async () => ({ value: [] });
 
@@ -13,7 +12,6 @@ mock.module("../src/graph.js", {
       graphGetCalls.push({ path, params });
       return graphGetImpl(path, params);
     },
-    // listLabels uses the paginating variant; collapse it onto the same stub.
     graphGetAll: async (path, params) => {
       graphGetCalls.push({ path, params });
       return (await graphGetImpl(path, params)).value ?? [];
@@ -40,27 +38,37 @@ mock.module("../src/powershell.js", {
 const labels = await import("../src/labels.js");
 
 test("listLabels", async (t) => {
-  await t.test("returns the value array from Graph", async () => {
-    graphGetImpl = async () => ({ value: [{ id: "1" }, { id: "2" }] });
+  await t.test("uses Get-Label and returns stable SCC, GUID, and display identities", async () => {
+    invokeCalls.length = 0;
+    invokeImpl = async () => [
+      { Name: "internal-parent", DisplayName: "Parent", Guid: "1", Priority: 0, Enabled: true },
+      { Name: "internal-child", DisplayName: "A very long child display name that must remain addressable", Guid: "2", ParentId: "1", Priority: 1 },
+    ];
     const result = await labels.listLabels();
-    assert.deepEqual(result, [{ id: "1" }, { id: "2" }]);
+    assert.equal(invokeCalls.at(-1).cmdlet, "Get-Label");
+    assert.deepEqual(invokeCalls.at(-1).params, {});
+    assert.equal(result[0].id, "1");
+    assert.equal(result[0].scc_name, "internal-parent");
+    assert.equal(result[0].display_name, "Parent");
+    assert.equal(result[0].isActive, true);
+    assert.deepEqual(result[1].parent, { id: "1", scc_name: "internal-parent", name: "Parent" });
   });
 
-  await t.test("returns an empty array when Graph returns no value", async () => {
-    graphGetImpl = async () => ({});
+  await t.test("returns an empty array when Get-Label returns no value", async () => {
+    invokeImpl = async () => null;
     assert.deepEqual(await labels.listLabels(), []);
   });
 });
 
 test("getLabel", async (t) => {
-  await t.test("requests the label by ID, URL-encoded", async () => {
-    graphGetCalls.length = 0;
-    graphGetImpl = async () => ({ id: "abc/def" });
-    await labels.getLabel("abc/def");
-    assert.equal(
-      graphGetCalls.at(-1).path,
-      "/me/security/informationProtection/sensitivityLabels/abc%2Fdef"
-    );
+  await t.test("requests the label by PowerShell identity and includes protection", async () => {
+    invokeCalls.length = 0;
+    invokeImpl = async () => [{ Name: "internal", DisplayName: "Confidential", Guid: "g1", EncryptionEnabled: true }];
+    const result = await labels.getLabel("g1");
+    assert.equal(invokeCalls.at(-1).cmdlet, "Get-Label");
+    assert.deepEqual(invokeCalls.at(-1).params, { Identity: "g1" });
+    assert.equal(result.scc_name, "internal");
+    assert.equal(result.EncryptionEnabled, true);
   });
 });
 
@@ -161,7 +169,7 @@ test("filterLabels", async (t) => {
   const list = [
     { id: "L1", name: "Confidential", isActive: true },
     { id: "L2", name: "Old", isActive: false },
-    { id: "L3", name: "Conf-Sub", isActive: true, parent: { name: "Confidential", id: "L1" } },
+    { id: "L3", name: "Conf-Sub", isActive: true, parent: { name: "Confidential", scc_name: "internal-conf", id: "L1" } },
   ];
   await t.test("returns all when no filter", () => {
     assert.equal(labels.filterLabels(list).length, 3);
@@ -174,6 +182,7 @@ test("filterLabels", async (t) => {
   });
   await t.test("parent filters to sub-labels of the given parent (by name or id)", () => {
     assert.deepEqual(labels.filterLabels(list, { parent: "Confidential" }).map((l) => l.id), ["L3"]);
+    assert.deepEqual(labels.filterLabels(list, { parent: "internal-conf" }).map((l) => l.id), ["L3"]);
     assert.deepEqual(labels.filterLabels(list, { parent: "L1" }).map((l) => l.id), ["L3"]);
   });
 });
@@ -185,24 +194,27 @@ test("formatLabelList", async (t) => {
 
   await t.test("renders one compact line per label with count header", () => {
     const out = labels.formatLabelList([
-      { id: "L1", name: "Confidential", sensitivity: 2, isActive: true, description: "Sensitive data" },
+      { id: "L1", scc_name: "internal-conf", display_name: "Confidential", priority: 2, isActive: true, description: "Sensitive data" },
       {
         id: "L2",
-        name: "Public",
-        sensitivity: 0,
+        scc_name: "internal-public",
+        display_name: "Public",
+        priority: 0,
         isActive: false,
         parent: { name: "Top" },
         description: "Not sensitive",
       },
     ]);
     assert.match(out, /^2 sensitivity label\(s\):\n/);
-    assert.match(out, /L1 {2}s2 {2}active {4}Confidential {2}— Sensitive data/);
-    assert.match(out, /L2 {2}s0 {2}inactive {2}Public \(parent: Top\) {2}— Not sensitive/);
+    assert.match(out, /L1 {2}internal-conf {2}p2 {2}active {2}Confidential {2}— Sensitive data/);
+    assert.match(out, /L2 {2}internal-public {2}p0 {2}inactive {2}Public \(parent: Top\) {2}— Not sensitive/);
   });
 
-  await t.test("defaults sensitivity to s? when missing", () => {
-    const out = labels.formatLabelList([{ id: "L3", name: "Unknown" }]);
-    assert.match(out, /L3 {2}s\? {2}active/);
+  await t.test("does not truncate addressable label identities", () => {
+    const long = "This label identity is deliberately longer than forty characters";
+    const out = labels.formatLabelList([{ id: "L3", scc_name: long, display_name: long }]);
+    assert.match(out, /L3 {2}This label identity is deliberately longer than forty characters/);
+    assert.doesNotMatch(out, /\.\.\./);
   });
 });
 
@@ -210,15 +222,17 @@ test("formatLabelDetail", async (t) => {
   await t.test("renders a heading and bullet fields", () => {
     const out = labels.formatLabelDetail({
       id: "L1",
-      name: "Confidential",
-      sensitivity: 2,
+      scc_name: "internal-confidential",
+      display_name: "Confidential",
+      priority: 2,
       isActive: true,
       color: "#ff0000",
       tooltip: "Handle with care",
       description: "Sensitive data",
     });
     assert.match(out, /^# Confidential/);
-    assert.match(out, /- \*\*ID:\*\* L1/);
+    assert.match(out, /- \*\*GUID:\*\* L1/);
+    assert.match(out, /- \*\*SCC name:\*\* internal-confidential/);
     assert.match(out, /- \*\*Color:\*\* #ff0000/);
   });
 
@@ -276,11 +290,19 @@ test("label policy read-back", async (t) => {
 
   await t.test("formatLabelPolicyList renders one line per policy with label count", () => {
     const out = labels.formatLabelPolicyList([
-      { Name: "Global", Enabled: true, Mode: "Enable", Labels: ["A", "B"], WhenCreated: "2026-07-01T00:00:00Z" },
+      { Name: "Global", Guid: "policy-guid", Enabled: true, Mode: "Enable", Labels: ["A", "B"], WhenCreated: "2026-07-01T00:00:00Z" },
     ]);
     assert.match(out, /1 label publishing policy:/);
     assert.match(out, /Global/);
+    assert.match(out, /policy-guid/);
     assert.match(out, /2 label\(s\)/);
+  });
+
+  await t.test("does not truncate an addressable label-policy name", () => {
+    const name = "A deliberately long label publishing policy name that must remain complete";
+    const out = labels.formatLabelPolicyList([{ Name: name, Guid: "g-long", Labels: [] }]);
+    assert.match(out, new RegExp(name));
+    assert.doesNotMatch(out, /\.\.\./);
   });
 
   await t.test("formatLabelPolicyDetail renders labels, locations, and settings", () => {
@@ -309,6 +331,7 @@ test("label protection settings read-back", async (t) => {
     assert.equal(invokeCalls.at(-1).cmdlet, "Get-Label");
     assert.deepEqual(invokeCalls.at(-1).params, { Identity: "Secret" });
     assert.equal(result.EncryptionEnabled, true);
+    assert.equal(result.scc_name, "Secret");
   });
 
   await t.test("formatLabelProtectionSettings renders configured protection", () => {
