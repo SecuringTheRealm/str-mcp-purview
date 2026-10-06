@@ -41,7 +41,7 @@ export const capabilities = validateRegistry([...TOOLS, authTool].map((tool) => 
     domain,
     action,
     examples: [{ description: "Illustrative arguments; replace example identities and only perform requested changes.", arguments: examples[tool.name] }],
-    constraints: ["Microsoft backend authorization still applies.", ...(tool.name.startsWith("remove_") ? ["Deletion requires explicit confirm:true."] : [])],
+    constraints: ["Microsoft backend authorization still applies.", ...(tool.name.startsWith("remove_") ? ["Deletion requires user confirmation through form elicitation; confirm:true alone is insufficient."] : [])],
     operation: ({ set: "update", remove: "delete" })[verb] ?? verb,
     idempotent: tool.annotations.idempotentHint,
     openWorld: tool.annotations.openWorldHint,

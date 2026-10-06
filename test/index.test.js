@@ -210,10 +210,10 @@ test("MCP server over stdio", async (t) => {
       assert.deepEqual(byName.set_sensitivity_label.inputSchema.required, ["identity"]);
       assert.deepEqual(byName.create_label_policy.inputSchema.required, ["name", "labels"]);
       assert.deepEqual(byName.set_label_policy.inputSchema.required, ["identity"]);
-      assert.deepEqual(byName.remove_dlp_policy.inputSchema.required, ["identity", "confirm"]);
-      assert.deepEqual(byName.remove_dlp_rule.inputSchema.required, ["identity", "confirm"]);
-      assert.deepEqual(byName.remove_sensitivity_label.inputSchema.required, ["identity", "confirm"]);
-      assert.deepEqual(byName.remove_label_policy.inputSchema.required, ["identity", "confirm"]);
+      assert.deepEqual(byName.remove_dlp_policy.inputSchema.required, ["identity"]);
+      assert.deepEqual(byName.remove_dlp_rule.inputSchema.required, ["identity"]);
+      assert.deepEqual(byName.remove_sensitivity_label.inputSchema.required, ["identity"]);
+      assert.deepEqual(byName.remove_label_policy.inputSchema.required, ["identity"]);
       assert.deepEqual(byName.set_dlp_policy.inputSchema.required, ["identity"]);
       assert.deepEqual(byName.set_dlp_rule.inputSchema.required, ["identity"]);
       assert.equal(byName.list_dlp_rules.inputSchema.required, undefined);
@@ -314,15 +314,15 @@ test("MCP server over stdio", async (t) => {
     });
   });
 
-  await t.test("requires explicit true confirmation for every destructive delete", async () => {
+  await t.test("deletion cannot proceed without form elicitation support", async () => {
     await withClient(async (client) => {
       for (const name of ["remove_dlp_policy", "remove_dlp_rule", "remove_sensitivity_label", "remove_label_policy"]) {
-        for (const confirm of [undefined, false]) {
+        for (const confirm of [undefined, false, true]) {
           const arguments_ = { identity: "do-not-delete" };
           if (confirm !== undefined) arguments_.confirm = confirm;
           const result = await client.callTool({ name, arguments: arguments_ });
           assert.equal(result.isError, true, `${name} should reject confirm=${confirm}`);
-          assert.match(result.content[0].text, /Invalid arguments/);
+          assert.match(result.content[0].text, confirm === false ? /Invalid arguments/ : /form elicitation support/);
         }
       }
     });

@@ -5,7 +5,7 @@ const DESTROY = { readOnlyHint: false, destructiveHint: true, idempotentHint: tr
 const CONFIRM_DELETE = {
   type: "boolean",
   const: true,
-  description: "Must be true after the user explicitly confirms permanent deletion.",
+  description: "Deprecated compatibility argument. Does not authorize deletion; the server always requires form elicitation confirmation.",
 };
 
 const STRING_LIST = (description) => ({
@@ -327,7 +327,7 @@ const TOOLS = [
     annotations: { title: "Delete sensitivity label", ...DESTROY },
     inputSchema: {
       type: "object",
-      required: ["identity", "confirm"],
+      required: ["identity"],
       properties: {
         identity: { type: "string", description: "Sensitivity label name or GUID to delete" },
         confirm: CONFIRM_DELETE,
@@ -341,7 +341,7 @@ const TOOLS = [
     annotations: { title: "Delete label publishing policy", ...DESTROY },
     inputSchema: {
       type: "object",
-      required: ["identity", "confirm"],
+      required: ["identity"],
       properties: {
         identity: { type: "string", description: "Label policy name or GUID to delete" },
         confirm: CONFIRM_DELETE,
@@ -580,7 +580,7 @@ const TOOLS = [
     annotations: { title: "Delete DLP policy", ...DESTROY },
     inputSchema: {
       type: "object",
-      required: ["identity", "confirm"],
+      required: ["identity"],
       properties: {
         identity: { type: "string", description: "DLP policy name or GUID to delete" },
         confirm: CONFIRM_DELETE,
@@ -594,7 +594,7 @@ const TOOLS = [
     annotations: { title: "Delete DLP rule", ...DESTROY },
     inputSchema: {
       type: "object",
-      required: ["identity", "confirm"],
+      required: ["identity"],
       properties: {
         identity: { type: "string", description: "DLP rule name or GUID to delete" },
         confirm: CONFIRM_DELETE,

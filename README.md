@@ -278,7 +278,7 @@ Describe returns the exact `input_schema`, optional output schema, constraints, 
 {"name":"purview_dlp","arguments":{"operation":"list_dlp_policies","arguments":{"workload":"SharePoint","limit":25}}}
 ```
 
-In dispatcher mode the equivalent call is `purview_execute_capability` with `capability_id: "list_dlp_policies"` and the same nested arguments. Subsequent pages use the returned `next_cursor` as `cursor`, keeping other filters unchanged. Deletes still require `confirm: true` inside the capability arguments. `purview_auth` / `get_auth_status` only reports local configuration: it does not sign in, validate credentials or prove tenant access.
+In dispatcher mode the equivalent call is `purview_execute_capability` with `capability_id: "list_dlp_policies"` and the same nested arguments. Subsequent pages use the returned `next_cursor` as `cursor`, keeping other filters unchanged. Deletes require user confirmation through form elicitation; `confirm: true` is accepted for compatibility but cannot bypass that interaction. `purview_auth` / `get_auth_status` only reports local configuration: it does not sign in, validate credentials or prove tenant access.
 
 Migration from the earlier compact/dispatcher surface: refresh tool discovery and use describe before execution. Clients needing the previous eager-schema search can set `include_schemas: true`. A caller that already knows the schema can execute directly; search/describe are discovery aids, not security tokens. Full-mode tool names and argument/result contracts are unchanged.
 
@@ -773,7 +773,7 @@ Remote hosting is headless, so use a renewable app identity and configure the Gr
 
 **Secure the endpoint.** A function key is not sufficient production caller authentication. Put Entra/Easy Auth in front, validate its token audience and allowed client applications, and scope backend permissions tightly. Set `MCP_ALLOWED_HOSTS` to the comma-separated public hostnames accepted through the Azure proxy, `MCP_ALLOWED_ORIGINS` to a comma-separated browser-origin allowlist, `MCP_CURSOR_SECRET` to a shared secret for multi-instance pagination, and optionally `MCP_MAX_CONCURRENT_REQUESTS` (default `8`). Localhost hosts are always accepted; missing `Origin` remains valid for non-browser clients, while a present unlisted origin receives 403. Local smoke test: `node functions/server.js`, then POST MCP JSON-RPC to `http://127.0.0.1:3000/mcp`.
 
-Every delete tool requires `confirm: true`. The five catalog list tools and policy-scoped `get_dlp_rule` default to 25 items (maximum 100), return signed opaque keyset cursors, and include schema-backed `structuredContent` with page count, total count, `has_more`, and `next_cursor` alongside concise text. The same pagination contract is served over local stdio and Azure Functions HTTP. Set a shared `MCP_CURSOR_SECRET` on every scaled HTTP instance so a cursor issued by one instance works on another.
+Every delete tool requires form elicitation confirmation (see below). The five catalog list tools and policy-scoped `get_dlp_rule` default to 25 items (maximum 100), return signed opaque keyset cursors, and include schema-backed `structuredContent` with page count, total count, `has_more`, and `next_cursor` alongside concise text. The same pagination contract is served over local stdio and Azure Functions HTTP. Set a shared `MCP_CURSOR_SECRET` on every scaled HTTP instance so a cursor issued by one instance works on another.
 
 Each MCP request emits one redacted structured completion record to stderr (captured by Azure application logging), including transport, protocol era/version, method or tool name, client identity metadata, trace context, duration, and outcome. Arguments, results, tokens, backend error messages, and tenant objects are not logged. Set `MCP_REQUEST_LOGGING=false` only when platform-level observability fully replaces these records.
 
@@ -815,6 +815,54 @@ The ranking function accepts only the already-filtered catalogue. `searchCapabil
 Run `npm run benchmark:simulation` for a deterministic scripted-agent evaluation against **160 synthetic capabilities** across four domains and eight operation types. It selects the top candidate without consulting the expected answer, describes its schema, validates supplied task arguments, and executes against fake state. JSON output includes candidate rankings, actual invocations/results, byte counts, latency and denial checks; failures return a nonzero exit code. Tests also compare a 32-entry catalogue to 160 entries, exercise new-domain routing, confirmation, aliases, policy failures and pagination. See [the reviewed simulation findings](benchmarks/SIMULATION_REVIEW.md).
 
 This simulation proves contracts and routing behaviour for the fixture, not real-model task success, Microsoft API availability or live Azure authorization. The synthetic definitions are only imported by benchmarks/tests, never registered in the production catalogue. Production stdio and Functions HTTP tests separately exercise search → describe → execute and denied disclosure. No new real Purview operation or external dependency is introduced.
+
+## Elicitation for deletion confirmation
+
+All four delete capabilities use a shared execution guard in full, compact and dispatcher modes. Call the tool with `identity`; the old `confirm: true` argument is optional and has no authority to skip review. A form identifies the configured tenant, resolved object name/GUID and deletion consequence. Confirmation defaults to false. Decline, cancel, malformed answers and clients without form support never invoke a removal cmdlet.
+
+On MCP `2026-07-28`, the server returns `resultType: "input_required"` with an embedded `elicitation/create`. The client retries the same tool and arguments with the returned `requestState` and `inputResponses.confirm_deletion`. On legacy stdio, the server uses the SDK's in-call form request. See the [MRTR specification](https://modelcontextprotocol.io/specification/2026-07-28/basic/patterns/mrtr) and [elicitation specification](https://modelcontextprotocol.io/specification/2026-07-28/client/elicitation).
+
+The guard resolves the backend GUID, binds a five-minute review to the caller, client, tenant, capability and arguments, and checks the selected backend configuration again before deleting by GUID. DLP policy review also includes its rule count and selected rule configuration. Changed targets require a new review. Modern reviews use random opaque handles referencing server-owned records and are consumed before execution; simultaneous retries cannot execute the same review twice. Authorization is checked before review and again on the resolved identity. The check and removal are separate backend operations, not an atomic transaction.
+
+Local stdio uses its process/connection boundary as the caller identity. HTTP integrations must supply `confirmationPrincipal` and a verified client identity (`confirmationClientId` or validated `authInfo.clientId`) to `createServer` from trusted authentication middleware. Never derive these from tool arguments, unverified headers or client-provided profile information. **The supplied Functions host does not currently provide a verified caller identity, so deletion fails closed there**, even with a Functions key. A Functions key alone does not identify the end user. Legacy stateless HTTP cannot perform the in-call interaction.
+
+Pending reviews are bounded to 1,000 records per process. They survive fresh HTTP Server instances in that process, but not process restart or routing to another worker. Multi-worker deployment needs a shared store with atomic consumption before enabling deletion; retries on another worker currently fail safely. `MCP_CURSOR_SECRET` does not provide a shared deletion-review store. Failed/uncertain mutations are not automatically retried. Elicitation relies on the client to present a real user interaction; it is not independent evidence of human approval against a malicious client.
+
+## Exploring elicitation of business requirements
+
+This section is a proposed workflow, not a registered tool or automatic policy compiler. The existing `data-security-posture` prompt already accepts free-text `business_context`; elicitation could turn that into reviewed, structured control intent. Microsoft's [DLP design guidance](https://learn.microsoft.com/en-us/purview/dlp-policy-design) starts with business needs and a policy intent statement, then maps that intent to configuration.
+
+The proposed flow is: **source policies/SOPs → candidate business rules → targeted questions → approved control intent → capability assessment → proposed configuration and tests → separately authorized deployment**. Requirement approval authorizes the interpretation, not a tenant write.
+
+Use a few short form rounds, skipping information already established and asking only about material gaps or contradictions:
+
+| Round | Decisions to elicit | Example question |
+| --- | --- | --- |
+| Business context | Process, business owner, outcome, source authority/version, affected teams | Which process does this rule protect, and who owns the policy? |
+| Data and activities | Data categories, sensitivity, recognisable evidence, workloads and recipients | Does “customer information” mean contact details, payment details, or both? |
+| Business rules | Allowed/prohibited activity, destinations, scope, exceptions and approval conditions | Is external sharing prohibited everywhere, or permitted through an approved service? |
+| Operational behaviour | Block/warn/audit, permitted overrides, alert owner, pilot scope and rollback | Who receives an alert, and can users continue with a justification? |
+| Review | Restated intent, unresolved assumptions, source conflicts, representative examples | Does this interpretation correctly capture the policy, including its exceptions? |
+
+For each question, explain which proposed control it changes. Include “unknown” or “needs policy-owner review” where appropriate; do not make a missing answer silently select broad scope or enforcement. Treat decline/cancel as an incomplete assessment. Offer corrections and a resumable draft rather than repeating mandatory questions indefinitely. Forms can collect scalar decisions and enumerated selections; complex SOPs and nested rule structures need document access or an editor rather than one large elicitation form. Do not request credentials or real sensitive customer records as examples.
+
+The output should be a versioned **control-intent record**, distinct from tool arguments:
+
+- Intent ID/version; business process, owner and objective.
+- Source document identifier/version, section and evidence for each rule; distinguish quoted requirements from inferred interpretations and user decisions.
+- Actor, data category/detection evidence, activity, destination, workload/scope and desired outcome.
+- Exception conditions, approval owner, expiry/review date and whether overrides are allowed.
+- Proposed action, notification/alert owner, rollout mode, success criteria and rollback trigger.
+- Unresolved questions/conflicts and per-rule status: supported by this server, requires an extension, requires another control/system, or not technically enforceable.
+- Links to the eventual backend policy/rule GUIDs and read-back evidence after a separately authorized deployment.
+
+Example: an SOP says “Payroll files must use the approved provider transfer process; emergency exports need manager approval.” Elicitation should establish how payroll content is recognised, which users/workloads are in scope, the approved destination/process, and whether an emergency exception is per-transfer and time-limited. Only then propose matching DLP and classification controls. A broad recipient-domain exclusion is not automatically equivalent to an approved transfer workflow. Manager approval requires a verifiable approval signal or external process; a user-entered justification does not establish that approval.
+
+Before generating configuration, describe the permitted capabilities and validate each mapping against its actual schema and workload semantics. Current tools expose label configuration/publication and traditional, Endpoint and Copilot DLP; richer detectors, arbitrary conditions and many governance controls remain outside this server's implemented surface. Label creation alone does not classify existing content. Unsupported requirements must remain explicit gaps, not be approximated silently. Tenant discovery should verify existing labels/SITs, resource identities, overlapping controls and deployment prerequisites.
+
+Build positive, negative and exception examples for each requirement: forbidden transfer blocked, legitimate transfer allowed, approved exception handled, ambiguous classification flagged. These are proposed acceptance criteria, not evidence of live enforcement. Begin a candidate rollout in an explicitly selected simulation mode and require an evidence-based decision before enforcement; Microsoft documents using [DLP simulation](https://learn.microsoft.com/en-us/purview/dlp-simulation-mode-get-started) to evaluate impact. Simulation evidence and read-back do not prove every SOP requirement is enforceable.
+
+A future `purview_elicit_requirements` tool could implement the interview using MRTR while returning only draft intent. Its continuation must bind to the verified caller/client, tenant, source/intent version and question set. Longer assessments need an explicit draft ID and protected storage to resume across separate calls; do not assume protocol session state persists. Business documents are evidence, not instructions to execute tools. An approved interpretation should not disappear into an opaque prompt: retain its provenance, revisions and unresolved gaps so policy owners can review changes when the SOP changes.
 
 ## Roadmap
 

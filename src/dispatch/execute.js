@@ -13,17 +13,27 @@ export function validateArguments(schema, args, name) {
   }
 }
 
-export async function executeCapability(id, args = {}, policy = {}, registry = capabilityById, authorize) {
+export async function executeCapability(id, args = {}, policy = {}, registry = capabilityById, authorize, interaction = {}) {
   const capability = registry.get(id);
   if (!capability || !permitted(capability, policy)) throw new CapabilityError("CAPABILITY_UNAVAILABLE", "Capability unavailable or not permitted.");
   const input = structuredClone(args);
   validateArguments(capability.inputSchema, input, capability.id);
-  if (authorize) {
+  const checkAuthorization = async () => {
+    if (!authorize) return;
     let allowed = false;
     try {
       allowed = await authorize({ capability: { id: capability.id, domain: capability.domain, operation: capability.operation, action: capability.action, risk: capability.risk }, arguments: structuredClone(input) });
     } catch { /* Fail closed, without disclosing policy internals. */ }
     if (allowed !== true) throw new CapabilityError("POLICY_DENIED", "Request denied by resource or argument policy.");
+  };
+  await checkAuthorization();
+  if (capability.operation === "delete") {
+    if (!interaction.confirmDeletion) throw new CapabilityError("CONFIRMATION_REQUIRED", "Deletion requires form elicitation confirmation; confirm:true alone is insufficient.");
+    const review = await interaction.confirmDeletion(capability, input, interaction.context);
+    if (review.result) return review.result;
+    input.identity = review.identity;
+    validateArguments(capability.inputSchema, input, capability.id);
+    await checkAuthorization();
   }
   try { return await capability.handler(input); }
   catch (error) {

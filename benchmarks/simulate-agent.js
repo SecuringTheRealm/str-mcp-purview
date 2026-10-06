@@ -3,6 +3,7 @@ import { pathToFileURL } from "node:url";
 import { createProjection } from "../src/mcp/projection.js";
 import { syntheticCatalogue, simulationScenarios } from "./synthetic-catalogue.js";
 import { validateArguments } from "../src/dispatch/execute.js";
+import { createDeletionConfirmation } from "../src/mcp/deletion-confirmation.js";
 
 const bytes = (value) => Buffer.byteLength(JSON.stringify(value));
 const policy = { permissions: ["export_data"], scopes: ["Simulation.Export"], features: ["sim_exports"] };
@@ -10,7 +11,15 @@ const policy = { permissions: ["export_data"], scopes: ["Simulation.Export"], fe
 export async function simulateAgent(mode = "dispatcher") {
   const fixture = syntheticCatalogue();
   const authorize = ({ arguments: args }) => args.identity !== "production";
-  const projection = createProjection({ mode, entries: fixture.entries, policy, authorize });
+  const confirmDeletion = createDeletionConfirmation({ principal: "scripted-user", client: "scripted-client", tenant: "synthetic-tenant", store: new Map(),
+    resolve: async (capability, args) => ({ identity: args.identity, name: args.identity, consequence: "Deletes a synthetic record.",
+      fingerprint: JSON.stringify(fixture.state.get(capability.id.slice(4, -capability.operation.length - 1))?.get(args.identity)) }),
+  });
+  const projection = createProjection({ mode, entries: fixture.entries, policy, authorize, confirmDeletion });
+  const interaction = (state) => ({ clientCapabilities: { elicitation: { form: {} } }, mcpReq: {
+    envelope: { "io.modelcontextprotocol/protocolVersion": "2026-07-28" }, requestState: () => state,
+    inputResponses: state ? { confirm_deletion: { action: "accept", content: { confirm: true } } } : undefined,
+  } });
   const searchName = mode === "compact" ? "purview_search" : "purview_search_capabilities";
   const transcript = [];
   // The scripted client selects top-1. Expected IDs are ONLY used afterwards to
@@ -26,7 +35,9 @@ export async function simulateAgent(mode = "dispatcher") {
     const detail = described.structuredContent;
     validateArguments(detail.input_schema, structuredClone(scenario.args), selected.capability_id);
     const { tool, ...route } = detail.invocation;
-    const result = await projection.call(tool, { ...route, arguments: scenario.args });
+    let result = await projection.call(tool, { ...route, arguments: scenario.args }, interaction());
+    const elicitationRounds = result.resultType === "input_required" ? 1 : 0;
+    if (elicitationRounds) result = await projection.call(tool, { ...route, arguments: scenario.args }, interaction(result.requestState));
     const eager = await projection.call(searchName, { ...args, include_schemas: true });
     transcript.push({ query: scenario.query, expected: scenario.expected, selected: selected.capability_id,
       pass: selected.capability_id === scenario.expected && !result.isError,
@@ -34,7 +45,7 @@ export async function simulateAgent(mode = "dispatcher") {
       schemas_in_search: items.filter((c) => c.input_schema).length, schemas_described: 1,
       search_bytes: bytes(search), describe_bytes: bytes(described), eager_search_bytes: bytes(eager),
       latency_ms: +(performance.now() - start).toFixed(3),
-      invocation: { tool, ...route, arguments: scenario.args }, result: result.structuredContent });
+      invocation: { tool, ...route, arguments: scenario.args }, elicitation_rounds: elicitationRounds, result: result.structuredContent });
   }
 
   const checks = [];

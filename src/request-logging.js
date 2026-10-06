@@ -51,7 +51,7 @@ export function createRequestLogger({
           sink(JSON.stringify({
             ...base,
             level: result?.isError === true ? "warn" : "info",
-            outcome: result?.isError === true ? "tool_error" : "success",
+            outcome: result?.isError === true ? "tool_error" : result?.resultType === "input_required" ? "input_required" : "success",
             duration_ms: Math.max(0, Math.round(clock() - started)),
           }));
         }

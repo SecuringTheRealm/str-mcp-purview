@@ -12,6 +12,8 @@ import { executeCapability } from "./dispatch/execute.js";
 import { createRequestLogger } from "./request-logging.js";
 import { errorResult } from "./dispatch/errors.js";
 import { indexCapabilities } from "./capabilities/contract.js";
+import { createDeletionConfirmation } from "./mcp/deletion-confirmation.js";
+import { randomUUID } from "node:crypto";
 
 // Compatibility exports for consumers that inspect the full surface.
 export const TOOLS = capabilities.map((c) => c.tool);
@@ -42,7 +44,11 @@ export function createServer(factoryContext = {}) {
   };
   const mode = toolMode(factoryContext.toolMode ?? process.env.PURVIEW_TOOL_MODE ?? "full");
   const authorize = factoryContext.authorizeCapability;
-  const projection = createProjection({ mode, policy, limit: searchLimit(), entries, authorize });
+  const confirmDeletion = createDeletionConfirmation({
+    principal: factoryContext.confirmationPrincipal ?? (factoryContext.transport === "stdio" ? "local-stdio" : undefined),
+    client: factoryContext.transport === "stdio" ? randomUUID() : factoryContext.confirmationClientId ?? factoryContext.authInfo?.clientId,
+  });
+  const projection = createProjection({ mode, policy, limit: searchLimit(), entries, authorize, confirmDeletion });
   const visibleResources = RESOURCES.filter((r) => policy.allowedIds.includes(resourceCapabilities[r.uri][0]));
   const withLogging = createRequestLogger({ transport: factoryContext.transport, era: factoryContext.era });
   const server = new Server(
@@ -60,12 +66,15 @@ export function createServer(factoryContext = {}) {
     }
   );
   server.setRequestHandler("tools/list", withLogging("tools/list", async () => ({ tools: projection.tools })));
-  server.setRequestHandler("tools/call", withLogging("tools/call", async (request) => {
+  server.setRequestHandler("tools/call", withLogging("tools/call", async (request, context) => {
     const { name, arguments: args } = request.params;
     if (!projection.tools.some((tool) => tool.name === name)) {
       throw new ProtocolError(ProtocolErrorCode.MethodNotFound, `Unknown tool: ${name}`);
     }
-    try { return await projection.call(name, args ?? {}); }
+    try { return await projection.call(name, args ?? {}, {
+      ...context,
+      clientCapabilities: context?.mcpReq?.envelope?.["io.modelcontextprotocol/clientCapabilities"] ?? server.getClientCapabilities(),
+    }); }
     catch (error) { return errorResult(error); }
   }, (request) => ({ tool: request.params.name })));
   server.setRequestHandler("prompts/list", withLogging("prompts/list", async () => ({ prompts: PROMPTS })));

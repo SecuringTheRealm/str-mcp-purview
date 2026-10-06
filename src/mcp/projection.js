@@ -50,11 +50,11 @@ export function searchCapabilities(query, { policy = {}, filters = {}, limit = 8
   }));
 }
 
-export function createProjection({ mode = toolMode(), policy = {}, limit = searchLimit(), entries = capabilities, authorize } = {}) {
+export function createProjection({ mode = toolMode(), policy = {}, limit = searchLimit(), entries = capabilities, authorize, confirmDeletion } = {}) {
   toolMode(mode);
   searchLimit(limit);
   const registry = indexCapabilities(entries);
-  const execute = (id, args) => executeCapability(id, args, policy, registry, authorize);
+  const execute = (id, args, context) => executeCapability(id, args, policy, registry, authorize, { confirmDeletion, context });
   const visible = filterCapabilities(entries, policy);
   const calls = new Map();
   const tools = [];
@@ -64,7 +64,7 @@ export function createProjection({ mode = toolMode(), policy = {}, limit = searc
   }
 
   if (mode === "full") {
-    for (const c of visible) register(c.tool, (args) => execute(c.id, args));
+    for (const c of visible) register(c.tool, (args, context) => execute(c.id, args, context));
   } else {
     const searchName = mode === "compact" ? "purview_search" : "purview_search_capabilities";
     register({
@@ -105,10 +105,10 @@ export function createProjection({ mode = toolMode(), policy = {}, limit = searc
     if (mode === "dispatcher") {
       register({
         name: "purview_execute_capability",
-        description: "Execute a capability found with purview_search_capabilities. Supply its capability_id and schema-valid arguments; deletion requires confirm:true inside arguments.",
+        description: "Execute a capability found with purview_search_capabilities. Supply its capability_id and schema-valid arguments; deletion requires user confirmation through form elicitation.",
         annotations: WRITE,
         inputSchema: object({ capability_id: { type: "string", minLength: 1 }, arguments: argumentObject }, ["capability_id"]),
-      }, (args) => execute(args.capability_id, args.arguments ?? {}));
+      }, (args, context) => execute(args.capability_id, args.arguments ?? {}, context));
     } else {
       const projectedGroups = [...new Map(visible.map((c) => {
         const group = groupFor(c); return [`${c.domain}:${c.action}`, group];
@@ -124,23 +124,23 @@ export function createProjection({ mode = toolMode(), policy = {}, limit = searc
         register({ name, description: description + " Use purview_describe_capability for argument schemas.",
           annotations: action === "read" ? { ...READ, idempotentHint: entries.every((c) => c.idempotent), openWorldHint: entries.some((c) => c.openWorld) } : WRITE,
           inputSchema: object({ operation: { type: "string", enum: [...ids] }, arguments: argumentObject }, ["operation"]),
-        }, (args) => {
+        }, (args, context) => {
           if (!ids.has(args.operation)) throw new Error("Operation is unavailable in this tool.");
-          return execute(args.operation, args.arguments ?? {});
+          return execute(args.operation, args.arguments ?? {}, context);
         });
       }
     }
   }
   return {
     tools,
-    async call(name, args = {}) {
+    async call(name, args = {}, context) {
       const entry = calls.get(name);
       if (!entry) throw new CapabilityError("CAPABILITY_UNAVAILABLE", `Unknown tool: ${name}`);
       const input = structuredClone(args);
       validateArguments(entry.tool.inputSchema, input, name);
-      return entry.call(input);
+      return entry.call(input, context);
     },
-    instructions: mode === "full" ? "Use list filters and pagination, then fetch individual details."
-      : `Use ${mode === "compact" ? "purview_search" : "purview_search_capabilities"} to find candidate operations, then purview_describe_capability for the selected input_schema, constraints and examples. Search include_schemas:true is an optional shortcut. Follow the returned invocation mapping. Capability names mentioned in prompts are internal operation IDs. Keep filters unchanged when following next_cursor; pass cursor and limit inside arguments. Only execute writes the user requested; deletion requires confirm:true. Discovery is not authorization; execution rechecks policy. Do not automatically retry errors, especially writes with uncertain outcomes.`,
+    instructions: mode === "full" ? "Use list filters and pagination, then fetch individual details. Deletion requires user confirmation through form elicitation; confirm:true alone does not authorize deletion."
+      : `Use ${mode === "compact" ? "purview_search" : "purview_search_capabilities"} to find candidate operations, then purview_describe_capability for the selected input_schema, constraints and examples. Search include_schemas:true is an optional shortcut. Follow the returned invocation mapping. Capability names mentioned in prompts are internal operation IDs. Keep filters unchanged when following next_cursor; pass cursor and limit inside arguments. Only execute writes the user requested; deletion requires user confirmation through form elicitation. Discovery is not authorization; execution rechecks policy. Do not automatically retry errors, especially writes with uncertain outcomes.`,
   };
 }
