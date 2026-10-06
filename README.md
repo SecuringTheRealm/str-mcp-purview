@@ -382,14 +382,16 @@ The two label tools share a category-grouped settings surface — `encryption`, 
 #### `create_sensitivity_label`
 
 - **Business:** Define a new classification — its name, tooltip, and optionally the protection it applies (encryption, visual markings, container/Teams controls). A created label is invisible to users until published (see `create_label_policy`).
-- **Technical:** **Write.** `New-Label`. Required: `name`, `display_name`, `tooltip`. Optional `parent_id` (sub-label) + the shared settings groups.
+- **Technical:** **Write.** `New-Label`. Required: `name`, `display_name`, and `tooltip` for ordinary labels. Set `is_label_group:true` to create an organisational parent for modern-scheme sub-labels; a group's tooltip is optional. Groups accept display name, descriptions and colour, and reject parent/protection settings. Reads expose group status. Classic tenants can still use an ordinary parent label.
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `name` | string | Unique internal label name |
 | `display_name` | string | Name shown to users |
 | `tooltip` | string | Guidance shown at classification time |
-| `parent_id` | string | Optional — parent label to make this a sub-label |
+| `is_label_group` | boolean | Create an organisational group with `New-Label -IsLabelGroup`; default is an ordinary label |
+| `parent_id` | string | Optional — parent name/GUID; modern-scheme tenants require an existing label group |
+| `color` | string | Six-digit RGB hex code, e.g. `#123ABC`; mapped to `AdvancedSettings.color` |
 | `encryption` | object | `enabled`, `protection_type`, `do_not_forward`, `encrypt_only`, `offline_access_days`, `rights_definitions[]` |
 | `content_marking` | object | `header` / `footer` / `watermark`, each with `enabled`, `text`, `font_color`, `font_size`, `alignment`/`layout` |
 | `site_and_group_protection` | object | `enabled`, `privacy`, `allow_guest_access`, `external_sharing_control`, `access_level` |
@@ -405,6 +407,8 @@ The two label tools share a category-grouped settings surface — `encryption`, 
 
 - **Business:** **Publish** labels so users can actually apply them, and set behaviour like mandatory labelling or a default label. Creation *is* publishing — there's no separate step; changes replicate to clients automatically (can take up to ~24h).
 - **Technical:** **Write.** `New-LabelPolicy`. Targets Exchange mailboxes and/or Microsoft 365 Groups; behaviour goes in `advanced_settings`.
+
+At least one nonempty `exchange_location` or `modern_group_location` target is required. Missing targets fail validation before PowerShell; the server never defaults publishing to everyone. For example: `{"name":"Finance publishing","labels":["Finance"],"exchange_location":["finance.admin@contoso.com"]}`. Policy details render object locations as readable names and identities.
 
 | Parameter | Type | Description |
 |-----------|------|-------------|

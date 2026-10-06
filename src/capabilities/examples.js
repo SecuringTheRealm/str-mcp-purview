@@ -7,7 +7,7 @@ export const examples = {
   get_label_policy: { identity: "Example-Policy" },
   create_sensitivity_label: { name: "Example-Label", display_name: "Example", tooltip: "Example label" },
   set_sensitivity_label: { identity: "Example-Label", display_name: "Example updated" },
-  create_label_policy: { name: "Example-Policy", labels: ["Example-Label"] },
+  create_label_policy: { name: "Example-Policy", labels: ["Example-Label"], exchange_location: ["example@contoso.com"] },
   set_label_policy: { identity: "Example-Policy", comment: "Example update" },
   remove_sensitivity_label: { identity: "Example-Label", confirm: true },
   remove_label_policy: { identity: "Example-Policy", confirm: true },

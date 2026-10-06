@@ -9,7 +9,7 @@ export function validateArguments(schema, args, name) {
   let validate = validators.get(schema);
   if (!validate) { validate = ajv.compile(schema); validators.set(schema, validate); }
   if (!validate(args)) {
-    throw new CapabilityError("VALIDATION_ERROR", `Invalid arguments for ${name}: ${validate.errors.map((e) => `${e.instancePath || "arguments"} ${e.message}`).join("; ")}. Correct the arguments and retry.`);
+    throw new CapabilityError("VALIDATION_ERROR", `Invalid arguments for ${name}: ${validate.errors.map((e) => `${e.instancePath || "arguments"} ${e.message}`).join("; ")}.${schema.description ? ` ${schema.description}` : ""} Correct the arguments and retry.`);
   }
 }
 

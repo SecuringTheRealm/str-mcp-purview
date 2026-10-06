@@ -1,5 +1,6 @@
 import * as labels from "../labels.js";
 import { text, pageResult } from "./shared.js";
+import { CapabilityError } from "../dispatch/errors.js";
 
 export const handlers = {
   list_sensitivity_labels: async (args) => {
@@ -22,6 +23,7 @@ export const handlers = {
   },
   create_sensitivity_label: async (args) => {
     const params = { Name: args.name, ...labels.labelSettingsParams(args) };
+    if (args.is_label_group) params.IsLabelGroup = true;
     if (args.parent_id) params.ParentId = args.parent_id;
     return text(labels.formatWriteResult("Create sensitivity label", await labels.createLabel(params)));
   },
@@ -30,6 +32,9 @@ export const handlers = {
     return text(labels.formatWriteResult("Set sensitivity label", await labels.setLabel(params)));
   },
   create_label_policy: async (args) => {
+    if (!args.exchange_location?.length && !args.modern_group_location?.length) {
+      throw new CapabilityError("VALIDATION_ERROR", "Provide at least one nonempty exchange_location or modern_group_location target to publish labels.");
+    }
     const params = { Name: args.name, Labels: args.labels };
     if (args.exchange_location?.length) params.ExchangeLocation = args.exchange_location;
     if (args.modern_group_location?.length) params.ModernGroupLocation = args.modern_group_location;

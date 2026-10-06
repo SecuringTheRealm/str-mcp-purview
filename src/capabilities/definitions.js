@@ -116,6 +116,7 @@ const LABEL_SETTINGS_PROPS = {
   display_name: { type: "string", description: "Display name shown to users" },
   tooltip: { type: "string", description: "Tooltip / description shown at classification time" },
   comment: { type: "string", description: "Admin comment" },
+  color: { type: "string", pattern: "^#[0-9a-fA-F]{6}$", description: "Label or group colour as a six-digit RGB hex code." },
   encryption: {
     type: "object",
     description: "Encryption (rights-management) settings applied to labeled content.",
@@ -239,14 +240,18 @@ const TOOLS = [
   {
     name: "create_sensitivity_label",
     description:
-      "Create a sensitivity label (New-Label). A created label does nothing until published with create_label_policy. WRITE operation — changes tenant configuration.",
+      "Create a sensitivity label or an organisational label group (New-Label). Modern-scheme sub-labels require a label group as their parent. Groups cannot carry protection settings. A created label does nothing until published with create_label_policy. WRITE operation — changes tenant configuration.",
     annotations: { title: "Create sensitivity label", ...CREATE },
     inputSchema: {
       type: "object",
-      required: ["name", "display_name", "tooltip"],
+      required: ["name", "display_name"],
+      if: { properties: { is_label_group: { const: true } }, required: ["is_label_group"] },
+      then: { not: { anyOf: ["parent_id", "encryption", "content_marking", "site_and_group_protection", "teams_protection"].map((key) => ({ required: [key] })) } },
+      else: { required: ["tooltip"] },
       properties: {
         name: { type: "string", description: "Unique internal label name" },
-        parent_id: { type: "string", description: "Optional: parent label name/GUID to make this a sub-label" },
+        is_label_group: { type: "boolean", description: "Create an organisational label group for modern-scheme sub-labels. Only name/display name, descriptions and colour are accepted; tooltip is optional. Cannot have a parent or protection settings." },
+        parent_id: { type: "string", description: "Optional: parent name/GUID for a sub-label. Modern-scheme tenants require an existing label group; create one with is_label_group:true. Classic tenants can use an ordinary parent label." },
         ...LABEL_SETTINGS_PROPS,
       },
     },
@@ -272,12 +277,17 @@ const TOOLS = [
     annotations: { title: "Publish labels (create policy)", ...CREATE },
     inputSchema: {
       type: "object",
+      description: "Provide at least one nonempty exchange_location or modern_group_location target to publish labels.",
       required: ["name", "labels"],
+      anyOf: [
+        { required: ["exchange_location"], properties: { exchange_location: { minItems: 1 } } },
+        { required: ["modern_group_location"], properties: { modern_group_location: { minItems: 1 } } },
+      ],
       properties: {
         name: { type: "string", description: "Unique policy name" },
-        labels: { type: "array", items: { type: "string" }, description: "Labels to publish (names or GUIDs)" },
-        exchange_location: { type: "array", items: { type: "string" }, description: "Mailboxes to publish to, or ['All']" },
-        modern_group_location: { type: "array", items: { type: "string" }, description: "Microsoft 365 Groups to publish to (SMTP addresses)" },
+        labels: { ...STRING_LIST("Labels to publish (names or GUIDs)"), minItems: 1 },
+        exchange_location: { ...STRING_LIST("Mailboxes to publish to, or ['All']. At least one nonempty Exchange or Microsoft 365 Groups target is required."), items: { type: "string", pattern: "\\S" } },
+        modern_group_location: { ...STRING_LIST("Microsoft 365 Groups to publish to (SMTP addresses). At least one nonempty Exchange or Microsoft 365 Groups target is required."), items: { type: "string", pattern: "\\S" } },
         advanced_settings: {
           type: "object",
           additionalProperties: { type: "string" },

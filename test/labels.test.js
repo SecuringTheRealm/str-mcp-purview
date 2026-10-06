@@ -125,6 +125,9 @@ test("label write functions invoke the right cmdlet", async (t) => {
 });
 
 test("labelSettingsParams", async (t) => {
+  await t.test("maps colour through the documented advanced setting", () => {
+    assert.deepEqual(labels.labelSettingsParams({ color: "#123ABC" }), { AdvancedSettings: { color: "#123ABC" } });
+  });
   await t.test("maps the mandatory fields", () => {
     const p = labels.labelSettingsParams({ display_name: "Conf", tooltip: "Sensitive", comment: "c" });
     assert.deepEqual(p, { DisplayName: "Conf", Tooltip: "Sensitive", Comment: "c" });
@@ -273,6 +276,16 @@ test("formatPolicySettings", async (t) => {
 });
 
 test("label policy read-back", async (t) => {
+  await t.test("renders object and string locations without losing names or identities", () => {
+    const out = labels.formatLabelPolicyDetail({
+      Name: "Scoped",
+      ExchangeLocation: ["All", { DisplayName: "Finance", PrimarySmtpAddress: "finance@contoso.com" }, { Identity: "admin@contoso.com" }, null, {}],
+      ModernGroupLocation: { Name: "Engineering", Identity: "engineering@contoso.com" },
+    });
+    assert.match(out, /Exchange locations:\*\* All, Finance \(finance@contoso.com\), admin@contoso.com, Unknown location/);
+    assert.match(out, /Microsoft 365 Groups:\*\* Engineering \(engineering@contoso.com\)/);
+    assert.doesNotMatch(out, /\[object Object\]/);
+  });
   await t.test("listLabelPolicies invokes Get-LabelPolicy and normalises to an array", async () => {
     invokeCalls.length = 0;
     invokeImpl = async () => ({ Name: "Global", Labels: ["Public", "Internal"], Mode: "Enable" });
@@ -321,6 +334,17 @@ test("label policy read-back", async (t) => {
   await t.test("formatLabelPolicyDetail handles a missing policy", () => {
     assert.equal(labels.formatLabelPolicyDetail(undefined), "Label policy not found.");
   });
+});
+
+test("label group status survives PowerShell reads and appears in list and detail output", async () => {
+  invokeImpl = async () => ({ Name: "Group", DisplayName: "Confidential", Guid: "group-guid", IsLabelGroup: true });
+  const group = await labels.getLabel("group-guid");
+  assert.equal(group.is_label_group, true);
+  assert.ok(invokeCalls.at(-1).selectProps.includes("IsLabelGroup"));
+  assert.match(labels.formatLabelList([group]), /Confidential \(label group\)/);
+  assert.match(labels.formatLabelDetail(group), /Label group:\*\* true/);
+  assert.equal(labels.normalizeLabel({ Name: "classic" }).is_label_group, undefined);
+  assert.equal(labels.normalizeLabel({ Name: "label", IsLabelGroup: false }).is_label_group, false);
 });
 
 test("label protection settings read-back", async (t) => {

@@ -205,7 +205,8 @@ test("MCP server over stdio", async (t) => {
       assert.deepEqual(byName.create_copilot_dlp_rule.inputSchema.required, ["name", "policy"]);
       assert.deepEqual(byName.create_endpoint_dlp_policy.inputSchema.required, ["name"]);
       assert.deepEqual(byName.create_endpoint_dlp_rule.inputSchema.required, ["name", "policy", "endpoint_restrictions"]);
-      assert.deepEqual(byName.create_sensitivity_label.inputSchema.required, ["name", "display_name", "tooltip"]);
+      assert.deepEqual(byName.create_sensitivity_label.inputSchema.required, ["name", "display_name"]);
+      assert.deepEqual(byName.create_sensitivity_label.inputSchema.else.required, ["tooltip"]);
       assert.deepEqual(byName.set_sensitivity_label.inputSchema.required, ["identity"]);
       assert.deepEqual(byName.create_label_policy.inputSchema.required, ["name", "labels"]);
       assert.deepEqual(byName.set_label_policy.inputSchema.required, ["identity"]);

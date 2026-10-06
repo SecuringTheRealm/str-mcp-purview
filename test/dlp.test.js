@@ -204,11 +204,11 @@ test("createPolicy / setPolicy / createRule / setRule", async (t) => {
     assert.equal(invokeCalls.at(-1).cmdlet, "New-DlpComplianceRule");
   });
 
-  await t.test("setRule invokes Set-DlpComplianceRule with the given params", async () => {
+  await t.test("setRule suppresses the built-in confirmation pause and preserves update params", async () => {
     invokeImpl = async () => ({ Name: "Rule1" });
     await dlp.setRule({ Identity: "Rule1", Disabled: true });
     assert.equal(invokeCalls.at(-1).cmdlet, "Set-DlpComplianceRule");
-    assert.deepEqual(invokeCalls.at(-1).params, { Identity: "Rule1", Disabled: true });
+    assert.deepEqual(invokeCalls.at(-1).params, { Identity: "Rule1", Disabled: true, Confirm: false });
   });
 
   await t.test("removePolicy invokes Remove-DlpCompliancePolicy with Confirm:false", async () => {
@@ -246,9 +246,9 @@ test("copilotCondition", async (t) => {
     assert.deepEqual(dlp.copilotCondition({ sits: ["Credit Card Number"] }), [{ Name: "Credit Card Number" }]);
   });
 
-  await t.test("maps labels to a groups/labels condition", () => {
-    const cond = dlp.copilotCondition({ labels: ["guid-1"] });
-    assert.deepEqual(cond, [{ groups: [{ operator: "Or", labels: [{ name: "guid-1", type: "Sensitivity" }] }] }]);
+  await t.test("maps labels to the documented condition with an outer operator and named group", () => {
+    const cond = dlp.copilotCondition({ labels: ["guid-1", "guid-2"] });
+    assert.deepEqual(cond, [{ operator: "And", groups: [{ operator: "Or", name: "Default", labels: [{ name: "guid-1", type: "Sensitivity" }, { name: "guid-2", type: "Sensitivity" }] }] }]);
   });
 
   await t.test("throws when both SITs and labels are supplied", () => {

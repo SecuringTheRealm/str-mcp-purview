@@ -72,7 +72,13 @@ test("all projections preserve PowerShell parameters, Graph reads and pagination
       : mode === "compact" ? projection.call(compactTool, { operation: id, arguments: args })
         : projection.call("purview_execute_capability", { capability_id: id, arguments: args });
     await call("set_dlp_rule", { identity: "r", report_severity_level: "High", sensitive_information_types: ["Credit Card Number"] }, "purview_manage_dlp");
-    assert.deepEqual(calls.at(-1), { cmdlet: "Set-DlpComplianceRule", params: { Identity: "r", ContentContainsSensitiveInformation: [{ Name: "Credit Card Number" }], ReportSeverityLevel: "High" } });
+    assert.deepEqual(calls.at(-1), { cmdlet: "Set-DlpComplianceRule", params: { Identity: "r", ContentContainsSensitiveInformation: [{ Name: "Credit Card Number" }], ReportSeverityLevel: "High", Confirm: false } });
+    await call("create_copilot_dlp_rule", { name: "copilot-label-rule", policy: "copilot-policy", sensitivity_labels: ["guid-1", "guid-2"], action: "block_processing" }, "purview_manage_dlp");
+    assert.deepEqual(calls.at(-1), { cmdlet: "New-DlpComplianceRule", params: {
+      Name: "copilot-label-rule", Policy: "copilot-policy",
+      ContentContainsSensitiveInformation: [{ operator: "And", groups: [{ operator: "Or", name: "Default", labels: [{ name: "guid-1", type: "Sensitivity" }, { name: "guid-2", type: "Sensitivity" }] }] }],
+      RestrictAccess: [{ setting: "ExcludeContentProcessing", value: "Block" }],
+    } });
     await call("get_label_policy_settings", {}, "purview_labels");
     assert.equal(calls.at(-1).path, "/me/security/informationProtection/labelPolicySettings");
     const first = await call("list_dlp_policies", {}, "purview_dlp");
@@ -80,6 +86,39 @@ test("all projections preserve PowerShell parameters, Graph reads and pagination
     const second = await call("list_dlp_policies", { cursor: first.structuredContent.next_cursor }, "purview_dlp");
     assert.equal(second.structuredContent.count, 5);
     assert.equal(second.structuredContent.has_more, false);
+  }
+});
+
+test("label groups and publishing targets enforce workflow constraints in every projection", async () => {
+  for (const mode of ["full", "compact", "dispatcher"]) {
+    const projection = createProjection({ mode });
+    const call = (id, args) => mode === "full" ? projection.call(id, args)
+      : mode === "compact" ? projection.call("purview_manage_labels", { operation: id, arguments: args })
+        : projection.call("purview_execute_capability", { capability_id: id, arguments: args });
+    const group = { name: "Group", display_name: "Group", is_label_group: true };
+    await call("create_sensitivity_label", { ...group, color: "#123ABC", comment: "Organisation" });
+    assert.deepEqual(calls.at(-1), { cmdlet: "New-Label", params: { Name: "Group", DisplayName: "Group", IsLabelGroup: true, Comment: "Organisation", AdvancedSettings: { color: "#123ABC" } } });
+    for (const field of ["parent_id", "encryption", "content_marking", "site_and_group_protection", "teams_protection"]) {
+      const before = calls.length;
+      await assert.rejects(call("create_sensitivity_label", { ...group, [field]: field === "parent_id" ? "parent" : {} }), { code: "VALIDATION_ERROR" });
+      assert.equal(calls.length, before, `Invalid group ${field} must not reach PowerShell`);
+    }
+    const before = calls.length;
+    await assert.rejects(call("create_sensitivity_label", { name: "Label", display_name: "Label", is_label_group: false }), { code: "VALIDATION_ERROR" });
+    assert.equal(calls.length, before);
+    await call("create_sensitivity_label", { name: "Child", display_name: "Child", tooltip: "Child guidance", parent_id: "Group" });
+    assert.deepEqual(calls.at(-1), { cmdlet: "New-Label", params: { Name: "Child", DisplayName: "Child", Tooltip: "Child guidance", ParentId: "Group" } });
+
+    const policy = { name: "Policy", labels: ["Child"] };
+    for (const targets of [{}, { exchange_location: [] }, { modern_group_location: [] }, { exchange_location: [], modern_group_location: [] }, { exchange_location: [""] }, { exchange_location: [" "] }]) {
+      const before = calls.length;
+      await assert.rejects(call("create_label_policy", { ...policy, ...targets }), (error) => error.code === "VALIDATION_ERROR" && /nonempty exchange_location or modern_group_location/.test(error.message));
+      assert.equal(calls.length, before, "Invalid targets must not reach PowerShell");
+    }
+    for (const targets of [{ exchange_location: ["admin@contoso.com"] }, { modern_group_location: ["team@contoso.com"] }, { exchange_location: ["All"], modern_group_location: ["team@contoso.com"] }, { exchange_location: [], modern_group_location: ["team@contoso.com"] }]) {
+      await call("create_label_policy", { ...policy, ...targets });
+      assert.deepEqual(calls.at(-1), { cmdlet: "New-LabelPolicy", params: { Name: "Policy", Labels: ["Child"], ...(targets.exchange_location?.length ? { ExchangeLocation: targets.exchange_location } : {}), ...(targets.modern_group_location?.length ? { ModernGroupLocation: targets.modern_group_location } : {}) } });
+    }
   }
 });
 

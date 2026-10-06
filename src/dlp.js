@@ -132,7 +132,9 @@ export async function createRule(params) {
 
 export async function setRule(params) {
   // params: { Identity, ...properties to change }
-  return powershell.invoke("Set-DlpComplianceRule", params, RULE_PROPS);
+  // This cmdlet has a built-in confirmation pause; the piped bridge cannot
+  // answer it. Host authorization still happens before reaching this layer.
+  return powershell.invoke("Set-DlpComplianceRule", { ...params, Confirm: false }, RULE_PROPS);
 }
 
 /** Map string and tuned per-SIT inputs to the PswsHashtable[] cmdlet shape. */
@@ -279,7 +281,9 @@ export function copilotCondition({ sits, labels } = {}) {
     throw new Error("A Copilot rule cannot combine sensitive information types and sensitivity labels — use one condition per rule.");
   }
   if (sits?.length) return sits.map((n) => ({ Name: n }));
-  if (labels?.length) return [{ groups: [{ operator: "Or", labels: labels.map((g) => ({ name: g, type: "Sensitivity" })) }] }];
+  // Use the complete sensitivity-label condition documented for
+  // New-DlpComplianceRule's ContentContainsSensitiveInformation parameter.
+  if (labels?.length) return [{ operator: "And", groups: [{ operator: "Or", name: "Default", labels: labels.map((g) => ({ name: g, type: "Sensitivity" })) }] }];
   throw new Error("A Copilot rule needs a condition: sensitive_information_types or sensitivity_labels.");
 }
 

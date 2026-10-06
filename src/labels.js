@@ -15,7 +15,7 @@ const BASE = appOnly ? "/security/informationProtection" : "/me/security/informa
 
 // Label configuration reads and writes share the PowerShell plane. Graph is
 // retained only for labelPolicySettings, which has no equivalent cmdlet.
-const LABEL_WRITE_PROPS = ["Name", "DisplayName", "Guid", "ParentId", "Priority", "ContentType"];
+const LABEL_WRITE_PROPS = ["Name", "DisplayName", "Guid", "ParentId", "Priority", "ContentType", "IsLabelGroup"];
 const LABELPOLICY_WRITE_PROPS = ["Name", "Guid", "Labels", "Enabled", "Mode"];
 
 // Read-back property sets make create/set/remove operations verifiable while
@@ -27,7 +27,7 @@ const LABELPOLICY_READ_PROPS = [
 ];
 const LABEL_READ_PROPS = [
   "Name", "DisplayName", "Guid", "Identity", "ContentType", "Tooltip", "Comment",
-  "Priority", "ParentId", "IsActive", "Enabled", "Disabled", "Color", "LabelColor",
+  "Priority", "ParentId", "IsLabelGroup", "IsActive", "Enabled", "Disabled", "Color", "LabelColor",
   "EncryptionEnabled", "EncryptionProtectionType", "EncryptionDoNotForward", "EncryptionEncryptOnly",
   "EncryptionOfflineAccessDays", "EncryptionRightsDefinitions",
   "ApplyContentMarkingHeaderEnabled", "ApplyContentMarkingHeaderText",
@@ -74,6 +74,7 @@ export function normalizeLabel(raw, knownLabels = []) {
     name: displayName,
     priority: raw.Priority,
     sensitivity: raw.Priority,
+    is_label_group: typeof raw.IsLabelGroup === "boolean" ? raw.IsLabelGroup : undefined,
     isActive,
     color: raw.Color ?? raw.LabelColor,
     tooltip: raw.Tooltip,
@@ -175,6 +176,7 @@ export function labelSettingsParams(args = {}) {
   if (args.display_name != null) p.DisplayName = args.display_name;
   if (args.tooltip != null) p.Tooltip = args.tooltip;
   if (args.comment != null) p.Comment = args.comment;
+  if (args.color != null) p.AdvancedSettings = { color: args.color };
 
   const e = args.encryption;
   if (e) {
@@ -246,7 +248,7 @@ function labelLine(label) {
   const active = label.isActive === false ? "inactive" : label.isActive === true ? "active" : "state?";
   const parent = label.parent?.name ? ` (parent: ${label.parent.name})` : "";
   const priority = label.priority != null ? `p${label.priority}` : "p?";
-  return `${label.id ?? "-"}  ${label.scc_name ?? "-"}  ${priority}  ${active}  ${label.display_name ?? label.name ?? "(unknown)"}${parent}  — ${truncate(label.description, 60)}`;
+  return `${label.id ?? "-"}  ${label.scc_name ?? "-"}  ${priority}  ${active}  ${label.display_name ?? label.name ?? "(unknown)"}${label.is_label_group === true ? " (label group)" : ""}${parent}  — ${truncate(label.description, 60)}`;
 }
 
 export function formatLabelList(labels) {
@@ -264,6 +266,7 @@ export function formatLabelDetail(label) {
       ["scc_name", "SCC name"],
       ["display_name", "Display name"],
       ["priority", "Priority"],
+      ["is_label_group", "Label group"],
       ["isActive", "Active"],
       ["color", "Color"],
       ["tooltip", "Tooltip"],
@@ -311,7 +314,10 @@ export function formatLabelPolicyDetail(p) {
   if (!p) return "Label policy not found.";
   const lines = [
     `# Label policy: ${p.Name}`,
-    bulletFields(p, [
+    bulletFields({ ...p,
+      ExchangeLocation: formatPolicyLocations(p.ExchangeLocation),
+      ModernGroupLocation: formatPolicyLocations(p.ModernGroupLocation),
+    }, [
       ["Guid", "GUID"],
       ["Enabled", "Enabled"],
       ["Mode", "Mode"],
@@ -327,6 +333,16 @@ export function formatLabelPolicyDetail(p) {
   const settings = asArray(p.Settings).filter(Boolean);
   if (settings.length) lines.push(`- **Settings:** ${settings.map((s) => truncate(String(s), 80)).join("; ")}`);
   return lines.filter(Boolean).join("\n");
+}
+
+function formatPolicyLocations(value) {
+  return asArray(value).filter((entry) => entry != null).map((entry) => {
+    if (typeof entry !== "object") return String(entry);
+    const scalar = (...keys) => keys.map((key) => entry[key]).find((v) => typeof v === "string" && v.trim());
+    const name = scalar("DisplayName", "Name", "displayName", "name");
+    const identity = scalar("PrimarySmtpAddress", "SmtpAddress", "EmailAddress", "Identity", "Guid", "Id", "primarySmtpAddress", "emailAddress", "identity", "id");
+    return name && identity && name !== identity ? `${name} (${identity})` : name ?? identity ?? "Unknown location (no name or identity returned)";
+  });
 }
 
 export function formatLabelProtectionSettings(label) {
