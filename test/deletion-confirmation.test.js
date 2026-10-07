@@ -39,14 +39,15 @@ test("every deletion in every projection requires elicitation, then executes the
     const f = fixture();
     const p = createProjection({ mode, entries: f.entries, confirmDeletion: f.guard });
     const { tool, ...route } = routeFor(capability, mode);
-    const args = mode === "full" ? { identity: "Finance", confirm: true } : { ...route, arguments: { identity: "Finance", confirm: true } };
+    const deletionArgs = { identity: "Finance", ...(capability.inputSchema.properties.confirm ? { confirm: true } : {}) };
+    const args = mode === "full" ? deletionArgs : { ...route, arguments: deletionArgs };
     const initial = await p.call(tool, args, context());
     assert.equal(initial.resultType, "input_required");
     assert.match(initial.inputRequests.confirm_deletion.params.message, /Finance.*stable-guid.*tenant-one/);
     assert.equal(initial.inputRequests.confirm_deletion.params.requestedSchema.properties.confirm.default, false);
     assert.equal(f.mutations.length, 0);
     await p.call(tool, args, context(initial.requestState));
-    assert.deepEqual(f.mutations, [{ id: capability.id, args: { identity: "stable-guid", confirm: true } }]);
+    assert.deepEqual(f.mutations, [{ id: capability.id, args: { ...deletionArgs, identity: "stable-guid" } }]);
     await assert.rejects(p.call(tool, args, context(initial.requestState)), /consumed/);
   }
 });

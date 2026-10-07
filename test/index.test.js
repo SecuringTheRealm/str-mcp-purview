@@ -75,7 +75,7 @@ test("MCP server over stdio", async (t) => {
       assert.equal(client.getProtocolEra(), "modern");
       assert.equal(client.getNegotiatedProtocolVersion(), "2026-07-28");
       const { tools } = await client.listTools();
-      assert.equal(tools.length, 27);
+      assert.equal(tools.length, 37);
     });
   });
 
@@ -84,6 +84,8 @@ test("MCP server over stdio", async (t) => {
       const { tools } = await client.listTools();
       const names = tools.map((tool) => tool.name).sort();
       assert.deepEqual(names, [
+        "create_auto_label_policy",
+        "create_auto_label_rule",
         "create_copilot_dlp_policy",
         "create_copilot_dlp_rule",
         "create_dlp_policy",
@@ -93,25 +95,33 @@ test("MCP server over stdio", async (t) => {
         "create_label_policy",
         "create_sensitivity_label",
         "get_auth_status",
+        "get_auto_label_policy",
+        "get_auto_label_rule",
         "get_dlp_policy",
         "get_dlp_rule",
         "get_label_policy",
         "get_label_policy_settings",
         "get_sensitivity_label",
         "list_dlp_policies",
+        "list_auto_label_policies",
+        "list_auto_label_rules",
         "list_dlp_rules",
         "list_label_policies",
         "list_sensitive_information_types",
         "list_sensitivity_labels",
         "remove_dlp_policy",
+        "remove_auto_label_policy",
+        "remove_auto_label_rule",
         "remove_dlp_rule",
         "remove_label_policy",
         "remove_sensitivity_label",
         "set_dlp_policy",
+        "set_auto_label_policy",
+        "set_auto_label_rule",
         "set_dlp_rule",
         "set_label_policy",
         "set_sensitivity_label",
-      ]);
+      ].sort());
       for (const tool of tools) {
         assert.equal(typeof tool.description, "string");
         assert.ok(tool.description.length > 0, `${tool.name} should have a description`);

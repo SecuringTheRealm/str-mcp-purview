@@ -43,7 +43,7 @@ Three rules follow from this:
 
 ## Ships today
 
-Baseline so the gaps below are legible. **26 tools, 2 prompts, 3 resources.** All
+Baseline so the gaps below are legible. **37 capabilities, 2 prompts, 3 resources.** All
 tools declare MCP annotations (`readOnlyHint`/`destructiveHint`/`idempotentHint`/`openWorldHint`).
 
 - **Labels (read):** `list_sensitivity_labels`, `get_sensitivity_label` (authoritative `Get-Label`, including protection), `get_label_policy_settings` (Graph), `list_label_policies`, `get_label_policy`
@@ -85,7 +85,7 @@ Every remaining DLP / label / classification gap, mapped to the tier it belongs 
 | Classification | Trainable classifiers | — (no API) | 🔴 T3 |
 | AI DLP | Network Data Security (SASE/SSE) | portal/partner Security Store | 🔴 T3 |
 
-**Cheapest high-value next picks (all 🟢 T1):** **auto-labeling** (completes the label story), then **keyword dictionaries**, then DLP rule condition/action richness. *(Basic CRUD now closed: `get_dlp_rule` + DLP/label delete all shipped.)*
+**Cheapest high-value next picks:** auto-labeling tenant UAT and remaining verified mappings, then keyword dictionaries and DLP rule condition/action richness. Core auto-label CRUD is implemented; advanced coverage and live enforcement remain unverified.
 
 ---
 
@@ -110,8 +110,11 @@ No new plane, no XML, no new auth.
 - **Note:** label configuration is read and written via PowerShell so identities
   and post-write reads remain consistent; only `labelPolicySettings` stays on Graph.
 - **✅ Delete — shipped:** `remove_sensitivity_label`, `remove_label_policy`.
-- **Remaining label gap:** **auto-labeling**
-  (`New-/Set-/Remove-AutoSensitivityLabelPolicy` + `...Rule`) — see coverage below.
+- **Auto-labeling core implemented:** ten policy/rule capabilities, static scopes,
+  simple SIT conditions/exceptions, isolated simulation submission, diagnostics,
+  revision/eligibility checks, and elicited deletion. Live tenant UAT remains open.
+  Advanced encodings, adaptive scopes, EDM/classifiers, removal/library-default
+  behavior and scheduled enablement fail explicitly until verified; see README.
 
 ### Round out DLP write
 - **✅ Done — `set_dlp_policy`:** change an existing policy's mode

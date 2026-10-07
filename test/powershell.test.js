@@ -315,6 +315,29 @@ test("PowerShellBridge.invoke", async (t) => {
   });
 });
 
+test("simulation connection is isolated and includes the search-only switch on the connect command", async () => {
+  const saved = process.env.PURVIEW_DLP_AUTH_MODE;
+  process.env.PURVIEW_DLP_AUTH_MODE = "token";
+  tokenImpl = async () => fakeJwt("admin@contoso.onmicrosoft.com");
+  try {
+    const bridge = await freshBridge("simulation-isolated");
+    const children = [];
+    spawnImpl = () => { const child = new FakeChildProcess(); children.push(child); lastProc = child; return child; };
+    const simulation = bridge.invokeSimulation("Set-AutoSensitivityLabelPolicy", { Identity: "policy", StartSimulation: true });
+    await new Promise(r => setImmediate(r)); await new Promise(r => setImmediate(r));
+    assert.match(children[0].writes[0], /Connect-IPPSSession -AccessToken[^\n]* -EnableSearchOnlySession/);
+    assert.match(children[0].writes[0], /Parameters.ContainsKey\('EnableSearchOnlySession'\)/);
+    children[0].respondOk("connected"); await new Promise(r => setImmediate(r));
+    children[0].respondOk(null); await simulation;
+    const regular = bridge.invoke("Get-Label", {});
+    await new Promise(r => setImmediate(r)); await new Promise(r => setImmediate(r));
+    assert.equal(children.length, 2);
+    assert.doesNotMatch(children[1].writes[0], /EnableSearchOnlySession/);
+    children[1].respondOk("connected"); await new Promise(r => setImmediate(r));
+    children[1].respondOk([]); await regular;
+  } finally { if (saved === undefined) delete process.env.PURVIEW_DLP_AUTH_MODE; else process.env.PURVIEW_DLP_AUTH_MODE = saved; }
+});
+
 test("PowerShellBridge token-injection connect", async (t) => {
   await t.test("connects with an injected access token and org derived from the token", async () => {
     const saved = process.env.PURVIEW_DLP_AUTH_MODE;

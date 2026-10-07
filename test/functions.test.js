@@ -154,14 +154,14 @@ test("Azure Functions streamable HTTP host", async (t) => {
       assert.ok(names.includes("list_sensitivity_labels"));
       assert.ok(names.includes("list_dlp_policies"));
       assert.ok(names.includes("list_label_policies"));
-      assert.equal(names.length, 27);
+      assert.equal(names.length, 37);
       assert.deepEqual(init.body.result.capabilities, { tools: {}, prompts: {}, resources: {} });
       assert.deepEqual(list.body.result.tools, TOOLS);
       for (const tool of list.body.result.tools) {
         assert.ok(tool.annotations, `${tool.name} should carry annotations over HTTP too`);
       }
       const paged = list.body.result.tools.filter((tool) => tool.name.startsWith("list_"));
-      assert.equal(paged.length, 5);
+      assert.equal(paged.length, 7);
       for (const tool of paged) {
         assert.equal(tool.inputSchema.properties.limit.default, 25);
         assert.equal(tool.inputSchema.properties.limit.maximum, 100);

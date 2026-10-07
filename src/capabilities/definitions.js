@@ -1,3 +1,4 @@
+import { AUTO_LABEL_TOOLS } from "./auto-label-definitions.js";
 const READ = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true };
 const CREATE = { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true };
 const UPDATE = { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true };
@@ -766,6 +767,7 @@ function closeObjectSchemas(schema) {
   if (schema.not) closeObjectSchemas(schema.not);
 }
 
+TOOLS.push(...AUTO_LABEL_TOOLS);
 for (const tool of TOOLS) closeObjectSchemas(tool.inputSchema);
 
 const toolsByName = new Map(TOOLS.map((tool) => [tool.name, tool]));
@@ -775,6 +777,8 @@ const LIST_TOOL_NAMES = [
   "list_dlp_policies",
   "list_dlp_rules",
   "list_sensitive_information_types",
+  "list_auto_label_policies",
+  "list_auto_label_rules",
 ];
 const PAGINATED_TOOL_NAMES = [...LIST_TOOL_NAMES, "get_dlp_rule"];
 const LIST_OUTPUT_SCHEMA = {

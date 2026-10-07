@@ -18,7 +18,7 @@ const { filterCapabilities } = await import("../src/retrieval/filters.js");
 const { cases } = await import("../benchmarks/cases.js");
 
 test("registry rejects missing metadata, unresolved handlers and colliding aliases", () => {
-  assert.equal(capabilities.length, 27);
+  assert.equal(capabilities.length, 37);
   assert.equal(validateRegistry(capabilities), capabilities);
   const c = capabilities[0];
   assert.throws(() => validateRegistry([c, { ...c, id: "other", aliases: [c.id] }]), /Duplicate/);
@@ -54,7 +54,7 @@ test("domain, action and destructive filters run before ranking", () => {
 });
 
 test("mode projections expose exact surfaces with conservative annotations", () => {
-  assert.equal(createProjection({ mode: "full" }).tools.length, 27);
+  assert.equal(createProjection({ mode: "full" }).tools.length, 37);
   assert.deepEqual(createProjection({ mode: "compact" }).tools.map((t) => t.name), [
     "purview_search", "purview_describe_capability", "purview_labels", "purview_manage_labels", "purview_dlp", "purview_manage_dlp", "purview_classification", "purview_auth",
   ]);

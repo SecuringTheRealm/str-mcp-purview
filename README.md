@@ -233,11 +233,11 @@ Set `PURVIEW_TOOL_MODE` to choose the MCP surface. All modes use the same capabi
 
 | Mode | Visible tools (unrestricted) | Intended use |
 | --- | ---: | --- |
-| `full` | 27 | Existing deployments, diagnostics and detailed schemas |
+| `full` | 37 | Existing deployments, diagnostics and detailed schemas |
 | `compact` | 8 | Recommended for new agent configurations |
 | `dispatcher` | 3 | Minimal surface for a growing capability catalogue |
 
-The default remains **full** so existing clients retain their 26 operation names; `get_auth_status` is the additional local configuration diagnostic. To migrate, set `PURVIEW_TOOL_MODE=compact`, restart the server and refresh the client's tool discovery. No authentication or startup-command changes are needed. The detailed tools documented below become internal operation IDs in compact/dispatcher mode, not individually advertised tools.
+The default remains **full** so existing clients retain their operation names. The catalogue includes ten service-side auto-label capabilities and `get_auth_status` for local configuration diagnostics. To migrate, set `PURVIEW_TOOL_MODE=compact`, restart the server and refresh the client's tool discovery. No authentication or startup-command changes are needed. The detailed tools documented below become internal operation IDs in compact/dispatcher mode, not individually advertised tools.
 
 Compact exposes `purview_search`, `purview_describe_capability`, `purview_labels`, `purview_manage_labels`, `purview_dlp`, `purview_manage_dlp`, `purview_classification` and `purview_auth`. Read and write operations are separate so hosts can apply meaningful approval policies. Each domain tool accepts an `operation` enum and an `arguments` object. Dispatcher exposes `purview_search_capabilities`, `purview_describe_capability` and `purview_execute_capability`. Its executor is conservatively annotated as potentially destructive; annotations are hints, not authorization.
 
@@ -753,7 +753,7 @@ Resources here deliberately mirror **classification vocabulary** — the labels 
 
 ## Hosting on Azure Functions
 
-> **Status: In UAT.** The HTTP host supports the same tool modes, two prompts, and three resources as stdio (27 tools in unrestricted full mode). Local transport/protocol tests pass. Azure Functions is not production-validated until every Graph- and PowerShell-backed operation passes the deployed disposable-object UAT suite.
+> **Status: In UAT.** The HTTP host supports the same tool modes, two prompts, and three resources as stdio (37 tools in unrestricted full mode). Local transport/protocol tests pass. Azure Functions is not production-validated until every Graph- and PowerShell-backed operation passes the deployed disposable-object UAT suite.
 
 The custom handler (`host.json`) launches `functions/server.js` and serves stateless MCP at `POST /mcp`. One canonical factory in `src/server.js` backs both transports.
 
@@ -769,7 +769,7 @@ Two deployment shapes:
 | **Code-only** (`func`/zip deploy of this repo) | Flex Consumption | Advertises the canonical full surface; PowerShell execution remains UAT-dependent |
 | **Container** ([`Containerfile`](Containerfile)) | Elastic Premium / Dedicated / Azure Container Apps | Advertises the canonical full surface; tenant connectivity and all-tool execution remain In UAT |
 
-Remote hosting is headless, so use a renewable app identity and configure the Graph and PowerShell planes independently. Managed identity and certificate combinations are deployment candidates, not claimed as fully supported until the UAT authentication matrix proves all 26 tools.
+Remote hosting is headless, so use a renewable app identity and configure the Graph and PowerShell planes independently. Managed identity and certificate combinations are deployment candidates, not claimed as fully supported until the UAT authentication matrix proves every backend operation, including the separate auto-label simulation session.
 
 **Secure the endpoint.** A function key is not sufficient production caller authentication. Put Entra/Easy Auth in front, validate its token audience and allowed client applications, and scope backend permissions tightly. Set `MCP_ALLOWED_HOSTS` to the comma-separated public hostnames accepted through the Azure proxy, `MCP_ALLOWED_ORIGINS` to a comma-separated browser-origin allowlist, `MCP_CURSOR_SECRET` to a shared secret for multi-instance pagination, and optionally `MCP_MAX_CONCURRENT_REQUESTS` (default `8`). Localhost hosts are always accepted; missing `Origin` remains valid for non-browser clients, while a present unlisted origin receives 403. Local smoke test: `node functions/server.js`, then POST MCP JSON-RPC to `http://127.0.0.1:3000/mcp`.
 
@@ -818,7 +818,7 @@ This simulation proves contracts and routing behaviour for the fixture, not real
 
 ## Elicitation for deletion confirmation
 
-All four delete capabilities use a shared execution guard in full, compact and dispatcher modes. Call the tool with `identity`; the old `confirm: true` argument is optional and has no authority to skip review. A form identifies the configured tenant, resolved object name/GUID and deletion consequence. Confirmation defaults to false. Decline, cancel, malformed answers and clients without form support never invoke a removal cmdlet.
+All six delete capabilities use a shared execution guard in full, compact and dispatcher modes. Call the tool with `identity`; the four original delete tools retain the optional compatibility argument `confirm: true`, which has no authority to skip review. Auto-label delete tools do not accept that argument. A form identifies the configured tenant, resolved object name/GUID and deletion consequence. Confirmation defaults to false. Decline, cancel, malformed answers and clients without form support never invoke a removal cmdlet.
 
 On MCP `2026-07-28`, the server returns `resultType: "input_required"` with an embedded `elicitation/create`. The client retries the same tool and arguments with the returned `requestState` and `inputResponses.confirm_deletion`. On legacy stdio, the server uses the SDK's in-call form request. See the [MRTR specification](https://modelcontextprotocol.io/specification/2026-07-28/basic/patterns/mrtr) and [elicitation specification](https://modelcontextprotocol.io/specification/2026-07-28/client/elicitation).
 
@@ -827,6 +827,32 @@ The guard resolves the backend GUID, binds a five-minute review to the caller, c
 Local stdio uses its process/connection boundary as the caller identity. HTTP integrations must supply `confirmationPrincipal` and a verified client identity (`confirmationClientId` or validated `authInfo.clientId`) to `createServer` from trusted authentication middleware. Never derive these from tool arguments, unverified headers or client-provided profile information. **The supplied Functions host does not currently provide a verified caller identity, so deletion fails closed there**, even with a Functions key. A Functions key alone does not identify the end user. Legacy stateless HTTP cannot perform the in-call interaction.
 
 Pending reviews are bounded to 1,000 records per process. They survive fresh HTTP Server instances in that process, but not process restart or routing to another worker. Multi-worker deployment needs a shared store with atomic consumption before enabling deletion; retries on another worker currently fail safely. `MCP_CURSOR_SECRET` does not provide a shared deletion-review store. Failed/uncertain mutations are not automatically retried. Elicitation relies on the client to present a real user interaction; it is not independent evidence of human approval against a malicious client.
+
+## Service-side automatic sensitivity labeling
+
+Ten capabilities are registered in the `labels` domain: `list/get/create/set/remove_auto_label_policy` (lists use the plural `policies`) and the equivalent rule operations (plural `rules`). In compact mode use `purview_labels` for reads and `purview_manage_labels` for writes; describe the chosen capability for its closed schema and examples. The full catalogue has 37 capabilities; compact and dispatcher retain eight and three tools respectively.
+
+Documented mappings implemented: policy/rule reads, list filters and cursor pagination, explicitly disabled apply-policy creation, published leaf-label validation, static SharePoint/OneDrive/Exchange targeting, selected scope replacement and location deltas, comments, policy priority, administrative-unit references, Exchange manual-label overwrite and external-mail RMS owner, supported simple SIT conditions/exceptions, rule reporting/error settings, disabling, simulation submission, distribution retry, optional diagnostics, configuration revisions, and elicited deletion. Omitted update fields remain unchanged. Condition arrays replace their field; empty condition-list clearing is unavailable until its backend semantics are verified. Disabling/deleting a policy does not reverse labels already applied.
+
+Example sequence (substitute your tenant's eligible published label and site):
+
+```json
+{"name":"Finance auto-label","behaviour":"apply","label_identity":"Confidential","locations":{"sharepoint":{"selection":"selected","include_sites":["https://contoso.sharepoint.com/sites/Finance"]}}}
+```
+
+Pass that object to `create_auto_label_policy`. Create a rule with `create_auto_label_rule`:
+
+```json
+{"name":"Financial identifiers","policy_identity":"Finance auto-label","workload":"SharePoint","conditions":{"sensitive_information":{"operator":"any","groups":[{"name":"Financial","operator":"any","detectors":[{"kind":"sit","identity":"Credit Card Number","min_count":1,"confidence_level":"High"}]}]}}}
+```
+
+Then call `set_auto_label_policy` with `{"identity":"Finance auto-label","mode":"TestWithoutNotifications","restart_simulation":true}`. Simulation is submitted through an isolated SCC process using `Connect-IPPSSession -EnableSearchOnlySession`, with a module capability check. It returns submission/readback rather than waiting for a scan. Verify the authentication/module path and simulation status on a licensed disposable tenant before deployment. [Microsoft's simulation connection guidance](https://learn.microsoft.com/en-us/purview/apply-sensitivity-label-automatically#use-powershell-for-auto-labeling-policies).
+
+Use `get_auto_label_policy` with `include_simulation_status`, `include_progress`, `include_distribution_detail`, or `include_administrative_unit_details`. Individual simulation samples are not exposed; review them in the Purview portal. Raw backend diagnostics are returned only when available; missing fields are not fabricated. The adapter conservatively recognizes completed status from `TestModeStatus`, `SimulationStatus`, or `TestModeResults.Status`; actual tenant response shapes must be verified, otherwise enabling fails closed. [Policy getter reference](https://learn.microsoft.com/en-us/powershell/module/exchangepowershell/get-autosensitivitylabelpolicy?view=exchange-ps).
+
+Enable through `set_auto_label_policy` using `mode:"Enable"` and `expected_revision` from a fresh read. The guard requires a completed simulation initiated through this process, unchanged policy/rule/label fingerprints, and an active rule. Simulation records are process-local: restart or another worker requires re-simulation; production multi-worker support needs a shared trusted store. This is eligibility checking, not independent evidence of human approval. Host authorization and Microsoft RBAC still apply. Effective configuration/rule changes require disabling first; changes clear scheduled activation and require new simulation. There is no atomic backend lock between validation and mutation. An accepted mutation with failed readback returns `READBACK_FAILED` and must be inspected before retrying.
+
+Reserved schema options return `FEATURE_UNAVAILABLE`, without mutation: removal/library-default behavior, adaptive scopes, OneDrive group targeting, cross-workload overwrite, scheduled auto-enable, the separate `enabled` flag, advanced expressions, EDM/trainable classifiers, document-creator/header encodings, and condition-list clearing. Simple detector matching currently supports one OR group. Rule priority and other internal-only cmdlet parameters are not exposed. See [policy update](https://learn.microsoft.com/en-us/powershell/module/exchangepowershell/set-autosensitivitylabelpolicy?view=exchange-ps) and [rule reference](https://learn.microsoft.com/en-us/powershell/module/exchangepowershell/new-autosensitivitylabelrule?view=exchange-ps). These limitations are explicit adapter gates, not additional tool families. Live label compatibility, licensing, publication targets, permissions, workload conditions, and service response shapes remain UAT gates; mocked tests do not prove live enforcement.
 
 ## Exploring elicitation of business requirements
 
@@ -869,7 +895,7 @@ A future `purview_elicit_requirements` tool could implement the interview using 
 Planned work is tracked in **[ROADMAP.md](ROADMAP.md)**, organised by feasibility
 tier — whether a documented API surface actually exists to build on. In brief:
 
-- 🟢 **Ready next:** auto-labeling (`*-AutoSensitivityLabelPolicy`), keyword dictionaries, and richer DLP rule conditions. *(Authoritative PowerShell label read/write, DLP delete, policy-location editing, and endpoint-rule tuning have shipped.)*
+- 🟢 **Ready next:** auto-labeling tenant UAT and advanced mappings, keyword dictionaries, and richer DLP rule conditions. *(Core auto-label policy/rule capabilities, authoritative label read/write, DLP delete, policy-location editing, and endpoint-rule tuning are implemented.)*
 - 🟡 **Feasible but complex:** custom SIT write (requires hand-built rule-package XML), retention labels.
 - 🔴 **Blocked:** trainable classifier catalog — no confirmed cmdlet or Graph API; portal-only today, needs live-tenant discovery first.
 - 🔭 **New planes:** Insider Risk Management, Communications Compliance, DSPM / DSPM for AI.

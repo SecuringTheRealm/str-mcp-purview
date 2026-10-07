@@ -2,6 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { inputRequired } from "@modelcontextprotocol/server";
 import * as labels from "../labels.js";
 import * as dlp from "../dlp.js";
+import * as autoLabels from "../auto-labels.js";
 import { CapabilityError } from "../dispatch/errors.js";
 
 const KEY = "confirm_deletion";
@@ -26,6 +27,11 @@ async function resolveTarget(capability, args) {
       if (object?.Guid) rules = await dlp.listRules(object.Guid, { detail: true });
       break;
     case "remove_dlp_rule": object = await dlp.getRule(args.identity); break;
+    case "remove_auto_label_policy":
+      object = await autoLabels.getPolicy(args.identity);
+      rules = await autoLabels.listRules(object.Guid);
+      break;
+    case "remove_auto_label_rule": object = await autoLabels.getRule(args.identity); break;
     default: fail("No deletion review resolver is registered for this capability.");
   }
   if (typeof object?.Guid !== "string" || !object.Guid.trim()) fail("Cannot resolve a stable GUID for the deletion target. Nothing was deleted.");
@@ -33,7 +39,9 @@ async function resolveTarget(capability, args) {
     identity: object.Guid,
     name: object.DisplayName ?? object.Name ?? object.Guid,
     fingerprint: digest({ object, rules }),
-    consequence: capability.id === "remove_dlp_policy" ? `Deletes this DLP policy and its ${rules.length} rule(s).`
+    consequence: capability.id === "remove_auto_label_policy" ? `Deletes this auto-label policy with ${rules.length} associated rule(s). Labels already applied to content are not reversed.`
+      : capability.id === "remove_auto_label_rule" ? "Deletes this automatic labeling rule. Labels already applied to content are not reversed."
+      : capability.id === "remove_dlp_policy" ? `Deletes this DLP policy and its ${rules.length} rule(s).`
       : capability.id === "remove_label_policy" ? "Unpublishes this policy's labels from its users."
         : capability.id === "remove_sensitivity_label" ? "Deletes this sensitivity label; review dependent publishing policies first."
           : "Deletes this DLP rule and removes the protection it provides.",

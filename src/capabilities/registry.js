@@ -1,6 +1,7 @@
 import { TOOLS } from "./definitions.js";
 import { handlers as labels } from "./labels.js";
 import { handlers as dlp } from "./dlp.js";
+import { handlers as autoLabels } from "./auto-labels.js";
 import { authStatus } from "./auth.js";
 import { defineCapability, validateRegistry, indexCapabilities } from "./contract.js";
 import { examples } from "./examples.js";
@@ -13,9 +14,9 @@ const authTool = {
   annotations: { title: "Authentication configuration", readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
 };
 
-const handlers = { ...labels, ...dlp, get_auth_status: authStatus };
+const handlers = { ...labels, ...dlp, ...autoLabels, get_auth_status: authStatus };
 const vocabulary = {
-  labels: ["sensitivity", "classification", "label", "publishing", "information protection"],
+  labels: ["sensitivity", "classification", "label", "publishing", "information protection", "auto labeling", "auto labelling", "automatic", "simulation"],
   dlp: ["DLP", "data loss prevention", "compliance", "SharePoint", "OneDrive", "Exchange", "Teams"],
   classification: ["SIT", "sensitive information type", "detector", "classification"],
   auth: ["authentication", "status", "credentials", "sign in", "configuration"],

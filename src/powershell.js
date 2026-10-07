@@ -135,7 +135,8 @@ function orgFromToken(token) {
 }
 
 class PowerShellBridge {
-  constructor() {
+  constructor({ searchOnly = false } = {}) {
+    this.searchOnly = searchOnly;
     this.proc = null;
     this.queue = Promise.resolve();
     this.connecting = null;
@@ -343,7 +344,7 @@ class PowerShellBridge {
    * mocked child process will happily accept.
    */
   async connectScript() {
-    const connect = await this.#connectCommand();
+    const connect = (await this.#connectCommand()) + (this.searchOnly ? " -EnableSearchOnlySession" : "");
     const tokenMode = connect.includes("Connect-IPPSSession -AccessToken");
     return [
       "if (-not (Get-Module -ListAvailable -Name ExchangeOnlineManagement)) {",
@@ -351,6 +352,7 @@ class PowerShellBridge {
       "}",
       `Import-Module ExchangeOnlineManagement -MinimumVersion ${tokenMode ? "3.8.0" : "3.2.0"} -ErrorAction Stop`,
       ...(tokenMode ? ["if (-not (Get-Command Connect-IPPSSession -ErrorAction Stop).Parameters.ContainsKey('AccessToken')) { throw 'ExchangeOnlineManagement 3.8.0 or later with Connect-IPPSSession -AccessToken is required.' }"] : []),
+      ...(this.searchOnly ? ["if (-not (Get-Command Connect-IPPSSession -ErrorAction Stop).Parameters.ContainsKey('EnableSearchOnlySession')) { throw 'Auto-label simulation requires an ExchangeOnlineManagement version supporting EnableSearchOnlySession.' }"] : []),
       connect,
       "'connected'",
     ].join("\n");
@@ -447,3 +449,7 @@ function isAuthExpiry(err, cmdlet = "") {
 }
 
 export const powershell = new PowerShellBridge();
+// Simulation uses a separate process/session, preserving the ordinary SCC
+// connection and queue for label and DLP management.
+const simulationBridge = new PowerShellBridge({ searchOnly: true });
+powershell.invokeSimulation = (cmdlet, params, selectProps) => simulationBridge.invoke(cmdlet, params, selectProps);

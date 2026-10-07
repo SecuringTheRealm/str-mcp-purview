@@ -11,8 +11,8 @@ const argumentObject = { type: "object", additionalProperties: true, description
 const READ = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false };
 const WRITE = { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true };
 const groups = [
-  ["purview_labels", "labels", "read", "Inspect sensitivity labels, publishing policies and per-user label settings."],
-  ["purview_manage_labels", "labels", "write", "Create, modify or delete sensitivity labels and publishing policies."],
+  ["purview_labels", "labels", "read", "Inspect sensitivity labels, publishing policies, auto-label policies/rules and simulation diagnostics."],
+  ["purview_manage_labels", "labels", "write", "Create, modify or delete sensitivity labels, publishing policies and auto-label policies/rules; configure simulation and enforcement."],
   ["purview_dlp", "dlp", "read", "Find DLP policies and inspect their rules, locations and enforcement settings."],
   ["purview_manage_dlp", "dlp", "write", "Create, modify or delete traditional, Endpoint or Copilot DLP policies and rules."],
   ["purview_classification", "classification", "read", "Find built-in and custom sensitive information types (SITs)."],

@@ -1,5 +1,7 @@
+import { autoLabelExamples } from "./auto-label-definitions.js";
 // Illustrative placeholders, never instructions to execute a write automatically.
 export const examples = {
+  ...autoLabelExamples,
   list_sensitivity_labels: { limit: 25 },
   get_sensitivity_label: { label_id: "Example-Label" },
   get_label_policy_settings: {},
