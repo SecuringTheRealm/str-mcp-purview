@@ -238,6 +238,48 @@ test("PowerShellBridge.invoke", async (t) => {
     }
   });
 
+  await t.test("reconnects immediately after a command timeout even when the old child exits later", async () => {
+    process.env.PURVIEW_EXEC_TIMEOUT_MS = "80";
+    try {
+      const bridge = await freshBridge("timeout-delayed-exit");
+      const procs = [];
+      spawnImpl = () => {
+        const child = new FakeChildProcess();
+        child.kill = () => { child.killed = true; }; // Real kill does not emit exit synchronously.
+        procs.push(child);
+        return child;
+      };
+      const first = bridge.invoke("Set-DlpComplianceRule", { Identity: "R1", Disabled: true });
+      const rejected = assert.rejects(first, /timed out .* session was reset/s);
+      await tick();
+      procs[0].respondOk("connected");
+      await rejected;
+      assert.equal(procs[0].killed, true);
+      assert.equal(bridge.proc, null);
+
+      const next = bridge.invoke("Get-DlpComplianceRule", { Identity: "R1" });
+      await tick();
+      assert.equal(procs.length, 2);
+      assert.match(procs[1].writes.join(""), /Connect-IPPSSession/);
+      procs[0].emit("exit");
+      procs[0].emit("error", new Error("late error from retired child"));
+      assert.equal(bridge.proc, procs[1], "Retired child events must not clear the new connection");
+      procs[1].respondOk("connected");
+      await tick();
+      procs[1].respondOk({ Name: "R1", Disabled: false });
+      assert.deepEqual(await next, { Name: "R1", Disabled: false });
+      const again = bridge.invoke("Get-DlpComplianceRule", { Identity: "R1" });
+      await tick();
+      procs[1].respondOk({ Name: "R1" });
+      await again;
+      assert.equal(procs.length, 2);
+      assert.equal(procs[1].writes.filter(s => s.includes("Connect-IPPSSession -")).length, 1);
+      assert.equal(procs[0].writes.length, 2, "Timed-out mutation must not be retried");
+    } finally {
+      delete process.env.PURVIEW_EXEC_TIMEOUT_MS;
+    }
+  });
+
   await t.test("rejects the in-flight request promptly when the pwsh process dies", async () => {
     const bridge = await freshBridge("proc-death");
     spawnImpl = () => {

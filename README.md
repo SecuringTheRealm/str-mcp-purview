@@ -892,15 +892,16 @@ A future `purview_elicit_requirements` tool could implement the interview using 
 
 ## Roadmap
 
-Planned work is tracked in **[ROADMAP.md](ROADMAP.md)**, organised by feasibility
-tier — whether a documented API surface actually exists to build on. In brief:
+[GitHub Issues](https://github.com/SecuringTheRealm/str-mcp-purview/issues) are the
+source of truth for planned work, acceptance, priority and dependencies.
+[ROADMAP.md](ROADMAP.md) links the six outcome epics and explains feasibility
+decisions; the original roadmap and its source coverage are preserved in
+[migration records](docs/backlog/README.md).
 
-- 🟢 **Ready next:** auto-labeling tenant UAT and advanced mappings, keyword dictionaries, and richer DLP rule conditions. *(Core auto-label policy/rule capabilities, authoritative label read/write, DLP delete, policy-location editing, and endpoint-rule tuning are implemented.)*
-- 🟡 **Feasible but complex:** custom SIT write (requires hand-built rule-package XML), retention labels.
-- 🔴 **Blocked:** trainable classifier catalog — no confirmed cmdlet or Graph API; portal-only today, needs live-tenant discovery first.
-- 🔭 **New planes:** Insider Risk Management, Communications Compliance, DSPM / DSPM for AI.
-
-See [ROADMAP.md](ROADMAP.md) for the full breakdown, the surface each item rests on, and the contribution rules.
+Release validation remains separate from implemented capabilities. Advanced
+auto-label mappings, classification authoring, richer DLP controls and new
+planes remain scoped backlog or discovery work until their APIs and constraints
+are verified.
 
 ## Credits
 

@@ -1,0 +1,3 @@
+[agents.product_owner]
+description = "Product owner for roadmap migration, requirements and GitHub delivery backlogs."
+config_file = "agents/product_owner.toml"

@@ -1,0 +1,420 @@
+{
+  "repository": "SecuringTheRealm/str-mcp-purview",
+  "items": [
+    {
+      "number": 22,
+      "kind": "epic",
+      "priority": "P0",
+      "status": "in-review",
+      "parent": null,
+      "blocked_by": [],
+      "source_key": "roadmap-v1.release"
+    },
+    {
+      "number": 20,
+      "kind": "task",
+      "priority": "P0",
+      "status": "in-review",
+      "parent": 22,
+      "blocked_by": [],
+      "source_key": "roadmap-v1.sdk",
+      "parent_exception": "Shared engineering/discovery work has no honest user-story boundary; task directly under its outcome epic."
+    },
+    {
+      "number": 23,
+      "kind": "task",
+      "priority": "P0",
+      "status": "ready",
+      "parent": 22,
+      "blocked_by": [
+        20
+      ],
+      "source_key": "roadmap-v1.http",
+      "parent_exception": "Shared engineering/discovery work has no honest user-story boundary; task directly under its outcome epic."
+    },
+    {
+      "number": 24,
+      "kind": "task",
+      "priority": "P0",
+      "status": "ready",
+      "parent": 22,
+      "blocked_by": [],
+      "source_key": "roadmap-v1.deletion",
+      "parent_exception": "Shared engineering/discovery work has no honest user-story boundary; task directly under its outcome epic."
+    },
+    {
+      "number": 25,
+      "kind": "task",
+      "priority": "P0",
+      "status": "ready",
+      "parent": 22,
+      "blocked_by": [],
+      "source_key": "roadmap-v1.autouat",
+      "parent_exception": "Shared engineering/discovery work has no honest user-story boundary; task directly under its outcome epic."
+    },
+    {
+      "number": 26,
+      "kind": "task",
+      "priority": "P1",
+      "status": "backlog",
+      "parent": 22,
+      "blocked_by": [],
+      "source_key": "roadmap-v1.autoscale",
+      "parent_exception": "Shared engineering/discovery work has no honest user-story boundary; task directly under its outcome epic."
+    },
+    {
+      "number": 27,
+      "kind": "epic",
+      "priority": "P1",
+      "status": "backlog",
+      "parent": null,
+      "blocked_by": [],
+      "source_key": "roadmap-v1.protection"
+    },
+    {
+      "number": 28,
+      "kind": "story",
+      "priority": "P1",
+      "status": "backlog",
+      "parent": 27,
+      "blocked_by": [],
+      "source_key": "roadmap-v1.autoadv"
+    },
+    {
+      "number": 29,
+      "kind": "task",
+      "priority": "P1",
+      "status": "backlog",
+      "parent": 28,
+      "blocked_by": [],
+      "source_key": "roadmap-v1.automap"
+    },
+    {
+      "number": 30,
+      "kind": "story",
+      "priority": "P1",
+      "status": "backlog",
+      "parent": 27,
+      "blocked_by": [],
+      "source_key": "roadmap-v1.conditions"
+    },
+    {
+      "number": 31,
+      "kind": "task",
+      "priority": "P1",
+      "status": "backlog",
+      "parent": 30,
+      "blocked_by": [],
+      "source_key": "roadmap-v1.conditionsmap"
+    },
+    {
+      "number": 32,
+      "kind": "story",
+      "priority": "P1",
+      "status": "backlog",
+      "parent": 27,
+      "blocked_by": [],
+      "source_key": "roadmap-v1.actions"
+    },
+    {
+      "number": 33,
+      "kind": "task",
+      "priority": "P1",
+      "status": "backlog",
+      "parent": 32,
+      "blocked_by": [],
+      "source_key": "roadmap-v1.incident"
+    },
+    {
+      "number": 34,
+      "kind": "task",
+      "priority": "P2",
+      "status": "backlog",
+      "parent": 32,
+      "blocked_by": [],
+      "source_key": "roadmap-v1.remediation"
+    },
+    {
+      "number": 35,
+      "kind": "story",
+      "priority": "P1",
+      "status": "backlog",
+      "parent": 27,
+      "blocked_by": [],
+      "source_key": "roadmap-v1.scopes"
+    },
+    {
+      "number": 36,
+      "kind": "task",
+      "priority": "P1",
+      "status": "backlog",
+      "parent": 35,
+      "blocked_by": [],
+      "source_key": "roadmap-v1.scopesmap"
+    },
+    {
+      "number": 37,
+      "kind": "task",
+      "priority": "P2",
+      "status": "backlog",
+      "parent": 27,
+      "blocked_by": [],
+      "source_key": "roadmap-v1.ordering",
+      "parent_exception": "Shared engineering/discovery work has no honest user-story boundary; task directly under its outcome epic."
+    },
+    {
+      "number": 38,
+      "kind": "epic",
+      "priority": "P1",
+      "status": "backlog",
+      "parent": null,
+      "blocked_by": [],
+      "source_key": "roadmap-v1.classification"
+    },
+    {
+      "number": 39,
+      "kind": "story",
+      "priority": "P1",
+      "status": "backlog",
+      "parent": 38,
+      "blocked_by": [],
+      "source_key": "roadmap-v1.dictionary"
+    },
+    {
+      "number": 40,
+      "kind": "task",
+      "priority": "P1",
+      "status": "backlog",
+      "parent": 39,
+      "blocked_by": [],
+      "source_key": "roadmap-v1.dictionarymap"
+    },
+    {
+      "number": 41,
+      "kind": "story",
+      "priority": "P1",
+      "status": "backlog",
+      "parent": 38,
+      "blocked_by": [],
+      "source_key": "roadmap-v1.sit"
+    },
+    {
+      "number": 42,
+      "kind": "task",
+      "priority": "P1",
+      "status": "backlog",
+      "parent": 41,
+      "blocked_by": [],
+      "source_key": "roadmap-v1.sitread"
+    },
+    {
+      "number": 43,
+      "kind": "task",
+      "priority": "P1",
+      "status": "backlog",
+      "parent": 41,
+      "blocked_by": [
+        42
+      ],
+      "source_key": "roadmap-v1.sitwrite"
+    },
+    {
+      "number": 44,
+      "kind": "story",
+      "priority": "P1",
+      "status": "backlog",
+      "parent": 38,
+      "blocked_by": [],
+      "source_key": "roadmap-v1.edm"
+    },
+    {
+      "number": 45,
+      "kind": "task",
+      "priority": "P1",
+      "status": "backlog",
+      "parent": 44,
+      "blocked_by": [],
+      "source_key": "roadmap-v1.edmmap"
+    },
+    {
+      "number": 46,
+      "kind": "story",
+      "priority": "P1",
+      "status": "backlog",
+      "parent": 38,
+      "blocked_by": [],
+      "source_key": "roadmap-v1.visibility"
+    },
+    {
+      "number": 47,
+      "kind": "task",
+      "priority": "P1",
+      "status": "backlog",
+      "parent": 46,
+      "blocked_by": [],
+      "source_key": "roadmap-v1.reports"
+    },
+    {
+      "number": 48,
+      "kind": "epic",
+      "priority": "P2",
+      "status": "backlog",
+      "parent": null,
+      "blocked_by": [],
+      "source_key": "roadmap-v1.ai"
+    },
+    {
+      "number": 49,
+      "kind": "story",
+      "priority": "P2",
+      "status": "backlog",
+      "parent": 48,
+      "blocked_by": [],
+      "source_key": "roadmap-v1.aiapp"
+    },
+    {
+      "number": 50,
+      "kind": "task",
+      "priority": "P2",
+      "status": "backlog",
+      "parent": 49,
+      "blocked_by": [],
+      "source_key": "roadmap-v1.aiappmap"
+    },
+    {
+      "number": 51,
+      "kind": "story",
+      "priority": "P2",
+      "status": "backlog",
+      "parent": 48,
+      "blocked_by": [],
+      "source_key": "roadmap-v1.capture"
+    },
+    {
+      "number": 52,
+      "kind": "task",
+      "priority": "P2",
+      "status": "backlog",
+      "parent": 51,
+      "blocked_by": [],
+      "source_key": "roadmap-v1.capturemap"
+    },
+    {
+      "number": 53,
+      "kind": "epic",
+      "priority": "P2",
+      "status": "backlog",
+      "parent": null,
+      "blocked_by": [],
+      "source_key": "roadmap-v1.retention"
+    },
+    {
+      "number": 54,
+      "kind": "story",
+      "priority": "P2",
+      "status": "backlog",
+      "parent": 53,
+      "blocked_by": [],
+      "source_key": "roadmap-v1.retentionstory"
+    },
+    {
+      "number": 55,
+      "kind": "task",
+      "priority": "P2",
+      "status": "backlog",
+      "parent": 54,
+      "blocked_by": [],
+      "source_key": "roadmap-v1.retentionread"
+    },
+    {
+      "number": 56,
+      "kind": "task",
+      "priority": "P2",
+      "status": "backlog",
+      "parent": 54,
+      "blocked_by": [
+        55
+      ],
+      "source_key": "roadmap-v1.retentionwrite"
+    },
+    {
+      "number": 57,
+      "kind": "epic",
+      "priority": "P2",
+      "status": "backlog",
+      "parent": null,
+      "blocked_by": [],
+      "source_key": "roadmap-v1.discovery"
+    },
+    {
+      "number": 58,
+      "kind": "task",
+      "priority": "P2",
+      "status": "backlog",
+      "parent": 57,
+      "blocked_by": [],
+      "source_key": "roadmap-v1.endpointsettings",
+      "parent_exception": "Shared engineering/discovery work has no honest user-story boundary; task directly under its outcome epic."
+    },
+    {
+      "number": 59,
+      "kind": "task",
+      "priority": "P2",
+      "status": "backlog",
+      "parent": 57,
+      "blocked_by": [],
+      "source_key": "roadmap-v1.classifiers",
+      "parent_exception": "Shared engineering/discovery work has no honest user-story boundary; task directly under its outcome epic."
+    },
+    {
+      "number": 60,
+      "kind": "task",
+      "priority": "P2",
+      "status": "backlog",
+      "parent": 57,
+      "blocked_by": [],
+      "source_key": "roadmap-v1.network",
+      "parent_exception": "Shared engineering/discovery work has no honest user-story boundary; task directly under its outcome epic."
+    },
+    {
+      "number": 61,
+      "kind": "task",
+      "priority": "P2",
+      "status": "backlog",
+      "parent": 57,
+      "blocked_by": [],
+      "source_key": "roadmap-v1.newplanes",
+      "parent_exception": "Shared engineering/discovery work has no honest user-story boundary; task directly under its outcome epic."
+    },
+    {
+      "number": 62,
+      "kind": "task",
+      "priority": "P2",
+      "status": "backlog",
+      "parent": 57,
+      "blocked_by": [],
+      "source_key": "roadmap-v1.licensing",
+      "parent_exception": "Shared engineering/discovery work has no honest user-story boundary; task directly under its outcome epic."
+    },
+    {
+      "number": 63,
+      "kind": "task",
+      "priority": "P2",
+      "status": "backlog",
+      "parent": 57,
+      "blocked_by": [],
+      "source_key": "roadmap-v1.audit",
+      "parent_exception": "Shared engineering/discovery work has no honest user-story boundary; task directly under its outcome epic."
+    },
+    {
+      "number": 64,
+      "kind": "task",
+      "priority": "P2",
+      "status": "backlog",
+      "parent": 57,
+      "blocked_by": [],
+      "source_key": "roadmap-v1.elicitation",
+      "parent_exception": "Shared engineering/discovery work has no honest user-story boundary; task directly under its outcome epic."
+    }
+  ]
+}

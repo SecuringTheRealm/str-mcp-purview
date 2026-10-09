@@ -1,0 +1,171 @@
+{
+  "run": "ZZZ_MCP_REPLICATION_7011af1a",
+  "started": "2026-10-07T13:38:07.914Z",
+  "checks": [
+    {
+      "name": "authenticated_read",
+      "status": "returned",
+      "elapsed_ms": 59193,
+      "evidence": {
+        "visible_policy_count": 3
+      }
+    },
+    {
+      "name": "select_existing_published_leaf_label",
+      "status": "returned",
+      "elapsed_ms": 12742,
+      "evidence": {
+        "identity": "defa4170-0d19-0005-0000-bc88714345d2"
+      }
+    },
+    {
+      "name": "create_disposable_test_policy",
+      "status": "returned",
+      "elapsed_ms": 11412,
+      "evidence": {
+        "Name": "ZZZ_MCP_REPLICATION_7011af1a_DLP",
+        "Guid": "3da44a84-80f2-4b1f-911f-be17381a2639",
+        "Mode": "TestWithoutNotifications"
+      }
+    },
+    {
+      "name": "create_disposable_rule",
+      "status": "returned",
+      "elapsed_ms": 14431,
+      "evidence": {
+        "Name": "ZZZ_MCP_REPLICATION_7011af1a_Rule",
+        "Guid": "50d8f256-618f-4dd9-8368-b2b4b59e525a",
+        "Disabled": false,
+        "ContentContainsSensitiveInformation": [
+          {
+            "mincount": "1",
+            "maxconfidence": "100",
+            "confidencelevel": "High",
+            "classifiertype": "Content",
+            "name": "Credit Card Number",
+            "id": "50842eb7-edc8-4019-85dd-5a5c1f2bb085",
+            "maxcount": "-1",
+            "minconfidence": "85"
+          }
+        ],
+        "RestrictAccess": null
+      }
+    },
+    {
+      "name": "original_setter_without_confirm_false",
+      "status": "error",
+      "elapsed_ms": 60010,
+      "error": "PowerShell command timed out after 60000ms. The PowerShell session was reset; the next call will reconnect."
+    },
+    {
+      "name": "readback_after_original_setter",
+      "status": "error",
+      "elapsed_ms": 33,
+      "error": "The PowerShell process exited before responding. The next call will start a fresh session."
+    },
+    {
+      "name": "current_setter_with_confirm_false",
+      "status": "returned",
+      "elapsed_ms": 23622,
+      "evidence": {
+        "desired_disabled": true,
+        "readback": {
+          "Name": "ZZZ_MCP_REPLICATION_7011af1a_Rule",
+          "Guid": "50d8f256-618f-4dd9-8368-b2b4b59e525a",
+          "Disabled": true,
+          "ContentContainsSensitiveInformation": [
+            {
+              "classifiertype": "Content",
+              "mincount": "1",
+              "minconfidence": "85",
+              "id": "50842eb7-edc8-4019-85dd-5a5c1f2bb085",
+              "maxconfidence": "100",
+              "maxcount": "-1",
+              "confidencelevel": "High",
+              "name": "Credit Card Number"
+            }
+          ],
+          "RestrictAccess": null
+        },
+        "verified": true
+      }
+    },
+    {
+      "name": "create_disposable_copilot_test_policy",
+      "status": "returned",
+      "elapsed_ms": 5630,
+      "evidence": {
+        "Name": "ZZZ_MCP_REPLICATION_7011af1a_Copilot",
+        "Guid": "e20cd88a-da26-4018-bcc8-5b3ad7ee44a0",
+        "Mode": "TestWithoutNotifications"
+      }
+    },
+    {
+      "name": "original_copilot_label_condition",
+      "status": "error",
+      "elapsed_ms": 5117,
+      "error": "|Microsoft.Exchange.Management.UnifiedPolicy.InvalidLabelParameterValueException|The key 'groupname' specified in the label parameter of content contains senstive information predicate is invalid."
+    },
+    {
+      "name": "current_copilot_label_condition",
+      "status": "returned",
+      "elapsed_ms": 9846,
+      "evidence": {
+        "Name": "ZZZ_MCP_REPLICATION_7011af1a_RevisedLabels",
+        "Guid": "ce682954-791e-4cd9-86b3-1a49455d361a",
+        "Disabled": false,
+        "ContentContainsSensitiveInformation": [
+          {
+            "operator": "And",
+            "groups": [
+              {
+                "name": "Default",
+                "labels": [
+                  {
+                    "type": "Sensitivity",
+                    "name": "defa4170-0d19-0005-0000-bc88714345d2",
+                    "id": "defa4170-0d19-0005-0000-bc88714345d2"
+                  }
+                ],
+                "operator": "Or"
+              }
+            ]
+          }
+        ],
+        "RestrictAccess": [
+          {
+            "value": "Block",
+            "setting": "ExcludeContentProcessing"
+          }
+        ]
+      }
+    }
+  ],
+  "cleanup": [
+    {
+      "name": "ZZZ_MCP_REPLICATION_7011af1a_RevisedLabels",
+      "identity": "ce682954-791e-4cd9-86b3-1a49455d361a",
+      "status": "removal_submitted"
+    },
+    {
+      "name": "ZZZ_MCP_REPLICATION_7011af1a_OriginalLabels",
+      "status": "not_found"
+    },
+    {
+      "name": "ZZZ_MCP_REPLICATION_7011af1a_Rule",
+      "identity": "50d8f256-618f-4dd9-8368-b2b4b59e525a",
+      "status": "removal_submitted"
+    },
+    {
+      "name": "ZZZ_MCP_REPLICATION_7011af1a_Copilot",
+      "identity": "e20cd88a-da26-4018-bcc8-5b3ad7ee44a0",
+      "status": "removal_submitted"
+    },
+    {
+      "name": "ZZZ_MCP_REPLICATION_7011af1a_DLP",
+      "identity": "3da44a84-80f2-4b1f-911f-be17381a2639",
+      "status": "removal_submitted"
+    }
+  ],
+  "finished": "2026-10-07T13:42:05.697Z"
+}

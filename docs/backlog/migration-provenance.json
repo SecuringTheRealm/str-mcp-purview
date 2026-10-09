@@ -1,0 +1,9 @@
+{
+  "source": "roadmap-before-migration.md",
+  "sha256": "47ec603614efd7126acd3add7e0d747bc76ae800212ed23c60113beb760fc0a2",
+  "managed_records": 44,
+  "native_parent_edges": 38,
+  "native_blocking_edges": 3,
+  "source_coverage": "coverage.md",
+  "verification": "passed canonical native graph audit and direct/independent issue-content readback"
+}

@@ -1,0 +1,408 @@
+{
+  "run": "ZZZ_MCP_UAT_8ec29217",
+  "started": "2026-10-09T09:06:48.394Z",
+  "checks": [
+    {
+      "name": "authenticated_security_compliance_read",
+      "status": "passed",
+      "elapsed_ms": 70356,
+      "evidence": {
+        "visible_policies": 3
+      }
+    },
+    {
+      "name": "list_sensitivity_labels",
+      "status": "passed",
+      "elapsed_ms": 7641,
+      "evidence": {
+        "backend_returned": true
+      }
+    },
+    {
+      "name": "list_label_policies",
+      "status": "passed",
+      "elapsed_ms": 3223,
+      "evidence": {
+        "backend_returned": true
+      }
+    },
+    {
+      "name": "list_dlp_policies",
+      "status": "passed",
+      "elapsed_ms": 4590,
+      "evidence": {
+        "backend_returned": true
+      }
+    },
+    {
+      "name": "list_dlp_rules",
+      "status": "passed",
+      "elapsed_ms": 4749,
+      "evidence": {
+        "backend_returned": true
+      }
+    },
+    {
+      "name": "list_auto_label_policies",
+      "status": "passed",
+      "elapsed_ms": 3571,
+      "evidence": {
+        "backend_returned": true
+      }
+    },
+    {
+      "name": "list_auto_label_rules",
+      "status": "passed",
+      "elapsed_ms": 2987,
+      "evidence": {
+        "backend_returned": true
+      }
+    },
+    {
+      "name": "published_leaf_label_selection",
+      "status": "passed",
+      "elapsed_ms": 10288,
+      "evidence": {
+        "identity": "defa4170-0d19-0005-0000-bc88714345d2"
+      }
+    },
+    {
+      "name": "auto_label_create_disabled",
+      "status": "passed",
+      "elapsed_ms": 44950,
+      "evidence": {
+        "Mode": "Disable",
+        "PendingItemsCount": 0,
+        "CompletedItemsCount": 0,
+        "FailedItemsCount": 0,
+        "CompletedItemsCountInInterval": 0,
+        "PolicyGraderResult": null,
+        "TestModeStatus": null,
+        "TestModeVerdict": null,
+        "ItemsMatchedDuringTestMode": 0,
+        "SimulationRuleMatchBlob": "",
+        "LastSimulationCompletionDate": null,
+        "LastSimulationPolicyVersion": null,
+        "LabelDisplayName": "Personal",
+        "Type": "AutoLabeling",
+        "ExchangeLocation": [
+          {
+            "DisplayName": "All",
+            "Name": "All",
+            "ImmutableIdentity": "All",
+            "Type": {
+              "value": 1,
+              "Value": "Tenant"
+            },
+            "Status": {
+              "value": 2,
+              "Value": "Success"
+            },
+            "Workload": {
+              "value": 1,
+              "Value": "Exchange"
+            },
+            "SourceType": null,
+            "SourceTypeDisplayName": null,
+            "SourceProvider": {
+              "value": 0,
+              "Value": "Unknown"
+            },
+            "SourceEntryType": {
+              "value": 0,
+              "Value": "Unknown"
+            },
+            "SchemaVersion": 2,
+            "Resources": null,
+            "ScopingGroup": {
+              "value": 0,
+              "Value": "Unknown"
+            },
+            "GroupSet": "Default"
+          }
+        ],
+        "ExchangeLocationException": [],
+        "SharePointLocation": [],
+        "SharePointLocationException": [],
+        "OneDriveLocation": [],
+        "OneDriveLocationException": [],
+        "PowerBILocation": [],
+        "PowerBILocationException": [],
+        "EndpointDlpLocation": [],
+        "EndpointDlpLocationException": [],
+        "ExchangeSender": [],
+        "PolicyTemplateInfo": null,
+        "ExchangeSenderException": [],
+        "ApplySensitivityLabel": "defa4170-0d19-0005-0000-bc88714345d2",
+        "ExternalMailRightsManagementOwner": null,
+        "OverwriteLabel": false,
+        "AutoEnableAfter": null,
+        "ExtendedProperties": null,
+        "isDefaultSPODocLibraryLabelInUse": false,
+        "ApplySensitivityLabelOverwriteWorkloads": "None",
+        "RemoveLabel": false,
+        "IncludeSimulationPolicyGrading": false,
+        "EnableSensitivityLabelingForPdf": false,
+        "EnforcementPlanes": [],
+        "SpoDocLibraryDefaultLabels": [],
+        "OneDriveSharedBy": [],
+        "ExceptIfOneDriveSharedBy": [],
+        "OneDriveSharedByMemberOf": [],
+        "ExceptIfOneDriveSharedByMemberOf": [],
+        "ExchangeSenderMemberOf": [],
+        "ExchangeSenderMemberOfException": [],
+        "ExchangeAdaptiveScopes": [],
+        "ExchangeAdaptiveScopesException": [],
+        "SharePointAdaptiveScopes": [],
+        "SharePointAdaptiveScopesException": [],
+        "OneDriveAdaptiveScopes": [],
+        "OneDriveAdaptiveScopesException": [],
+        "TeamsAdaptiveScopes": [],
+        "TeamsAdaptiveScopesException": [],
+        "EndpointDlpAdaptiveScopes": [],
+        "EndpointDlpAdaptiveScopesException": [],
+        "ExpectedLocations": 0,
+        "CompletedLocations": 0,
+        "FailedLocations": 0,
+        "ItemStatistics": null,
+        "RuleMatchBlob": null,
+        "ErrorMetadata": null,
+        "UserAdministrativeUnitMembershipMap": null,
+        "ForceValidate": false,
+        "PolicyRulesMetaData": "",
+        "GlobalListType": "None",
+        "Locations": "[]",
+        "PolicyConstraints": "{\"AdministrativeUnit\":[]}",
+        "Workload": "Exchange, SharePoint, OneDriveForBusiness, EndpointDevices, PowerBI, Applications, Azure, AWS",
+        "Priority": 16384,
+        "ObjectVersion": "7b55e9d0-8916-474f-db6d-08df25e4fa64",
+        "CreatedBy": "Josh McDonald",
+        "LastModifiedBy": "Josh McDonald",
+        "ReadOnly": false,
+        "ExternalIdentity": "",
+        "Comment": "Disposable UAT; match unique synthetic subject only; never enable.",
+        "Enabled": false,
+        "DistributionStatus": "Pending",
+        "DistributionSyncStatus": "Unknown",
+        "DistributionResults": null,
+        "LastStatusUpdateTime": null,
+        "ModificationTimeUtc": "2026-10-09T09:09:09.36",
+        "CreationTimeUtc": "2026-10-09T09:09:09.36",
+        "PolicyRBACScopes": [],
+        "Identity": "FFO.extest.microsoft.com/Microsoft Exchange Hosted Organizations/kyk.onmicrosoft.com/Configuration/ZZZ_MCP_UAT_8ec29217_Auto",
+        "Id": "FFO.extest.microsoft.com/Microsoft Exchange Hosted Organizations/kyk.onmicrosoft.com/Configuration/ZZZ_MCP_UAT_8ec29217_Auto",
+        "IsValid": true,
+        "ExchangeVersion": "0.20 (15.0.0.0)",
+        "DirectoryObjectVersion": 0,
+        "Name": "ZZZ_MCP_UAT_8ec29217_Auto",
+        "DistinguishedName": "CN=ZZZ_MCP_UAT_8ec29217_Auto,CN=Configuration,CN=kyk.onmicrosoft.com,OU=Microsoft Exchange Hosted Organizations,DC=FFO,DC=extest,DC=microsoft,DC=com",
+        "ObjectCategory": null,
+        "ObjectClass": [
+          "msExchUnifiedPolicy"
+        ],
+        "WhenChanged": "2026-10-09T10:09:09+01:00",
+        "WhenCreated": "2026-10-09T10:09:09+01:00",
+        "WhenChangedUTC": "2026-10-09T09:09:09Z",
+        "WhenCreatedUTC": "2026-10-09T09:09:09Z",
+        "ExchangeObjectId": "55f7b818-95b4-4c49-af70-3351012a88b7",
+        "OrganizationalUnitRoot": "FFO.extest.microsoft.com/Microsoft Exchange Hosted Organizations/kyk.onmicrosoft.com",
+        "OrganizationId": "FFO.extest.microsoft.com/Microsoft Exchange Hosted Organizations/kyk.onmicrosoft.com - FFO.extest.microsoft.com/Microsoft Exchange Hosted Organizations/kyk.onmicrosoft.com/Configuration",
+        "Guid": "55f7b818-95b4-4c49-af70-3351012a88b7",
+        "OriginatingServer": "",
+        "ObjectState": "New"
+      }
+    },
+    {
+      "name": "auto_label_policy_diagnostics",
+      "status": "passed",
+      "elapsed_ms": 5619,
+      "evidence": {
+        "Mode": "Disable",
+        "PendingItemsCount": 0,
+        "CompletedItemsCount": 0,
+        "FailedItemsCount": 0,
+        "CompletedItemsCountInInterval": 0,
+        "PolicyGraderResult": null,
+        "TestModeStatus": null,
+        "TestModeVerdict": null,
+        "ItemsMatchedDuringTestMode": 0,
+        "SimulationRuleMatchBlob": "",
+        "LastSimulationCompletionDate": null,
+        "LastSimulationPolicyVersion": null,
+        "LabelDisplayName": "Personal",
+        "Type": "AutoLabeling",
+        "ExchangeLocation": [
+          {
+            "DisplayName": "All",
+            "Name": "All",
+            "ImmutableIdentity": "All",
+            "Type": {
+              "value": 1,
+              "Value": "Tenant"
+            },
+            "Status": {
+              "value": 2,
+              "Value": "Success"
+            },
+            "Workload": {
+              "value": 1,
+              "Value": "Exchange"
+            },
+            "SourceType": null,
+            "SourceTypeDisplayName": null,
+            "SourceProvider": {
+              "value": 0,
+              "Value": "Unknown"
+            },
+            "SourceEntryType": {
+              "value": 0,
+              "Value": "Unknown"
+            },
+            "SchemaVersion": 2,
+            "Resources": null,
+            "ScopingGroup": {
+              "value": 0,
+              "Value": "Unknown"
+            },
+            "GroupSet": "Default"
+          }
+        ],
+        "ExchangeLocationException": [],
+        "SharePointLocation": [],
+        "SharePointLocationException": [],
+        "OneDriveLocation": [],
+        "OneDriveLocationException": [],
+        "PowerBILocation": [],
+        "PowerBILocationException": [],
+        "EndpointDlpLocation": [],
+        "EndpointDlpLocationException": [],
+        "ExchangeSender": [],
+        "PolicyTemplateInfo": null,
+        "ExchangeSenderException": [],
+        "ApplySensitivityLabel": "defa4170-0d19-0005-0000-bc88714345d2",
+        "ExternalMailRightsManagementOwner": null,
+        "OverwriteLabel": false,
+        "AutoEnableAfter": null,
+        "ExtendedProperties": null,
+        "isDefaultSPODocLibraryLabelInUse": false,
+        "ApplySensitivityLabelOverwriteWorkloads": "None",
+        "RemoveLabel": false,
+        "IncludeSimulationPolicyGrading": false,
+        "EnableSensitivityLabelingForPdf": false,
+        "EnforcementPlanes": [],
+        "SpoDocLibraryDefaultLabels": [],
+        "OneDriveSharedBy": [],
+        "ExceptIfOneDriveSharedBy": [],
+        "OneDriveSharedByMemberOf": [],
+        "ExceptIfOneDriveSharedByMemberOf": [],
+        "ExchangeSenderMemberOf": [],
+        "ExchangeSenderMemberOfException": [],
+        "ExchangeAdaptiveScopes": [],
+        "ExchangeAdaptiveScopesException": [],
+        "SharePointAdaptiveScopes": [],
+        "SharePointAdaptiveScopesException": [],
+        "OneDriveAdaptiveScopes": [],
+        "OneDriveAdaptiveScopesException": [],
+        "TeamsAdaptiveScopes": [],
+        "TeamsAdaptiveScopesException": [],
+        "EndpointDlpAdaptiveScopes": [],
+        "EndpointDlpAdaptiveScopesException": [],
+        "ExpectedLocations": 0,
+        "CompletedLocations": 0,
+        "FailedLocations": 0,
+        "ItemStatistics": null,
+        "RuleMatchBlob": null,
+        "ErrorMetadata": null,
+        "UserAdministrativeUnitMembershipMap": null,
+        "ForceValidate": false,
+        "PolicyRulesMetaData": "",
+        "GlobalListType": "None",
+        "Locations": "[]",
+        "PolicyConstraints": "{\"AdministrativeUnit\":[]}",
+        "Workload": "Exchange, SharePoint, OneDriveForBusiness, EndpointDevices, PowerBI, Applications, Azure, AWS",
+        "Priority": 16384,
+        "ObjectVersion": "7b55e9d0-8916-474f-db6d-08df25e4fa64",
+        "CreatedBy": "Josh McDonald",
+        "LastModifiedBy": "Josh McDonald",
+        "ReadOnly": false,
+        "ExternalIdentity": "",
+        "Comment": "Disposable UAT; match unique synthetic subject only; never enable.",
+        "Enabled": false,
+        "DistributionStatus": "Pending",
+        "DistributionSyncStatus": "Unknown",
+        "DistributionResults": [],
+        "LastStatusUpdateTime": null,
+        "ModificationTimeUtc": "2026-10-09T09:09:09.36",
+        "CreationTimeUtc": "2026-10-09T09:09:09.36",
+        "PolicyRBACScopes": [],
+        "Identity": "FFO.extest.microsoft.com/Microsoft Exchange Hosted Organizations/kyk.onmicrosoft.com/Configuration/ZZZ_MCP_UAT_8ec29217_Auto",
+        "Id": "FFO.extest.microsoft.com/Microsoft Exchange Hosted Organizations/kyk.onmicrosoft.com/Configuration/ZZZ_MCP_UAT_8ec29217_Auto",
+        "IsValid": true,
+        "ExchangeVersion": "0.20 (15.0.0.0)",
+        "DirectoryObjectVersion": 0,
+        "Name": "ZZZ_MCP_UAT_8ec29217_Auto",
+        "DistinguishedName": "CN=ZZZ_MCP_UAT_8ec29217_Auto,CN=Configuration,CN=kyk.onmicrosoft.com,OU=Microsoft Exchange Hosted Organizations,DC=FFO,DC=extest,DC=microsoft,DC=com",
+        "ObjectCategory": null,
+        "ObjectClass": [
+          "msExchUnifiedPolicy"
+        ],
+        "WhenChanged": "2026-10-09T10:09:09+01:00",
+        "WhenCreated": "2026-10-09T10:09:09+01:00",
+        "WhenChangedUTC": "2026-10-09T09:09:09Z",
+        "WhenCreatedUTC": "2026-10-09T09:09:09Z",
+        "ExchangeObjectId": "55f7b818-95b4-4c49-af70-3351012a88b7",
+        "OrganizationalUnitRoot": "FFO.extest.microsoft.com/Microsoft Exchange Hosted Organizations/kyk.onmicrosoft.com",
+        "OrganizationId": "FFO.extest.microsoft.com/Microsoft Exchange Hosted Organizations/kyk.onmicrosoft.com - FFO.extest.microsoft.com/Microsoft Exchange Hosted Organizations/kyk.onmicrosoft.com/Configuration",
+        "Guid": "55f7b818-95b4-4c49-af70-3351012a88b7",
+        "OriginatingServer": "",
+        "ObjectState": "New",
+        "revision": "6cc5bd7d703dc1dc86c075d6b29eb23b47410a72a0c7d63df7ff721cc75308ee"
+      }
+    },
+    {
+      "name": "auto_label_revision_conflict",
+      "status": "passed",
+      "elapsed_ms": 1719,
+      "evidence": {
+        "blocked": true
+      }
+    },
+    {
+      "name": "auto_label_activation_without_simulation",
+      "status": "passed",
+      "elapsed_ms": 22735,
+      "evidence": {
+        "blocked": true,
+        "remains_disabled": true
+      }
+    },
+    {
+      "name": "resolve_credit_card_sit_guid",
+      "status": "failed",
+      "elapsed_ms": 9488,
+      "error": "The type 'System.Collections.Hashtable' is not supported for serialization or deserialization of a dictionary. Keys must be strings."
+    },
+    {
+      "name": "auto_label_policy_live_legacy_deletion_confirmation",
+      "status": "passed",
+      "elapsed_ms": 76915,
+      "evidence": {
+        "decline_preserved": true,
+        "cancel_preserved": true,
+        "accepted_removal_submitted": true,
+        "identity_source": "local harness; not a deployed caller identity"
+      }
+    }
+  ],
+  "cleanup": [
+    {
+      "name": "ZZZ_MCP_UAT_8ec29217_Auto",
+      "status": "pending_deletion"
+    }
+  ],
+  "limitations": [
+    "No deployed endpoint supplied; remote authentication and proxy behavior are not tested.",
+    "Auto-label activation is not tested without a dedicated synthetic content scope."
+  ],
+  "finished": "2026-10-09T09:11:18.416Z"
+}

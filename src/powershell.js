@@ -159,14 +159,19 @@ class PowerShellBridge {
       // stderr; they must never reach the MCP stdio channel on stdout.
       process.stderr.write(`[pwsh] ${d}`);
     });
-    this.proc.on("exit", () => {
-      this.proc = null;
-      this.connecting = null;
+    const child = this.proc;
+    child.on("exit", () => {
+      if (this.proc === child) {
+        this.proc = null;
+        this.connecting = null;
+      }
     });
     this.proc.on("error", (err) => {
       process.stderr.write(`[pwsh] failed to start '${exe}': ${err.message}\n`);
-      this.proc = null;
-      this.connecting = null;
+      if (this.proc === child) {
+        this.proc = null;
+        this.connecting = null;
+      }
     });
   }
 
@@ -208,6 +213,12 @@ class PowerShellBridge {
         fn(value);
       };
       const timer = setTimeout(() => {
+        // Detach synchronously: kill() can return before the old child exits.
+        // The next request must reconnect instead of using the dying session.
+        if (this.proc === proc) {
+          this.proc = null;
+          this.connecting = null;
+        }
         // Settle before killing: kill() triggers the 'exit' listener, which
         // must not win the race and mask the timeout message.
         settle(reject, bridgeError(
