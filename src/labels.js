@@ -1,7 +1,7 @@
-// Sensitivity-label tools, backed by Microsoft Graph (beta) Information
-// Protection endpoints, acting as the signed-in admin.
+// Sensitivity-label configuration, backed primarily by Security & Compliance
+// PowerShell. Graph remains only for per-user label policy settings.
 
-import { graphGet, graphGetAll, appOnly } from "./graph.js";
+import { graphGet, appOnly } from "./graph.js";
 import { powershell } from "./powershell.js";
 import { truncate, bulletFields, shortDate, asArray, formatWriteResult } from "./format.js";
 
@@ -9,26 +9,25 @@ import { truncate, bulletFields, shortDate, asArray, formatWriteResult } from ".
 // write tools (shared implementation lives in format.js).
 export { formatWriteResult };
 
-// App-only (certificate) tokens have no /me/, so label reads switch to the
-// tenant-wide informationProtection path in that mode.
+// App-only tokens have no /me/, so the Graph policy-settings read switches to
+// the tenant-wide informationProtection path in that mode.
 const BASE = appOnly ? "/security/informationProtection" : "/me/security/informationProtection";
 
-// Labels are a hybrid domain: reads go through Microsoft Graph (below), but
-// writes go through Security & Compliance PowerShell — Graph exposes no label
-// create/publish surface. Trimmed property sets keep write confirmations lean.
-const LABEL_WRITE_PROPS = ["Name", "DisplayName", "Guid", "ParentId", "Priority", "ContentType"];
+// Label configuration reads and writes share the PowerShell plane. Graph is
+// retained only for labelPolicySettings, which has no equivalent cmdlet.
+const LABEL_WRITE_PROPS = ["Name", "DisplayName", "Guid", "ParentId", "Priority", "ContentType", "IsLabelGroup"];
 const LABELPOLICY_WRITE_PROPS = ["Name", "Guid", "Labels", "Enabled", "Mode"];
 
-// Read-back property sets. Label-policy reads make the create/set/remove
-// write tools verifiable; label protection reads expose the settings that
-// New-/Set-Label write but the Graph label object does not carry.
+// Read-back property sets make create/set/remove operations verifiable while
+// keeping the PowerShell JSON payload bounded.
 const LABELPOLICY_READ_PROPS = [
   ...LABELPOLICY_WRITE_PROPS,
   "Type", "ExchangeLocation", "ModernGroupLocation", "Settings",
   "Comment", "WhenCreated", "WhenChangedUTC",
 ];
-const LABEL_PROTECTION_PROPS = [
-  "Name", "DisplayName", "Guid", "ContentType", "Tooltip", "Priority", "ParentId",
+const LABEL_READ_PROPS = [
+  "Name", "DisplayName", "Guid", "Identity", "ContentType", "Tooltip", "Comment",
+  "Priority", "ParentId", "IsLabelGroup", "IsActive", "Enabled", "Disabled", "Color", "LabelColor",
   "EncryptionEnabled", "EncryptionProtectionType", "EncryptionDoNotForward", "EncryptionEncryptOnly",
   "EncryptionOfflineAccessDays", "EncryptionRightsDefinitions",
   "ApplyContentMarkingHeaderEnabled", "ApplyContentMarkingHeaderText",
@@ -39,14 +38,67 @@ const LABEL_PROTECTION_PROPS = [
   "TeamsProtectionEnabled", "TeamsEndToEndEncryptionEnabled",
 ];
 
-// ---- data access (read: Graph) ---------------------------------------------
+// ---- data access -----------------------------------------------------------
 
-export async function listLabels() {
-  return graphGetAll(`${BASE}/sensitivityLabels`);
+function identityKey(value) {
+  return String(value ?? "").trim().toLowerCase();
 }
 
-export async function getLabel(labelId) {
-  return graphGet(`${BASE}/sensitivityLabels/${encodeURIComponent(labelId)}`);
+/** Normalise Get-Label output into a stable cross-plane public model. */
+export function normalizeLabel(raw, knownLabels = []) {
+  if (!raw) return undefined;
+  const id = raw.Guid ?? raw.Identity ?? raw.Name;
+  const sccName = raw.Name ?? raw.Identity;
+  const displayName = raw.DisplayName ?? sccName;
+  const parentId = raw.ParentId?.Guid ?? raw.ParentId?.Identity ?? raw.ParentId?.Name ?? raw.ParentId;
+  const parentRaw = parentId
+    ? knownLabels.find((candidate) =>
+        [candidate.Guid, candidate.Identity, candidate.Name]
+          .map(identityKey)
+          .includes(identityKey(parentId))
+      )
+    : undefined;
+  const isActive = typeof raw.IsActive === "boolean"
+    ? raw.IsActive
+    : typeof raw.Enabled === "boolean"
+      ? raw.Enabled
+      : typeof raw.Disabled === "boolean"
+        ? !raw.Disabled
+        : undefined;
+
+  return {
+    ...raw,
+    id,
+    scc_name: sccName,
+    display_name: displayName,
+    name: displayName,
+    priority: raw.Priority,
+    sensitivity: raw.Priority,
+    is_label_group: typeof raw.IsLabelGroup === "boolean" ? raw.IsLabelGroup : undefined,
+    isActive,
+    color: raw.Color ?? raw.LabelColor,
+    tooltip: raw.Tooltip,
+    description: raw.Comment ?? raw.Tooltip,
+    ...(parentId
+      ? {
+          parent: {
+            id: parentRaw?.Guid ?? parentId,
+            scc_name: parentRaw?.Name,
+            name: parentRaw?.DisplayName ?? parentRaw?.Name,
+          },
+        }
+      : {}),
+  };
+}
+
+export async function listLabels() {
+  const raw = asArray(await powershell.invoke("Get-Label", {}, LABEL_READ_PROPS));
+  return raw.map((label) => normalizeLabel(label, raw));
+}
+
+export async function getLabel(identity) {
+  const raw = asArray(await powershell.invoke("Get-Label", { Identity: identity }, LABEL_READ_PROPS))[0];
+  return normalizeLabel(raw);
 }
 
 export async function getLabelPolicySettings() {
@@ -64,7 +116,9 @@ export function filterLabels(labels, f = {}) {
     if (f.active != null && (l.isActive !== false) !== f.active) return false;
     if (f.parent) {
       const name = String(l.parent?.name ?? "").toLowerCase();
-      if (name !== f.parent.toLowerCase() && (l.parent?.id ?? "") !== f.parent) return false;
+      const sccName = String(l.parent?.scc_name ?? "").toLowerCase();
+      const wanted = f.parent.toLowerCase();
+      if (name !== wanted && sccName !== wanted && identityKey(l.parent?.id) !== wanted) return false;
     }
     return true;
   });
@@ -107,9 +161,9 @@ export async function getLabelPolicy(identity) {
   return asArray(await powershell.invoke("Get-LabelPolicy", { Identity: identity }, LABELPOLICY_READ_PROPS))[0];
 }
 
-/** Protection settings for one label — the fields the write tools set. */
+/** Backwards-compatible helper; the authoritative read includes protection. */
 export async function getLabelProtectionSettings(identity) {
-  return asArray(await powershell.invoke("Get-Label", { Identity: identity }, LABEL_PROTECTION_PROPS))[0];
+  return getLabel(identity);
 }
 
 /**
@@ -122,6 +176,7 @@ export function labelSettingsParams(args = {}) {
   if (args.display_name != null) p.DisplayName = args.display_name;
   if (args.tooltip != null) p.Tooltip = args.tooltip;
   if (args.comment != null) p.Comment = args.comment;
+  if (args.color != null) p.AdvancedSettings = { color: args.color };
 
   const e = args.encryption;
   if (e) {
@@ -190,10 +245,10 @@ export function labelSettingsParams(args = {}) {
 // ---- formatters ------------------------------------------------------------
 
 function labelLine(label) {
-  const active = label.isActive === false ? "inactive" : "active";
+  const active = label.isActive === false ? "inactive" : label.isActive === true ? "active" : "state?";
   const parent = label.parent?.name ? ` (parent: ${label.parent.name})` : "";
-  const sensitivity = label.sensitivity != null ? `s${label.sensitivity}` : "s?";
-  return `${label.id}  ${sensitivity}  ${active.padEnd(8)}  ${truncate(label.name, 40)}${parent}  — ${truncate(label.description, 60)}`;
+  const priority = label.priority != null ? `p${label.priority}` : "p?";
+  return `${label.id ?? "-"}  ${label.scc_name ?? "-"}  ${priority}  ${active}  ${label.display_name ?? label.name ?? "(unknown)"}${label.is_label_group === true ? " (label group)" : ""}${parent}  — ${truncate(label.description, 60)}`;
 }
 
 export function formatLabelList(labels) {
@@ -203,11 +258,15 @@ export function formatLabelList(labels) {
 }
 
 export function formatLabelDetail(label) {
+  if (!label) return "Sensitivity label not found.";
   const lines = [
-    `# ${label.name ?? label.id}`,
+    `# ${label.display_name ?? label.name ?? label.id}`,
     bulletFields(label, [
-      ["id", "ID"],
-      ["sensitivity", "Sensitivity (0 = least sensitive)"],
+      ["id", "GUID"],
+      ["scc_name", "SCC name"],
+      ["display_name", "Display name"],
+      ["priority", "Priority"],
+      ["is_label_group", "Label group"],
       ["isActive", "Active"],
       ["color", "Color"],
       ["tooltip", "Tooltip"],
@@ -217,6 +276,7 @@ export function formatLabelDetail(label) {
   if (label.parent?.name || label.parent?.id) {
     lines.push("", `**Parent label:** ${label.parent.name ?? label.parent.id}`);
   }
+  lines.push("", formatLabelProtectionSettings(label));
   return lines.filter(Boolean).join("\n");
 }
 
@@ -242,7 +302,7 @@ export function formatPolicySettings(settings) {
 function labelPolicyLine(p) {
   const labelCount = asArray(p.Labels).length;
   const state = p.Enabled === false ? "disabled" : (p.Mode ?? "enabled");
-  return `${truncate(p.Name, 44).padEnd(44)}  ${String(state).padEnd(12)}  ${labelCount} label(s)  ${shortDate(p.WhenCreated)}`;
+  return `${p.Guid ?? "-"}  ${p.Name ?? "(unknown)"}  ${state}  ${labelCount} label(s)  ${shortDate(p.WhenCreated)}`;
 }
 
 export function formatLabelPolicyList(policies) {
@@ -254,7 +314,10 @@ export function formatLabelPolicyDetail(p) {
   if (!p) return "Label policy not found.";
   const lines = [
     `# Label policy: ${p.Name}`,
-    bulletFields(p, [
+    bulletFields({ ...p,
+      ExchangeLocation: formatPolicyLocations(p.ExchangeLocation),
+      ModernGroupLocation: formatPolicyLocations(p.ModernGroupLocation),
+    }, [
       ["Guid", "GUID"],
       ["Enabled", "Enabled"],
       ["Mode", "Mode"],
@@ -270,6 +333,16 @@ export function formatLabelPolicyDetail(p) {
   const settings = asArray(p.Settings).filter(Boolean);
   if (settings.length) lines.push(`- **Settings:** ${settings.map((s) => truncate(String(s), 80)).join("; ")}`);
   return lines.filter(Boolean).join("\n");
+}
+
+function formatPolicyLocations(value) {
+  return asArray(value).filter((entry) => entry != null).map((entry) => {
+    if (typeof entry !== "object") return String(entry);
+    const scalar = (...keys) => keys.map((key) => entry[key]).find((v) => typeof v === "string" && v.trim());
+    const name = scalar("DisplayName", "Name", "displayName", "name");
+    const identity = scalar("PrimarySmtpAddress", "SmtpAddress", "EmailAddress", "Identity", "Guid", "Id", "primarySmtpAddress", "emailAddress", "identity", "id");
+    return name && identity && name !== identity ? `${name} (${identity})` : name ?? identity ?? "Unknown location (no name or identity returned)";
+  });
 }
 
 export function formatLabelProtectionSettings(label) {

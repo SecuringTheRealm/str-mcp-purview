@@ -4,11 +4,19 @@
     "FUNCTIONS_WORKER_RUNTIME": "node",
     "AzureWebJobsFeatureFlags": "EnableMcpCustomHandlerPreview",
 
-    "// auth": "Managed identity: the platform mints the token, so there is no certificate or password to store here. Assign the Function App's identity the application permissions (InformationProtectionPolicy.Read.All, Exchange.ManageAsApp) and the Compliance Administrator role. AZURE_CLIENT_ID is only needed for a USER-assigned identity.",
+    "// auth": "Managed identity configures Graph. Compliance token injection requires separate audience/consent/RBAC validation and a supported Windows runtime. SCC app-only docs specify Microsoft Exchange Online Protection > Exchange.ManageAsApp, not the Office 365 Exchange Online resource. AZURE_CLIENT_ID is only needed for a USER-assigned identity. This sample is not proof of full PowerShell support on Linux Functions.",
     "PURVIEW_AUTH_MODE": "managedidentity",
     "AZURE_CLIENT_ID": "<user-assigned-identity-client-id, omit if system-assigned>",
     "PURVIEW_ORGANIZATION": "<tenant>.onmicrosoft.com",
 
-    "// platform": "A Linux Functions host serves the Graph label tools only. Connect-IPPSSession is Windows-only, so the DLP tools fail fast here — see README 'Platform support'."
+    "MCP_ALLOWED_HOSTS": "<function-app>.azurewebsites.net",
+    "MCP_ALLOWED_ORIGINS": "https://<approved-client-host>",
+    "MCP_CURSOR_SECRET": "<store-in-Key-Vault-reference-in-Azure>",
+    "MCP_MAX_CONCURRENT_REQUESTS": "8",
+    "MCP_REQUEST_LOGGING": "true",
+    "PURVIEW_TOOL_MODE": "compact",
+    "PURVIEW_TOOL_LIMIT": "8",
+
+    "// platform": "Azure Functions and PowerShell-backed execution remain In UAT until the deployed authentication and all-tool matrix passes."
   }
 }

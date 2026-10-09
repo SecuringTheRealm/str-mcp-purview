@@ -1,0 +1,266 @@
+{
+  "roadmap-v1.sdk": {
+    "number": 20,
+    "id": 5535777965,
+    "node_id": "I_kwDOOY_Bas8AAAABSfVErQ",
+    "html_url": "https://github.com/SecuringTheRealm/str-mcp-purview/issues/20"
+  },
+  "roadmap-v1.release": {
+    "number": 22,
+    "id": 5760236698,
+    "node_id": "I_kwDOOY_Bas8AAAABV1Y8mg",
+    "html_url": "https://github.com/SecuringTheRealm/str-mcp-purview/issues/22"
+  },
+  "roadmap-v1.http": {
+    "number": 23,
+    "id": 5760237643,
+    "node_id": "I_kwDOOY_Bas8AAAABV1ZASw",
+    "html_url": "https://github.com/SecuringTheRealm/str-mcp-purview/issues/23"
+  },
+  "roadmap-v1.deletion": {
+    "number": 24,
+    "id": 5760237823,
+    "node_id": "I_kwDOOY_Bas8AAAABV1ZA_w",
+    "html_url": "https://github.com/SecuringTheRealm/str-mcp-purview/issues/24"
+  },
+  "roadmap-v1.autouat": {
+    "number": 25,
+    "id": 5760238106,
+    "node_id": "I_kwDOOY_Bas8AAAABV1ZCGg",
+    "html_url": "https://github.com/SecuringTheRealm/str-mcp-purview/issues/25"
+  },
+  "roadmap-v1.autoscale": {
+    "number": 26,
+    "id": 5760238387,
+    "node_id": "I_kwDOOY_Bas8AAAABV1ZDMw",
+    "html_url": "https://github.com/SecuringTheRealm/str-mcp-purview/issues/26"
+  },
+  "roadmap-v1.protection": {
+    "number": 27,
+    "id": 5760238900,
+    "node_id": "I_kwDOOY_Bas8AAAABV1ZFNA",
+    "html_url": "https://github.com/SecuringTheRealm/str-mcp-purview/issues/27"
+  },
+  "roadmap-v1.autoadv": {
+    "number": 28,
+    "id": 5760239074,
+    "node_id": "I_kwDOOY_Bas8AAAABV1ZF4g",
+    "html_url": "https://github.com/SecuringTheRealm/str-mcp-purview/issues/28"
+  },
+  "roadmap-v1.automap": {
+    "number": 29,
+    "id": 5760239310,
+    "node_id": "I_kwDOOY_Bas8AAAABV1ZGzg",
+    "html_url": "https://github.com/SecuringTheRealm/str-mcp-purview/issues/29"
+  },
+  "roadmap-v1.conditions": {
+    "number": 30,
+    "id": 5760239500,
+    "node_id": "I_kwDOOY_Bas8AAAABV1ZHjA",
+    "html_url": "https://github.com/SecuringTheRealm/str-mcp-purview/issues/30"
+  },
+  "roadmap-v1.conditionsmap": {
+    "number": 31,
+    "id": 5760239693,
+    "node_id": "I_kwDOOY_Bas8AAAABV1ZITQ",
+    "html_url": "https://github.com/SecuringTheRealm/str-mcp-purview/issues/31"
+  },
+  "roadmap-v1.actions": {
+    "number": 32,
+    "id": 5760239909,
+    "node_id": "I_kwDOOY_Bas8AAAABV1ZJJQ",
+    "html_url": "https://github.com/SecuringTheRealm/str-mcp-purview/issues/32"
+  },
+  "roadmap-v1.incident": {
+    "number": 33,
+    "id": 5760240076,
+    "node_id": "I_kwDOOY_Bas8AAAABV1ZJzA",
+    "html_url": "https://github.com/SecuringTheRealm/str-mcp-purview/issues/33"
+  },
+  "roadmap-v1.remediation": {
+    "number": 34,
+    "id": 5760240326,
+    "node_id": "I_kwDOOY_Bas8AAAABV1ZKxg",
+    "html_url": "https://github.com/SecuringTheRealm/str-mcp-purview/issues/34"
+  },
+  "roadmap-v1.scopes": {
+    "number": 35,
+    "id": 5760240617,
+    "node_id": "I_kwDOOY_Bas8AAAABV1ZL6Q",
+    "html_url": "https://github.com/SecuringTheRealm/str-mcp-purview/issues/35"
+  },
+  "roadmap-v1.scopesmap": {
+    "number": 36,
+    "id": 5760240877,
+    "node_id": "I_kwDOOY_Bas8AAAABV1ZM7Q",
+    "html_url": "https://github.com/SecuringTheRealm/str-mcp-purview/issues/36"
+  },
+  "roadmap-v1.ordering": {
+    "number": 37,
+    "id": 5760241083,
+    "node_id": "I_kwDOOY_Bas8AAAABV1ZNuw",
+    "html_url": "https://github.com/SecuringTheRealm/str-mcp-purview/issues/37"
+  },
+  "roadmap-v1.classification": {
+    "number": 38,
+    "id": 5760241279,
+    "node_id": "I_kwDOOY_Bas8AAAABV1ZOfw",
+    "html_url": "https://github.com/SecuringTheRealm/str-mcp-purview/issues/38"
+  },
+  "roadmap-v1.dictionary": {
+    "number": 39,
+    "id": 5760241490,
+    "node_id": "I_kwDOOY_Bas8AAAABV1ZPUg",
+    "html_url": "https://github.com/SecuringTheRealm/str-mcp-purview/issues/39"
+  },
+  "roadmap-v1.dictionarymap": {
+    "number": 40,
+    "id": 5760241689,
+    "node_id": "I_kwDOOY_Bas8AAAABV1ZQGQ",
+    "html_url": "https://github.com/SecuringTheRealm/str-mcp-purview/issues/40"
+  },
+  "roadmap-v1.sit": {
+    "number": 41,
+    "id": 5760241995,
+    "node_id": "I_kwDOOY_Bas8AAAABV1ZRSw",
+    "html_url": "https://github.com/SecuringTheRealm/str-mcp-purview/issues/41"
+  },
+  "roadmap-v1.sitread": {
+    "number": 42,
+    "id": 5760242435,
+    "node_id": "I_kwDOOY_Bas8AAAABV1ZTAw",
+    "html_url": "https://github.com/SecuringTheRealm/str-mcp-purview/issues/42"
+  },
+  "roadmap-v1.sitwrite": {
+    "number": 43,
+    "id": 5760242629,
+    "node_id": "I_kwDOOY_Bas8AAAABV1ZTxQ",
+    "html_url": "https://github.com/SecuringTheRealm/str-mcp-purview/issues/43"
+  },
+  "roadmap-v1.edm": {
+    "number": 44,
+    "id": 5760243063,
+    "node_id": "I_kwDOOY_Bas8AAAABV1ZVdw",
+    "html_url": "https://github.com/SecuringTheRealm/str-mcp-purview/issues/44"
+  },
+  "roadmap-v1.edmmap": {
+    "number": 45,
+    "id": 5760243257,
+    "node_id": "I_kwDOOY_Bas8AAAABV1ZWOQ",
+    "html_url": "https://github.com/SecuringTheRealm/str-mcp-purview/issues/45"
+  },
+  "roadmap-v1.visibility": {
+    "number": 46,
+    "id": 5760243486,
+    "node_id": "I_kwDOOY_Bas8AAAABV1ZXHg",
+    "html_url": "https://github.com/SecuringTheRealm/str-mcp-purview/issues/46"
+  },
+  "roadmap-v1.reports": {
+    "number": 47,
+    "id": 5760243686,
+    "node_id": "I_kwDOOY_Bas8AAAABV1ZX5g",
+    "html_url": "https://github.com/SecuringTheRealm/str-mcp-purview/issues/47"
+  },
+  "roadmap-v1.ai": {
+    "number": 48,
+    "id": 5760243892,
+    "node_id": "I_kwDOOY_Bas8AAAABV1ZYtA",
+    "html_url": "https://github.com/SecuringTheRealm/str-mcp-purview/issues/48"
+  },
+  "roadmap-v1.aiapp": {
+    "number": 49,
+    "id": 5760244074,
+    "node_id": "I_kwDOOY_Bas8AAAABV1ZZag",
+    "html_url": "https://github.com/SecuringTheRealm/str-mcp-purview/issues/49"
+  },
+  "roadmap-v1.aiappmap": {
+    "number": 50,
+    "id": 5760244323,
+    "node_id": "I_kwDOOY_Bas8AAAABV1ZaYw",
+    "html_url": "https://github.com/SecuringTheRealm/str-mcp-purview/issues/50"
+  },
+  "roadmap-v1.capture": {
+    "number": 51,
+    "id": 5760244537,
+    "node_id": "I_kwDOOY_Bas8AAAABV1ZbOQ",
+    "html_url": "https://github.com/SecuringTheRealm/str-mcp-purview/issues/51"
+  },
+  "roadmap-v1.capturemap": {
+    "number": 52,
+    "id": 5760244716,
+    "node_id": "I_kwDOOY_Bas8AAAABV1Zb7A",
+    "html_url": "https://github.com/SecuringTheRealm/str-mcp-purview/issues/52"
+  },
+  "roadmap-v1.retention": {
+    "number": 53,
+    "id": 5760244998,
+    "node_id": "I_kwDOOY_Bas8AAAABV1ZdBg",
+    "html_url": "https://github.com/SecuringTheRealm/str-mcp-purview/issues/53"
+  },
+  "roadmap-v1.retentionstory": {
+    "number": 54,
+    "id": 5760245307,
+    "node_id": "I_kwDOOY_Bas8AAAABV1ZeOw",
+    "html_url": "https://github.com/SecuringTheRealm/str-mcp-purview/issues/54"
+  },
+  "roadmap-v1.retentionread": {
+    "number": 55,
+    "id": 5760245499,
+    "node_id": "I_kwDOOY_Bas8AAAABV1Ze-w",
+    "html_url": "https://github.com/SecuringTheRealm/str-mcp-purview/issues/55"
+  },
+  "roadmap-v1.retentionwrite": {
+    "number": 56,
+    "id": 5760245690,
+    "node_id": "I_kwDOOY_Bas8AAAABV1Zfug",
+    "html_url": "https://github.com/SecuringTheRealm/str-mcp-purview/issues/56"
+  },
+  "roadmap-v1.discovery": {
+    "number": 57,
+    "id": 5760245922,
+    "node_id": "I_kwDOOY_Bas8AAAABV1Zgog",
+    "html_url": "https://github.com/SecuringTheRealm/str-mcp-purview/issues/57"
+  },
+  "roadmap-v1.endpointsettings": {
+    "number": 58,
+    "id": 5760246215,
+    "node_id": "I_kwDOOY_Bas8AAAABV1Zhxw",
+    "html_url": "https://github.com/SecuringTheRealm/str-mcp-purview/issues/58"
+  },
+  "roadmap-v1.classifiers": {
+    "number": 59,
+    "id": 5760246431,
+    "node_id": "I_kwDOOY_Bas8AAAABV1Zinw",
+    "html_url": "https://github.com/SecuringTheRealm/str-mcp-purview/issues/59"
+  },
+  "roadmap-v1.network": {
+    "number": 60,
+    "id": 5760246707,
+    "node_id": "I_kwDOOY_Bas8AAAABV1Zjsw",
+    "html_url": "https://github.com/SecuringTheRealm/str-mcp-purview/issues/60"
+  },
+  "roadmap-v1.newplanes": {
+    "number": 61,
+    "id": 5760247166,
+    "node_id": "I_kwDOOY_Bas8AAAABV1Zlfg",
+    "html_url": "https://github.com/SecuringTheRealm/str-mcp-purview/issues/61"
+  },
+  "roadmap-v1.licensing": {
+    "number": 62,
+    "id": 5760247348,
+    "node_id": "I_kwDOOY_Bas8AAAABV1ZmNA",
+    "html_url": "https://github.com/SecuringTheRealm/str-mcp-purview/issues/62"
+  },
+  "roadmap-v1.audit": {
+    "number": 63,
+    "id": 5760247577,
+    "node_id": "I_kwDOOY_Bas8AAAABV1ZnGQ",
+    "html_url": "https://github.com/SecuringTheRealm/str-mcp-purview/issues/63"
+  },
+  "roadmap-v1.elicitation": {
+    "number": 64,
+    "id": 5760247851,
+    "node_id": "I_kwDOOY_Bas8AAAABV1ZoKw",
+    "html_url": "https://github.com/SecuringTheRealm/str-mcp-purview/issues/64"
+  }
+}

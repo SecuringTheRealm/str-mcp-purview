@@ -1,0 +1,15 @@
+{
+  "run": "ZZZ_MCP_REPLICATION_83e5ad52",
+  "started": "2026-10-07T13:34:26.993Z",
+  "checks": [
+    {
+      "name": "authenticated_read",
+      "status": "error",
+      "elapsed_ms": 2303658,
+      "error": "device_code_expired: See https://aka.ms/msal.js.errors#device_code_expired for details"
+    }
+  ],
+  "cleanup": [],
+  "error": "Purview authentication/read access was not established; no test objects created.",
+  "finished": "2026-10-07T14:12:50.653Z"
+}
