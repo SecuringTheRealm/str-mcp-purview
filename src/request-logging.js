@@ -1,4 +1,5 @@
 import { performance } from "node:perf_hooks";
+import { envFlag } from "./util.js";
 
 const MAX_FIELD_LENGTH = 256;
 
@@ -15,7 +16,7 @@ function safeField(value) {
 export function createRequestLogger({
   transport = "unknown",
   era = "unknown",
-  enabled = process.env.MCP_REQUEST_LOGGING !== "false",
+  enabled = envFlag("MCP_REQUEST_LOGGING", true),
   sink = (line) => console.error(line),
   clock = () => performance.now(),
   timestamp = () => new Date().toISOString(),

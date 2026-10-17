@@ -14,8 +14,6 @@ export function truncate(value, max = 100) {
   return s.length > max ? s.slice(0, max - 3) + "..." : s;
 }
 
-/** Case- and whitespace-insensitive form of an identity, for comparisons. */
-
 /** Format an ISO date-time down to just the date portion. */
 export function shortDate(value) {
   if (!value) return "-";

@@ -37,6 +37,7 @@ export function createListPaginator({
   cursorTtlMs = DEFAULT_CURSOR_TTL_MS,
   now = Date.now,
 } = {}) {
+  if (secret.length < 32) throw new Error("MCP_CURSOR_SECRET must be at least 32 characters.");
   function signature(encoded) {
     return createHmac("sha256", secret).update(encoded).digest("base64url");
   }

@@ -6,7 +6,7 @@ const csv = (value) => value === undefined ? undefined : value.split(",").map((s
 export function policyFromEnvironment(env = process.env) {
   return {
     allowedIds: csv(env.PURVIEW_ALLOWED_CAPABILITIES),
-    domains: csv(env.PURVIEW_ALLOWED_DOMAINS),
+    domains: csv(env.PURVIEW_ALLOWED_DOMAINS?.toLowerCase()),
     readOnly: envFlag("PURVIEW_READ_ONLY", false, env),
     allowDestructive: envFlag("PURVIEW_ALLOW_DESTRUCTIVE", true, env),
     permissions: csv(env.PURVIEW_PERMISSIONS),

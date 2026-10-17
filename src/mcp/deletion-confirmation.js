@@ -12,34 +12,34 @@ const TTL_MS = 5 * 60_000;
 
 const fail = (message) => { throw new CapabilityError("CONFIRMATION_REQUIRED", message); };
 
+// Per delete capability: how to read the target (and its rules, if deleting it
+// takes them too) and what the confirmation form says will happen.
+const TARGETS = {
+  remove_sensitivity_label: { read: (id) => labels.getLabel(id), consequence: () => "Deletes this sensitivity label; review dependent publishing policies first." },
+  remove_label_policy: { read: (id) => labels.getLabelPolicy(id), consequence: () => "Unpublishes this policy's labels from its users." },
+  remove_dlp_policy: {
+    read: (id) => dlp.getPolicy(id), rules: (guid) => dlp.listRules(guid, { detail: true }),
+    consequence: (rules) => `Deletes this DLP policy and its ${rules.length} rule(s).`,
+  },
+  remove_dlp_rule: { read: (id) => dlp.getRule(id), consequence: () => "Deletes this DLP rule and removes the protection it provides." },
+  remove_auto_label_policy: {
+    read: (id) => autoLabels.getPolicy(id), rules: (guid) => autoLabels.listRules(guid),
+    consequence: (rules) => `Deletes this auto-label policy with ${rules.length} associated rule(s). Labels already applied to content are not reversed.`,
+  },
+  remove_auto_label_rule: { read: (id) => autoLabels.getRule(id), consequence: () => "Deletes this automatic labeling rule. Labels already applied to content are not reversed." },
+};
+
 async function resolveTarget(capability, args) {
-  let object, rules;
-  switch (capability.id) {
-    case "remove_sensitivity_label": object = await labels.getLabel(args.identity); break;
-    case "remove_label_policy": object = await labels.getLabelPolicy(args.identity); break;
-    case "remove_dlp_policy":
-      object = await dlp.getPolicy(args.identity);
-      if (object?.Guid) rules = await dlp.listRules(object.Guid, { detail: true });
-      break;
-    case "remove_dlp_rule": object = await dlp.getRule(args.identity); break;
-    case "remove_auto_label_policy":
-      object = await autoLabels.getPolicy(args.identity);
-      rules = await autoLabels.listRules(object.Guid);
-      break;
-    case "remove_auto_label_rule": object = await autoLabels.getRule(args.identity); break;
-    default: fail("No deletion review resolver is registered for this capability.");
-  }
+  const target = TARGETS[capability.id];
+  if (!target) fail("No deletion review resolver is registered for this capability.");
+  const object = await target.read(args.identity);
   if (typeof object?.Guid !== "string" || !object.Guid.trim()) fail("Cannot resolve a stable GUID for the deletion target. Nothing was deleted.");
+  const rules = target.rules ? await target.rules(object.Guid) : undefined;
   return {
     identity: object.Guid,
     name: object.DisplayName ?? object.Name ?? object.Guid,
     fingerprint: digest({ object, rules }),
-    consequence: capability.id === "remove_auto_label_policy" ? `Deletes this auto-label policy with ${rules.length} associated rule(s). Labels already applied to content are not reversed.`
-      : capability.id === "remove_auto_label_rule" ? "Deletes this automatic labeling rule. Labels already applied to content are not reversed."
-      : capability.id === "remove_dlp_policy" ? `Deletes this DLP policy and its ${rules.length} rule(s).`
-      : capability.id === "remove_label_policy" ? "Unpublishes this policy's labels from its users."
-        : capability.id === "remove_sensitivity_label" ? "Deletes this sensitivity label; review dependent publishing policies first."
-          : "Deletes this DLP rule and removes the protection it provides.",
+    consequence: target.consequence(rules),
   };
 }
 
@@ -49,16 +49,19 @@ export function createDeletionConfirmation({
   resolve = resolveTarget, store = pending, now = Date.now,
 } = {}) {
   return async (capability, args, context) => {
+    // Caller identity first: over HTTP it is the usual reason, and the fix is server-side.
+    if (typeof principal !== "string" || !principal || typeof client !== "string" || !client) {
+      fail("Deletion requires a trusted caller and client identity; over HTTP, set MCP_TRUST_EASY_AUTH behind App Service Authentication. Nothing was deleted.");
+    }
     const elicitation = context?.clientCapabilities?.elicitation;
     if (!elicitation || (elicitation.form === undefined && Object.keys(elicitation).length !== 0)) {
-      fail("Deletion requires a client with form elicitation support. Nothing was deleted.");
+      fail("Deletion requires a client with form elicitation support (MCP 2026-07-28 over HTTP). Nothing was deleted.");
     }
-    if (typeof principal !== "string" || !principal || typeof client !== "string" || !client || !tenant) {
-      fail("Deletion requires trusted caller and client identities and a configured tenant. Nothing was deleted.");
-    }
+    if (!tenant) fail("Deletion requires AZURE_TENANT_ID or PURVIEW_ORGANIZATION, so the form can name the tenant. Nothing was deleted.");
     if (context.mcpReq?.signal?.aborted) fail("Deletion was cancelled. Nothing was deleted.");
     const binding = digest({ principal, client, tenant, capability: capability.id, args });
-    const modern = context.mcpReq?.envelope?.["io.modelcontextprotocol/protocolVersion"] === "2026-07-28";
+    // Any per-request envelope means the modern (2026-07-28 or later) era with MRTR.
+    const modern = Boolean(context.mcpReq?.envelope?.["io.modelcontextprotocol/protocolVersion"]);
     const form = (target) => ({
       mode: "form",
       message: `Permanently delete ${JSON.stringify(target.name)} (${target.identity}) in tenant ${tenant}? ${target.consequence} This changes tenant configuration.`,

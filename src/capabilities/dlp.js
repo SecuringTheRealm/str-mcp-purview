@@ -16,6 +16,12 @@ async function validateRulePolicy(args, updating = false) {
   assertExchangeOnly(await dlp.getPolicy(policyId));
 }
 
+async function createRule(label, args) {
+  assertEndpointNotify(args);
+  const params = { Name: args.name, Policy: args.policy, ...dlp.ruleWriteParams(args) };
+  return text(formatWriteResult(label, await dlp.createRule(params)));
+}
+
 export const handlers = {
   list_dlp_policies: async (args) => {
     const name = "list_dlp_policies";
@@ -91,8 +97,7 @@ export const handlers = {
   },
   create_dlp_rule: async (args) => {
     await validateRulePolicy(args);
-    const params = { Name: args.name, Policy: args.policy, ...dlp.ruleWriteParams(args) };
-    return text(formatWriteResult("Create DLP rule", await dlp.createRule(params)));
+    return createRule("Create DLP rule", args);
   },
   set_dlp_rule: async (args) => {
     assertEndpointNotify(args);
@@ -123,11 +128,7 @@ export const handlers = {
     assertLocationExceptions(params);
     return text(formatWriteResult("Create endpoint DLP policy", await dlp.createPolicy(params)));
   },
-  create_endpoint_dlp_rule: async (args) => {
-    assertEndpointNotify(args);
-    const params = { Name: args.name, Policy: args.policy, ...dlp.ruleWriteParams(args) };
-    return text(formatWriteResult("Create endpoint DLP rule", await dlp.createRule(params)));
-  },
+  create_endpoint_dlp_rule: (args) => createRule("Create endpoint DLP rule", args),
   create_copilot_dlp_policy: async (args) => {
     const params = {
       Name: args.name,

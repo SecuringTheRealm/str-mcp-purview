@@ -9,8 +9,8 @@ export function errorResult(error) {
   const detail = {
     code: error instanceof CapabilityError ? error.code : "INTERNAL_ERROR",
     message: error.message,
-    // Never automatically retry a mutation after an uncertain backend outcome.
-    retryable: false,
+    // Only a request refused before anything was sent is safe to repeat as is.
+    retryable: error.code === "BUSY",
   };
   return { isError: true, content: [{ type: "text", text: `Error: ${detail.message}` }], structuredContent: { error: detail } };
 }

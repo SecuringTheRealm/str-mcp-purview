@@ -15,8 +15,11 @@ FROM mcr.microsoft.com/azure-functions/node:4-node20
 
 # PowerShell 7 from the release tarball (distro-agnostic; pin the version).
 ARG PWSH_VERSION=7.5.12
+# SHA-256 of powershell-${PWSH_VERSION}-linux-x64.tar.gz; update it with the version.
+ARG PWSH_SHA256=db85ae1f45005ffd20e456890585167257151fa99406ccd7ab344f7cf3a766fd
 RUN apt-get update && apt-get install -y --no-install-recommends wget ca-certificates libicu-dev \
     && wget -qO /tmp/pwsh.tar.gz "https://github.com/PowerShell/PowerShell/releases/download/v${PWSH_VERSION}/powershell-${PWSH_VERSION}-linux-x64.tar.gz" \
+    && echo "${PWSH_SHA256}  /tmp/pwsh.tar.gz" | sha256sum -c - \
     && mkdir -p /opt/microsoft/powershell/7 \
     && tar zxf /tmp/pwsh.tar.gz -C /opt/microsoft/powershell/7 \
     && chmod +x /opt/microsoft/powershell/7/pwsh \

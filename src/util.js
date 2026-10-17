@@ -43,6 +43,15 @@ export function envFlag(name, fallback, env = process.env) {
   return value === null ? fallback : ["true", "1", "yes"].includes(value);
 }
 
+/** A positive integer setting, or `fallback` when unset; anything else throws. */
+export function envInt(name, fallback, env = process.env) {
+  const raw = String(env[name] ?? "").trim();
+  if (!raw) return fallback;
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value) || value < 1) throw new Error(`${name} must be a positive integer (got "${env[name]}").`);
+  return value;
+}
+
 // Security & Compliance PowerShell settings, shared by the bridge and get_auth_status.
 /** Whether Connect-IPPSSession can run here (Windows, unless overridden). */
 export const platformSupported = (env = process.env) => process.platform === "win32" || env.PURVIEW_ALLOW_UNSUPPORTED_OS === "1";
@@ -50,5 +59,5 @@ export const platformSupported = (env = process.env) => process.platform === "wi
 /** How the bridge connects: certificate app-only when all three settings are present, else token injection or interactive. */
 export function dlpAuthMode(env = process.env) {
   if (env.PURVIEW_APP_ID && env.PURVIEW_ORGANIZATION && env.PURVIEW_CERT_THUMBPRINT) return "certificate";
-  return (env.PURVIEW_DLP_AUTH_MODE || "token").toLowerCase() === "interactive" ? "interactive" : "token";
+  return envChoice("PURVIEW_DLP_AUTH_MODE", ["token", "interactive"], "token", env);
 }

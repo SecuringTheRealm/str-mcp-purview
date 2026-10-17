@@ -1,9 +1,8 @@
 import { capabilities } from "../capabilities/registry.js";
-import { filterCapabilities } from "../retrieval/filters.js";
+import { filterCapabilities, permitted } from "../retrieval/filters.js";
 import { rankCapabilities } from "../retrieval/bm25.js";
 import { executeCapability, validateArguments } from "../dispatch/execute.js";
 import { indexCapabilities } from "../capabilities/contract.js";
-import { permitted } from "../retrieval/filters.js";
 import { CapabilityError } from "../dispatch/errors.js";
 
 const object = (properties, required = []) => ({ type: "object", properties, required, additionalProperties: false });
@@ -121,7 +120,6 @@ export function createProjection({ mode = toolMode(), policy = {}, limit = searc
       });
       for (const [name, domain, action, description] of projectedGroups) {
         const entries = visible.filter((c) => c.domain === domain && c.action === action);
-        if (!entries.length) continue;
         const ids = new Set(entries.map((c) => c.id));
         register({ name, description: description + " Use purview_describe_capability for argument schemas.",
           annotations: action === "read" ? { ...READ, idempotentHint: entries.every((c) => c.idempotent), openWorldHint: entries.some((c) => c.openWorld) } : WRITE,
@@ -142,7 +140,7 @@ export function createProjection({ mode = toolMode(), policy = {}, limit = searc
       validateArguments(entry.tool.inputSchema, input, name);
       return entry.call(input, context);
     },
-    instructions: mode === "full" ? "Use list filters and pagination, then fetch individual details. Deletion requires user confirmation through form elicitation; confirm:true alone does not authorize deletion. Do not automatically retry errors, especially writes with uncertain outcomes."
-      : `Use ${mode === "compact" ? "purview_search" : "purview_search_capabilities"} to find candidate operations, then purview_describe_capability for the selected input_schema, constraints and examples. Search include_schemas:true is an optional shortcut. Follow the returned invocation mapping. Capability names mentioned in prompts are internal operation IDs. Keep filters unchanged when following next_cursor; pass cursor and limit inside arguments. Only execute writes the user requested; deletion requires user confirmation through form elicitation. Discovery is not authorization; execution rechecks policy. Do not automatically retry errors, especially writes with uncertain outcomes.`,
+    instructions: mode === "full" ? "Use list filters and pagination, then fetch individual details. Deletion requires user confirmation through form elicitation; confirm:true alone does not authorize deletion. Only retry an error marked retryable (BUSY: nothing was sent); never retry OUTCOME_UNCERTAIN without reading the object first."
+      : `Use ${mode === "compact" ? "purview_search" : "purview_search_capabilities"} to find candidate operations, then purview_describe_capability for the selected input_schema, constraints and examples. Search include_schemas:true is an optional shortcut. Follow the returned invocation mapping. Capability names mentioned in prompts are internal operation IDs. Keep filters unchanged when following next_cursor; pass cursor and limit inside arguments. Only execute writes the user requested; deletion requires user confirmation through form elicitation. Discovery is not authorization; execution rechecks policy. Only retry an error marked retryable (BUSY: nothing was sent); never retry OUTCOME_UNCERTAIN without reading the object first.`,
   };
 }

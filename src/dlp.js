@@ -180,7 +180,6 @@ export function createPolicyLocationExceptionParams(exceptions = {}) {
   for (const [key, psName] of Object.entries(POLICY_EXCEPTION_PARAMS)) {
     if (exceptions[key]?.length) params[psName] = exceptions[key];
   }
-  if (exceptions.onedrive?.length) params.ExceptIfOneDriveSharedBy = exceptions.onedrive;
   return params;
 }
 

@@ -158,3 +158,36 @@ test("write handlers never overlap, so read-modify-write updates cannot interlea
   await Promise.all([1, 2, 3].map(() => executeCapability(slow.id, { identity: "sandbox" }, {}, index)));
   assert.equal(peak, 1);
 });
+
+test("bridge failures map to retry-safe or uncertain codes", async () => {
+  const base = syntheticCatalogue(1).entries.find((c) => c.action === "write" && !c.deletes);
+  const failWith = (flags) => defineCapability({ ...base, handler: async () => { throw Object.assign(new Error("x"), flags); } });
+  const code = async (cap) => errorResult(await executeCapability(cap.id, { identity: "s" }, {}, indexCapabilities([cap])).catch((e) => e)).structuredContent.error;
+  assert.deepEqual(await code(failWith({ busy: true })), { code: "BUSY", message: "x", retryable: true });
+  assert.deepEqual(await code(failWith({ uncertain: true })), { code: "OUTCOME_UNCERTAIN", message: "x", retryable: false });
+});
+
+test("waiting writes are bounded, and a cancelled one never starts", async () => {
+  const base = syntheticCatalogue(1).entries.find((c) => c.action === "write" && !c.deletes);
+  let ran = 0;
+  const slow = defineCapability({ ...base, handler: async () => { ran++; await new Promise((r) => setTimeout(r, 20)); return { content: [] }; } });
+  const index = indexCapabilities([slow]);
+  const run = (signal) => executeCapability(slow.id, { identity: "s" }, {}, index, undefined, { context: { mcpReq: { signal } } });
+  process.env.PURVIEW_MAX_QUEUED_COMMANDS = "1";
+  try {
+    const accepted = [run(), run()]; // one about to start plus one waiting
+    await assert.rejects(run(), { code: "BUSY" });
+    await Promise.all(accepted);
+  } finally {
+    delete process.env.PURVIEW_MAX_QUEUED_COMMANDS;
+  }
+  ran = 0;
+  const controller = new AbortController();
+  const first = run();
+  const cancelled = run(controller.signal);
+  controller.abort();
+  await first;
+  await assert.rejects(cancelled, { code: "CANCELLED" });
+  assert.equal(ran, 1);
+});
+

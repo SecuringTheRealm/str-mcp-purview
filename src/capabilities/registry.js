@@ -3,9 +3,8 @@ import { handlers as labels } from "./labels.js";
 import { handlers as dlp } from "./dlp.js";
 import { handlers as autoLabels } from "./auto-labels.js";
 import { authStatus } from "./auth.js";
-import { defineCapability, validateRegistry, indexCapabilities } from "./contract.js";
+import { defineCapability, indexCapabilities } from "./contract.js";
 import { examples } from "./examples.js";
-export { validateRegistry } from "./contract.js";
 
 const authTool = {
   name: "get_auth_status",
@@ -31,7 +30,7 @@ const metadata = {
 };
 
 // Existing names are stable capability IDs, preserving scripts and saved cursors.
-export const capabilities = validateRegistry([...TOOLS, authTool].map((tool) => {
+export const capabilities = [...TOOLS, authTool].map((tool) => {
   const domain = tool.name === "get_auth_status" ? "auth"
     : tool.name.includes("sensitive_information") ? "classification"
       : tool.name.includes("dlp") ? "dlp" : "labels";
@@ -49,21 +48,15 @@ export const capabilities = validateRegistry([...TOOLS, authTool].map((tool) => 
     openWorld: tool.annotations.openWorldHint,
     risk: action === "read" ? "read-only" : tool.annotations.destructiveHint ? "destructive" : "non-destructive",
     destructive: tool.annotations.destructiveHint,
-    nouns: tool.name.split("_").slice(1),
     keywords: [...vocabulary[domain], ...tool.name.split("_"), verb === "list" ? "find enumerate catalog" : verb === "get" ? "show inspect configuration details" : verb === "set" ? "update modify tune" : verb],
     description: tool.description.split(". ")[0].slice(0, 300),
-    aliases: [],
-    permissions: [],
-    scopeAlternatives: [],
-    features: [],
     inputSchema: tool.inputSchema,
     outputSchema: tool.outputSchema,
-    annotations: tool.annotations,
     ...metadata[tool.name],
     handler: handlers[tool.name],
   });
   // Preserve detailed legacy descriptions and annotations on the full surface.
   return { ...capability, tool };
-}));
+});
 
 export const capabilityById = indexCapabilities(capabilities);

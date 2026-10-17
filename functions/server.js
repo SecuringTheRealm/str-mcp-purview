@@ -21,8 +21,11 @@ import { envFlag } from "../src/util.js";
 const PORT = Number(process.env.PORT || process.env.FUNCTIONS_CUSTOMHANDLER_PORT || 3000);
 const HOST = process.env.MCP_HTTP_HOST || (process.env.FUNCTIONS_CUSTOMHANDLER_PORT ? "0.0.0.0" : "127.0.0.1");
 const MAX_BODY_BYTES = 4 * 1024 * 1024;
-// Bound the PowerShell queue so a request fails fast instead of outliving the front door.
+// Keep a request inside the Functions front door's ~230 s limit: bound the
+// PowerShell queue and the hosted (app-only, no human) sign-in and connect.
 process.env.PURVIEW_MAX_QUEUED_COMMANDS ||= "3";
+process.env.PURVIEW_SIGNIN_TIMEOUT_MS ||= "60000";
+process.env.PURVIEW_CONNECT_TIMEOUT_MS ||= "90000";
 if (process.env.FUNCTIONS_CUSTOMHANDLER_PORT && !process.env.MCP_CURSOR_SECRET) {
   throw new Error("MCP_CURSOR_SECRET is required on Azure Functions so pagination cursors work across scaled instances.");
 }

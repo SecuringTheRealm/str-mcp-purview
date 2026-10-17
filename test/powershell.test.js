@@ -322,6 +322,20 @@ test("PowerShellBridge.invoke", async (t) => {
       await Promise.all(held);
     }));
 
+  await t.test("callers waiting on a slow sign-in count towards the queue limit", () =>
+    withEnv({ PURVIEW_MAX_QUEUED_COMMANDS: "1", PURVIEW_SIGNIN_TIMEOUT_MS: "60", PURVIEW_CONNECT_TIMEOUT_MS: "60" }, async () => {
+      tokenImpl = () => new Promise(() => {}); // sign-in never completes
+      try {
+        const bridge = await freshBridge("queue-during-signin");
+        useFakes();
+        const held = [1, 2].map(() => bridge.invoke("Get-Label", {}).catch(() => {}));
+        await assert.rejects(bridge.invoke("Get-Label", {}), /busy with 2 commands/);
+        await Promise.all(held);
+      } finally {
+        tokenImpl = async () => fakeJwt("admin@contoso.onmicrosoft.com");
+      }
+    }));
+
   await t.test("decodes a multibyte character split across stdout chunks", async () => {
     const bridge = await freshBridge("utf8-split");
     useFakes();
@@ -527,6 +541,21 @@ test("PowerShellBridge auth-expiry retry", async (t) => {
     await assert.rejects(invokePromise, /Unexpected character/);
     assert.equal(lastProc.writes.join("").match(/^Connect-IPPSSession -/gm).length, 1);
   });
+
+  await t.test("does NOT retry a write whose error only quotes its own argument", async () => {
+    const bridge = await freshBridge("auth-word-in-arg");
+    useFakes();
+    const invokePromise = bridge.invoke("New-DlpCompliancePolicy", { Name: "Unauthorized access" });
+    await connected();
+    lastProc.respondErr("A policy named 'Unauthorized access' already exists.");
+    await assert.rejects(invokePromise, /already exists/);
+    assert.equal(lastProc.writes.join("").match(/^Connect-IPPSSession -/gm).length, 1);
+  });
+
+  await t.test("a bad timeout setting stops the bridge from loading", () =>
+    withEnv({ PURVIEW_EXEC_TIMEOUT_MS: "-5" }, async () => {
+      await assert.rejects(freshBridge("bad-timeout"), /PURVIEW_EXEC_TIMEOUT_MS must be a positive integer/);
+    }));
 
   await t.test("does NOT retry a timed-out cmdlet, which may already have applied", () =>
     withEnv({ PURVIEW_EXEC_TIMEOUT_MS: "40" }, async () => {
