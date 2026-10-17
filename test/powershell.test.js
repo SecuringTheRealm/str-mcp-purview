@@ -78,6 +78,25 @@ mock.module("node:child_process", {
   },
 });
 
+// Route spawn() to fresh fakes; returns every child spawned, oldest first.
+function useFakes() {
+  const procs = [];
+  spawnImpl = () => {
+    lastProc = new FakeChildProcess();
+    procs.push(lastProc);
+    return lastProc;
+  };
+  return procs;
+}
+
+/** Run fn with env vars set (undefined deletes), restoring the old values after. */
+async function withEnv(vars, fn) {
+  const saved = Object.fromEntries(Object.keys(vars).map((k) => [k, process.env[k]]));
+  const apply = (v) => { for (const [k, x] of Object.entries(v)) x === undefined ? delete process.env[k] : (process.env[k] = x); };
+  apply(vars);
+  try { return await fn(); } finally { apply(saved); }
+}
+
 // Build a minimal unsigned JWT carrying a upn claim, so orgFromToken can derive
 // the tenant org domain in token-injection mode.
 function fakeJwt(upn) {
@@ -103,6 +122,13 @@ async function freshBridge(tag) {
 
 const b64 = (params) => Buffer.from(JSON.stringify(params), "utf8").toString("base64");
 
+/** Let the bridge write its connect script, answer it, then let the cmdlet be written. */
+async function connected(proc) {
+  await tick();
+  (proc ?? lastProc).respondOk("connected");
+  await tick();
+}
+
 function tick() {
   return new Promise((r) => setImmediate(r));
 }
@@ -110,10 +136,7 @@ function tick() {
 test("PowerShellBridge.invoke", async (t) => {
   await t.test("connects the IPPSSession once, then invokes the cmdlet and parses JSON", async () => {
     const bridge = await freshBridge("connect-and-invoke");
-    spawnImpl = () => {
-      lastProc = new FakeChildProcess();
-      return lastProc;
-    };
+    useFakes();
 
     const invokePromise = bridge.invoke("Get-DlpCompliancePolicy", {}, ["Name"]);
     // Let the bridge spawn the process and write the Connect-IPPSSession script.
@@ -139,15 +162,10 @@ test("PowerShellBridge.invoke", async (t) => {
 
   await t.test("rejects with the PowerShell error message on __ERR__", async () => {
     const bridge = await freshBridge("err-response");
-    spawnImpl = () => {
-      lastProc = new FakeChildProcess();
-      return lastProc;
-    };
+    useFakes();
 
     const invokePromise = bridge.invoke("Get-DlpCompliancePolicy", {});
-    await tick();
-    lastProc.respondOk("connected");
-    await tick();
+    await connected();
     lastProc.respondErr("Something went wrong");
 
     await assert.rejects(() => invokePromise, /Something went wrong/);
@@ -155,15 +173,10 @@ test("PowerShellBridge.invoke", async (t) => {
 
   await t.test("passes an empty splat and no Select-Object clause when no props are given", async () => {
     const bridge = await freshBridge("no-select-props");
-    spawnImpl = () => {
-      lastProc = new FakeChildProcess();
-      return lastProc;
-    };
+    useFakes();
 
     const invokePromise = bridge.invoke("Get-DlpComplianceRule");
-    await tick();
-    lastProc.respondOk("connected");
-    await tick();
+    await connected();
     lastProc.respondOk([]);
     await invokePromise;
 
@@ -172,45 +185,27 @@ test("PowerShellBridge.invoke", async (t) => {
     assert.doesNotMatch(scripts, /Select-Object/);
   });
 
-  await t.test("uses certificate app-only auth when the PURVIEW_APP_* env vars are set", async () => {
-    process.env.PURVIEW_APP_ID = "app-id-123";
-    process.env.PURVIEW_ORGANIZATION = "contoso.onmicrosoft.com";
-    process.env.PURVIEW_CERT_THUMBPRINT = "ABCDEF";
-    try {
+  await t.test("uses certificate app-only auth when the PURVIEW_APP_* env vars are set", () =>
+    withEnv({ PURVIEW_APP_ID: "app-id-123", PURVIEW_ORGANIZATION: "contoso.onmicrosoft.com", PURVIEW_CERT_THUMBPRINT: "ABCDEF" }, async () => {
       const bridge = await freshBridge("app-only");
-      spawnImpl = () => {
-        lastProc = new FakeChildProcess();
-        return lastProc;
-      };
+      useFakes();
 
       const invokePromise = bridge.invoke("Get-DlpCompliancePolicy", {});
-      await tick();
-      lastProc.respondOk("connected");
-      await tick();
+      await connected();
       lastProc.respondOk([]);
       await invokePromise;
 
       const scripts = lastProc.writes.join("");
       assert.match(scripts, /Connect-IPPSSession -AppId 'app-id-123' -CertificateThumbprint 'ABCDEF' -Organization 'contoso\.onmicrosoft\.com'/);
       assert.doesNotMatch(scripts, /-DisableWAM/);
-    } finally {
-      delete process.env.PURVIEW_APP_ID;
-      delete process.env.PURVIEW_ORGANIZATION;
-      delete process.env.PURVIEW_CERT_THUMBPRINT;
-    }
-  });
+    }));
 
   await t.test("ignores a stale frame from a previous request (unique per-request markers)", async () => {
     const bridge = await freshBridge("stale-frame");
-    spawnImpl = () => {
-      lastProc = new FakeChildProcess();
-      return lastProc;
-    };
+    useFakes();
 
     const invokePromise = bridge.invoke("Get-DlpCompliancePolicy", {});
-    await tick();
-    lastProc.respondOk("connected");
-    await tick();
+    await connected();
 
     // A stale frame using the CONNECT request's markers must not settle the
     // in-flight cmdlet request...
@@ -222,17 +217,10 @@ test("PowerShellBridge.invoke", async (t) => {
     assert.deepEqual(await invokePromise, [{ Name: "Fresh" }]);
   });
 
-  await t.test("kills the pwsh child on timeout so the next call reconnects cleanly", async () => {
-    process.env.PURVIEW_EXEC_TIMEOUT_MS = "40";
-    process.env.PURVIEW_CONNECT_TIMEOUT_MS = "40";
-    try {
+  await t.test("kills the pwsh child on timeout so the next call reconnects cleanly", () =>
+    withEnv({ PURVIEW_EXEC_TIMEOUT_MS: "40", PURVIEW_CONNECT_TIMEOUT_MS: "40" }, async () => {
       const bridge = await freshBridge("timeout-kill");
-      const procs = [];
-      spawnImpl = () => {
-        lastProc = new FakeChildProcess();
-        procs.push(lastProc);
-        return lastProc;
-      };
+      const procs = useFakes();
 
       // Never respond: the connect request times out and must kill the child.
       await assert.rejects(() => bridge.invoke("Get-DlpCompliancePolicy", {}), /timed out .* session was reset/s);
@@ -247,15 +235,10 @@ test("PowerShellBridge.invoke", async (t) => {
       await tick();
       procs[1].respondOk([]);
       assert.deepEqual(await retry, []);
-    } finally {
-      delete process.env.PURVIEW_EXEC_TIMEOUT_MS;
-      delete process.env.PURVIEW_CONNECT_TIMEOUT_MS;
-    }
-  });
+    }));
 
-  await t.test("reconnects immediately after a command timeout even when the old child exits later", async () => {
-    process.env.PURVIEW_EXEC_TIMEOUT_MS = "80";
-    try {
+  await t.test("reconnects immediately after a command timeout even when the old child exits later", () =>
+    withEnv({ PURVIEW_EXEC_TIMEOUT_MS: "80" }, async () => {
       const bridge = await freshBridge("timeout-delayed-exit");
       const procs = [];
       spawnImpl = () => {
@@ -290,25 +273,14 @@ test("PowerShellBridge.invoke", async (t) => {
       assert.equal(procs.length, 2);
       assert.equal(procs[1].writes.filter(s => s.includes("Connect-IPPSSession -")).length, 1);
       assert.equal(procs[0].writes.length, 2, "Timed-out mutation must not be retried");
-    } finally {
-      delete process.env.PURVIEW_EXEC_TIMEOUT_MS;
-    }
-  });
+    }));
 
-  await t.test("a command queued behind a timeout reconnects instead of running on an unconnected child", async () => {
-    process.env.PURVIEW_EXEC_TIMEOUT_MS = "40";
-    try {
+  await t.test("a command queued behind a timeout reconnects instead of running on an unconnected child", () =>
+    withEnv({ PURVIEW_EXEC_TIMEOUT_MS: "40" }, async () => {
       const bridge = await freshBridge("queued-behind-timeout");
-      const procs = [];
-      spawnImpl = () => {
-        lastProc = new FakeChildProcess();
-        procs.push(lastProc);
-        return lastProc;
-      };
+      const procs = useFakes();
       const warm = bridge.invoke("Get-Label", {});
-      await tick();
-      procs[0].respondOk("connected");
-      await tick();
+      await connected(procs[0]);
       procs[0].respondOk([]);
       await warm;
 
@@ -331,21 +303,13 @@ test("PowerShellBridge.invoke", async (t) => {
       assert.deepEqual(await c, { Name: "R2" });
       assert.equal(procs[1].writes.filter((w) => w.includes("Connect-IPPSSession -")).length, 1, "queued callers share one reconnect");
       assert.equal(procs[0].writes.filter((w) => w.includes("Set-DlpComplianceRule")).length, 1, "A is not retried");
-    } finally {
-      delete process.env.PURVIEW_EXEC_TIMEOUT_MS;
-    }
-  });
+    }));
 
   await t.test("decodes a multibyte character split across stdout chunks", async () => {
     const bridge = await freshBridge("utf8-split");
-    spawnImpl = () => {
-      lastProc = new FakeChildProcess();
-      return lastProc;
-    };
+    useFakes();
     const p = bridge.invoke("Get-Label", {});
-    await tick();
-    lastProc.respondOk("connected");
-    await tick();
+    await connected();
     const { start, end } = lastProc.markers();
     const frame = Buffer.from(`${start}\n__OK__\n{"Name":"Confidentiel – Société"}\n${end}\n`, "utf8");
     const cut = frame.indexOf(Buffer.from("é", "utf8")) + 1; // inside the two-byte é
@@ -356,10 +320,7 @@ test("PowerShellBridge.invoke", async (t) => {
 
   await t.test("rejects the in-flight request promptly when the pwsh process dies", async () => {
     const bridge = await freshBridge("proc-death");
-    spawnImpl = () => {
-      lastProc = new FakeChildProcess();
-      return lastProc;
-    };
+    useFakes();
 
     const invokePromise = bridge.invoke("Get-DlpCompliancePolicy", {});
     await tick();
@@ -370,16 +331,11 @@ test("PowerShellBridge.invoke", async (t) => {
 
   await t.test("concurrent first calls share a single Connect-IPPSSession", async () => {
     const bridge = await freshBridge("connect-dedup");
-    spawnImpl = () => {
-      lastProc = new FakeChildProcess();
-      return lastProc;
-    };
+    useFakes();
 
     const a = bridge.invoke("Get-DlpCompliancePolicy", {});
     const b = bridge.invoke("Get-DlpComplianceRule", {});
-    await tick();
-    lastProc.respondOk("connected");
-    await tick();
+    await connected();
     lastProc.respondOk([]);
     await tick();
     lastProc.respondOk([]);
@@ -389,16 +345,12 @@ test("PowerShellBridge.invoke", async (t) => {
     assert.equal(connects.length, 1);
   });
 
-  await t.test("fails fast on non-Windows platforms unless overridden", async () => {
-    if (process.platform === "win32") return; // gate only applies off-Windows
-    delete process.env.PURVIEW_ALLOW_UNSUPPORTED_OS;
-    try {
+  await t.test("fails fast on non-Windows platforms unless overridden", () =>
+    withEnv({ PURVIEW_ALLOW_UNSUPPORTED_OS: undefined }, async () => {
+      if (process.platform === "win32") return; // gate only applies off-Windows
       const bridge = await freshBridge("platform-gate");
       await assert.rejects(() => bridge.invoke("Get-DlpCompliancePolicy", {}), /only supports.*on Windows/s);
-    } finally {
-      process.env.PURVIEW_ALLOW_UNSUPPORTED_OS = "1";
-    }
-  });
+    }));
 
   await t.test("rejects when the pwsh executable cannot be started", async () => {
     const savedTimeout = process.env.PURVIEW_EXEC_TIMEOUT_MS;
@@ -431,11 +383,9 @@ test("PowerShellBridge.invoke", async (t) => {
   });
 });
 
-test("simulation connection is isolated and includes the search-only switch on the connect command", async () => {
-  const saved = process.env.PURVIEW_DLP_AUTH_MODE;
-  process.env.PURVIEW_DLP_AUTH_MODE = "token";
-  tokenImpl = async () => fakeJwt("admin@contoso.onmicrosoft.com");
-  try {
+test("simulation connection is isolated and includes the search-only switch on the connect command", () =>
+  withEnv({ PURVIEW_DLP_AUTH_MODE: "token" }, async () => {
+    tokenImpl = async () => fakeJwt("admin@contoso.onmicrosoft.com");
     const bridge = await freshBridge("simulation-isolated");
     const children = [];
     spawnImpl = () => { const child = new FakeChildProcess(); children.push(child); lastProc = child; return child; };
@@ -451,20 +401,14 @@ test("simulation connection is isolated and includes the search-only switch on t
     assert.doesNotMatch(children[1].writes[0], /EnableSearchOnlySession/);
     children[1].respondOk("connected"); await new Promise(r => setImmediate(r));
     children[1].respondOk([]); await regular;
-  } finally { if (saved === undefined) delete process.env.PURVIEW_DLP_AUTH_MODE; else process.env.PURVIEW_DLP_AUTH_MODE = saved; }
-});
+  }));
 
 test("PowerShellBridge token-injection connect", async (t) => {
-  await t.test("connects with an injected access token and org derived from the token", async () => {
-    const saved = process.env.PURVIEW_DLP_AUTH_MODE;
-    process.env.PURVIEW_DLP_AUTH_MODE = "token";
-    tokenImpl = async () => fakeJwt("admin@contoso.onmicrosoft.com");
-    try {
+  await t.test("connects with an injected access token and org derived from the token", () =>
+    withEnv({ PURVIEW_DLP_AUTH_MODE: "token" }, async () => {
+      tokenImpl = async () => fakeJwt("admin@contoso.onmicrosoft.com");
       const bridge = await freshBridge("token-connect");
-      spawnImpl = () => {
-        lastProc = new FakeChildProcess();
-        return lastProc;
-      };
+      useFakes();
 
       const invokePromise = bridge.invoke("Get-DlpCompliancePolicy", {}, ["Name"]);
       await new Promise((r) => setImmediate(r)); // token acquired + connect script written
@@ -483,49 +427,28 @@ test("PowerShellBridge token-injection connect", async (t) => {
       const blob = JSON.parse(Buffer.from(b64, "base64").toString("utf8"));
       assert.equal(blob.org, "contoso.onmicrosoft.com");
       assert.match(blob.token, /^[\w-]+\.[\w-]+\.\w+$/);
-    } finally {
-      if (saved == null) delete process.env.PURVIEW_DLP_AUTH_MODE;
-      else process.env.PURVIEW_DLP_AUTH_MODE = saved;
-    }
-  });
+    }));
 
-  await t.test("errors when no org can be determined", async () => {
-    const saved = process.env.PURVIEW_DLP_AUTH_MODE;
-    const savedOrg = process.env.PURVIEW_ORGANIZATION;
-    process.env.PURVIEW_DLP_AUTH_MODE = "token";
-    delete process.env.PURVIEW_ORGANIZATION;
-    tokenImpl = async () => fakeJwt("no-at-sign-here"); // no domain to derive
-    try {
-      const bridge = await freshBridge("token-no-org");
-      spawnImpl = () => {
-        lastProc = new FakeChildProcess();
-        return lastProc;
-      };
-      await assert.rejects(
-        () => bridge.invoke("Get-DlpCompliancePolicy", {}),
-        /PURVIEW_ORGANIZATION/
-      );
-    } finally {
-      if (saved == null) delete process.env.PURVIEW_DLP_AUTH_MODE;
-      else process.env.PURVIEW_DLP_AUTH_MODE = saved;
-      if (savedOrg != null) process.env.PURVIEW_ORGANIZATION = savedOrg;
-      tokenImpl = async () => fakeJwt("admin@contoso.onmicrosoft.com");
-    }
-  });
+  await t.test("errors when no org can be determined", () =>
+    withEnv({ PURVIEW_DLP_AUTH_MODE: "token", PURVIEW_ORGANIZATION: undefined }, async () => {
+      tokenImpl = async () => fakeJwt("no-at-sign-here"); // no domain to derive
+      try {
+        const bridge = await freshBridge("token-no-org");
+        useFakes();
+        await assert.rejects(() => bridge.invoke("Get-DlpCompliancePolicy", {}), /PURVIEW_ORGANIZATION/);
+      } finally {
+        tokenImpl = async () => fakeJwt("admin@contoso.onmicrosoft.com");
+      }
+    }));
 });
 
 test("PowerShellBridge auth-expiry retry", async (t) => {
   await t.test("reconnects and retries once when the cmdlet reports an expired token", async () => {
     const bridge = await freshBridge("auth-retry");
-    spawnImpl = () => {
-      lastProc = new FakeChildProcess();
-      return lastProc;
-    };
+    useFakes();
 
     const invokePromise = bridge.invoke("Get-DlpCompliancePolicy", {});
-    await tick();
-    lastProc.respondOk("connected");
-    await tick();
+    await connected();
     // The injected token lapsed: the cmdlet rejects the call.
     lastProc.respondErr("The access token has expired.");
     await tick();
@@ -545,19 +468,12 @@ test("PowerShellBridge auth-expiry retry", async (t) => {
     // verbatim against ExchangeOnlineManagement 3.10.0. The message names no
     // cause, so it is only safe to re-run for a read.
     const bridge = await freshBridge("opaque-retry-read");
-    spawnImpl = () => {
-      lastProc = new FakeChildProcess();
-      return lastProc;
-    };
+    useFakes();
 
     const invokePromise = bridge.invoke("Get-DlpCompliancePolicy", {});
-    await tick();
-    lastProc.respondOk("connected");
-    await tick();
+    await connected();
     lastProc.respondErr("Unexpected character encountered while parsing value: <. Path '', line 0, position 0.");
-    await tick();
-    lastProc.respondOk("connected");
-    await tick();
+    await connected();
     lastProc.respondOk([{ Name: "P1" }]);
 
     assert.deepEqual(await invokePromise, [{ Name: "P1" }]);
@@ -568,48 +484,32 @@ test("PowerShellBridge auth-expiry retry", async (t) => {
     // No evidence the cmdlet failed to reach the service, so re-running it
     // risks creating the rule twice. Surface the error instead.
     const bridge = await freshBridge("opaque-no-retry-write");
-    spawnImpl = () => {
-      lastProc = new FakeChildProcess();
-      return lastProc;
-    };
+    useFakes();
 
     const invokePromise = bridge.invoke("New-DlpComplianceRule", { Name: "R1" });
-    await tick();
-    lastProc.respondOk("connected");
-    await tick();
+    await connected();
     lastProc.respondErr("Unexpected character encountered while parsing value: <. Path '', line 0, position 0.");
 
     await assert.rejects(invokePromise, /Unexpected character/);
     assert.equal(lastProc.writes.join("").match(/^Connect-IPPSSession -/gm).length, 1);
   });
 
-  await t.test("does NOT retry a timed-out cmdlet, which may already have applied", async () => {
-    // The bridge's own timeout message contains the word "session", which a
-    // loose auth-expiry matcher would read as a stale session and retry — and
-    // re-running a New-/Set- cmdlet that already ran inside the child would
-    // double-write. Bridge-raised errors must never trigger the retry.
-    process.env.PURVIEW_EXEC_TIMEOUT_MS = "40";
-    try {
+  await t.test("does NOT retry a timed-out cmdlet, which may already have applied", () =>
+    withEnv({ PURVIEW_EXEC_TIMEOUT_MS: "40" }, async () => {
+      // The bridge's own timeout message contains the word "session", which a
+      // loose auth-expiry matcher would read as a stale session and retry — and
+      // re-running a New-/Set- cmdlet that already ran inside the child would
+      // double-write. Bridge-raised errors must never trigger the retry.
       const bridge = await freshBridge("no-retry-on-timeout");
-      const procs = [];
-      spawnImpl = () => {
-        lastProc = new FakeChildProcess();
-        procs.push(lastProc);
-        return lastProc;
-      };
+      const procs = useFakes();
 
       const invokePromise = bridge.invoke("New-DlpComplianceRule", { Name: "R1" });
-      await tick();
-      procs[0].respondOk("connected");
-      await tick();
+      await connected(procs[0]);
       // Never respond to the cmdlet: it times out.
       await assert.rejects(() => invokePromise, /timed out/);
 
       // Exactly one New-DlpComplianceRule was ever written — no silent re-run.
       const writes = procs.map((p) => p.writes.join("")).join("");
       assert.equal(writes.match(/New-DlpComplianceRule/g).length, 1);
-    } finally {
-      delete process.env.PURVIEW_EXEC_TIMEOUT_MS;
-    }
-  });
+    }));
 });

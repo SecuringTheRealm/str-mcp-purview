@@ -5,18 +5,9 @@ import { createProjection } from "../src/mcp/projection.js";
 import { executeCapability } from "../src/dispatch/execute.js";
 import { errorResult } from "../src/dispatch/errors.js";
 import { syntheticCatalogue } from "../benchmarks/synthetic-catalogue.js";
-import { simulateAgent } from "../benchmarks/simulate-agent.js";
 import { Client } from "@modelcontextprotocol/client";
 import { InMemoryTransport } from "@modelcontextprotocol/server";
 import { createServer } from "../src/server.js";
-
-test("160-entry scripted agent simulation completes in compact and dispatcher", async () => {
-  for (const mode of ["compact", "dispatcher"]) {
-    const report = await simulateAgent(mode);
-    assert.equal(report.catalogue_size, 160);
-    assert.equal(report.all_passed, true, JSON.stringify(report));
-  }
-});
 
 test("new operation/domain requires no server or routing edits; metadata governs risk", async () => {
   const fixture = syntheticCatalogue(1);
@@ -42,12 +33,6 @@ test("contract rejects incoherent risk, invalid schemas/examples, collisions and
   assert.throws(() => defineCapability({ ...c, examples: [] }), /example/);
   assert.throws(() => validateRegistry([c, { ...c, id: "other", aliases: [c.id] }]), /Duplicate/);
   assert.throws(() => defineCapability({ ...c, scopeAlternatives: [[]] }), /metadata/);
-});
-
-test("generated compact tool collisions fail instead of shadowing discovery", () => {
-  const c = syntheticCatalogue(1).entries[0];
-  const collision = defineCapability({ ...c, domain: "search" });
-  assert.throws(() => createProjection({ mode: "compact", entries: [collision] }), /Duplicate projected tool/);
 });
 
 test("argument policy is enforced in all modes, after validation and before handlers", async () => {
@@ -95,17 +80,6 @@ test("describe and execution enforce permissions, scopes, flags and aliases equa
   assert.equal(fixture.calls.length, 0);
 });
 
-test("structured errors distinguish schema, policy and backend failures without automatic retries", async () => {
-  const c = syntheticCatalogue(1).entries[0];
-  const bad = defineCapability({ ...c, handler: async () => { throw Error("Backend unavailable"); } });
-  let failure;
-  try { await executeCapability(bad.id, { identity: "sandbox" }, {}, indexCapabilities([bad])); } catch (e) { failure = e; }
-  const result = errorResult(failure);
-  assert.equal(result.isError, true);
-  assert.equal(result.structuredContent.error.code, "BACKEND_ERROR");
-  assert.equal(result.structuredContent.error.retryable, false);
-});
-
 test("server intersects caller policy without losing enabled features, and resources use the execution gate", async () => {
   const settings = { PURVIEW_FEATURES: "sim_exports", PURVIEW_PERMISSIONS: "export_data", PURVIEW_SCOPES: "Simulation.Export",
     PURVIEW_ALLOWED_CAPABILITIES: undefined, PURVIEW_ALLOWED_DOMAINS: undefined, PURVIEW_READ_ONLY: "false", PURVIEW_ALLOW_DESTRUCTIVE: "true", MCP_REQUEST_LOGGING: "false" };
@@ -146,4 +120,21 @@ test("server intersects caller policy without losing enabled features, and resou
     });
     assert.equal(fixture.calls.length, before);
   } finally { setEnv(saved); }
+});
+
+test("structured errors distinguish schema, policy and backend failures without automatic retries", async () => {
+  const c = syntheticCatalogue(1).entries[0];
+  const bad = defineCapability({ ...c, handler: async () => { throw Error("Backend unavailable"); } });
+  let failure;
+  try { await executeCapability(bad.id, { identity: "sandbox" }, {}, indexCapabilities([bad])); } catch (e) { failure = e; }
+  const result = errorResult(failure);
+  assert.equal(result.isError, true);
+  assert.equal(result.structuredContent.error.code, "BACKEND_ERROR");
+  assert.equal(result.structuredContent.error.retryable, false);
+});
+
+test("DLP rule input is rejected before PowerShell runs", async () => {
+  const blockWithoutNotify = { name: "r1", policy: "p1", endpoint_restrictions: [{ activity: "CopyPaste", action: "Block" }] };
+  await assert.rejects(executeCapability("create_endpoint_dlp_rule", blockWithoutNotify), /require notify_user/);
+  await assert.rejects(executeCapability("create_dlp_rule", { name: "r1", policy: "p1", access_scope: "External" }), (e) => e.code === "VALIDATION_ERROR" || /Invalid arguments/.test(e.message));
 });

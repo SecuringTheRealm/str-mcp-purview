@@ -104,6 +104,22 @@ export function wrapScript(script, start, end) {
   ].join("\n");
 }
 
+/**
+ * The script for one cmdlet call. `cmdlet` and `selectProps` are constants from
+ * this codebase; `params` may hold model-supplied values, so it travels as
+ * base64 JSON and is rebuilt as a hashtable, never as script text. Exported for
+ * the real-pwsh smoke test.
+ */
+export function cmdletScript(cmdlet, params = {}, selectProps = null) {
+  const b64 = Buffer.from(JSON.stringify(params ?? {}), "utf8").toString("base64");
+  const select = selectProps?.length ? ` | Select-Object ${selectProps.join(",")}` : "";
+  return [
+    `$__p = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${b64}')) | ConvertFrom-Json -AsHashtable`,
+    "if ($null -eq $__p) { $__p = @{} }",
+    `${cmdlet} @__p${select}`,
+  ].join("\n");
+}
+
 /** Reject if `promise` has not settled within `ms`, so a tool call cannot hang. */
 function withTimeout(promise, ms, message) {
   let timer;
@@ -410,15 +426,8 @@ class PowerShellBridge {
    */
   async invoke(cmdlet, params = {}, selectProps = null, retried = false) {
     await this.#ensureConnected();
-    const b64 = Buffer.from(JSON.stringify(params ?? {}), "utf8").toString("base64");
-    const select = selectProps?.length ? ` | Select-Object ${selectProps.join(",")}` : "";
-    const script = [
-      `$__p = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${b64}')) | ConvertFrom-Json -AsHashtable`,
-      "if ($null -eq $__p) { $__p = @{} }",
-      `${cmdlet} @__p${select}`,
-    ].join("\n");
     try {
-      return await this.#enqueue(script);
+      return await this.#enqueue(cmdletScript(cmdlet, params, selectProps));
     } catch (err) {
       // An injected access token lasts about an hour; when it lapses the cmdlet
       // rejects the call outright. Drop the stale session and reconnect once
