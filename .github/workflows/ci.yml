@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, dev]
   pull_request:
 
 jobs:
@@ -20,3 +20,18 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test
+
+  # Backstop for the pre-commit hook, which --no-verify or a skipped
+  # `npm install` bypasses: this repository is public.
+  public-data:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: No real tenant domains in tracked files
+        run: |
+          found=$(git grep -IohiE '[a-z0-9-]+\.onmicrosoft\.com' -- . ':(exclude).githooks/pre-commit' \
+            | grep -viE '^(contoso|example|yourtenant|tenant|fabrikam)\.' | sort -u || true)
+          if [ -n "$found" ]; then
+            echo "::error::Real tenant domains in tracked files: $found"
+            exit 1
+          fi

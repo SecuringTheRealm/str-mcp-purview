@@ -1,0 +1,39 @@
+#!/bin/sh
+# Rules AGENTS.md states but cannot enforce. This repository is public, and
+# live-tenant UAT reports carrying tenant identifiers once reached a commit.
+#
+# Enabled by `npm install` (the prepare script), or once per clone:
+#   git config core.hooksPath .githooks
+
+set -e
+
+# R included: `git mv` onto a now-ignored path stages as a rename, not an add.
+staged=$(git diff --cached --name-only --diff-filter=ACMR)
+[ -n "$staged" ] || exit 0
+
+fail() {
+  echo "pre-commit: $1" >&2
+  printf '%s\n' "$2" | while IFS= read -r f; do printf '  %s\n' "$f" >&2; done
+  echo "  $3" >&2
+  exit 1
+}
+
+# --no-index matters: check-ignore silently skips paths already in the index,
+# which is exactly the case caught here. Exit 1 means nothing matched; anything
+# higher is a real git failure and must not read as "all clear".
+status=0
+ignored=$(printf '%s\n' "$staged" | git check-ignore --no-index --stdin) || status=$?
+if [ "$status" -gt 1 ]; then
+  echo "pre-commit: git check-ignore failed (exit $status); refusing to guess." >&2
+  exit 1
+fi
+[ -z "$ignored" ] || fail "these staged files are gitignored:" "$ignored" \
+  "Unstage them with git restore --staged, or change .gitignore deliberately."
+
+# A real tenant domain in staged content. Placeholders used in docs and tests
+# (contoso, <tenant>, example, yourtenant) are allowed.
+domains=$(git diff --cached -U0 --diff-filter=ACMR -- . ':(exclude).githooks/pre-commit' \
+  | grep '^+' | grep -oiE '[a-z0-9-]+\.onmicrosoft\.com' \
+  | grep -viE '^(contoso|example|yourtenant|tenant|fabrikam)\.' | sort -u) || true
+[ -z "$domains" ] || fail "staged changes name a real tenant domain:" "$domains" \
+  "This repository is public. Use contoso.onmicrosoft.com or <tenant>.onmicrosoft.com."
