@@ -5,3 +5,6 @@ Containerfile
 *.md
 .env.template
 .mcp.json.example
+artifacts
+benchmarks
+docs

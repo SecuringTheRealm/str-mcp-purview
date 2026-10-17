@@ -1,29 +1,14 @@
-import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { canonical, canonicalJson, digest } from "./util.js";
 
 const DEFAULT_CURSOR_TTL_MS = 15 * 60_000;
-
-function canonical(value) {
-  if (Array.isArray(value)) return value.map(canonical);
-  if (value && typeof value === "object") {
-    return Object.fromEntries(
-      Object.entries(value)
-        .sort(([a], [b]) => a.localeCompare(b))
-        .map(([key, child]) => [key, canonical(child)])
-    );
-  }
-  return value;
-}
-
-function canonicalJson(value) {
-  return JSON.stringify(canonical(value));
-}
 
 function itemToken(item) {
   const name = String(
     item?.displayName ?? item?.DisplayName ?? item?.Name ?? item?.name ?? item?.Identity ?? ""
   ).normalize("NFKC").toLowerCase();
   const id = String(item?.id ?? item?.Id ?? item?.Guid ?? item?.Identity ?? "").toLowerCase();
-  const tieBreaker = id || createHash("sha256").update(canonicalJson(item)).digest("base64url");
+  const tieBreaker = id || digest(item, "base64url");
   return `${name}\u0000${tieBreaker}`;
 }
 
@@ -52,6 +37,7 @@ export function createListPaginator({
   cursorTtlMs = DEFAULT_CURSOR_TTL_MS,
   now = Date.now,
 } = {}) {
+  if (secret.length < 32) throw new Error("MCP_CURSOR_SECRET must be at least 32 characters.");
   function signature(encoded) {
     return createHmac("sha256", secret).update(encoded).digest("base64url");
   }

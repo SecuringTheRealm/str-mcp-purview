@@ -33,14 +33,12 @@ export function syntheticCatalogue(perDomain = 5) {
         if (destructive) { properties.confirm = { const: true, type: "boolean" }; required.push("confirm"); }
         if (operation === "update") properties.note = { type: "string", maxLength: 200 };
         entries.push(defineCapability({
-          id, domain, operation, action, destructive,
+          id, domain, operation, action, destructive, deletes: operation === "delete",
           risk: destructive ? "destructive" : action === "read" ? "read-only" : "non-destructive",
           idempotent: action === "read", openWorld: false,
           description: `${operation} ${noun} in the simulated catalogue.`,
-          keywords: [noun, domain, operation], aliases: [`${key}_${operation}`],
-          permissions: operation === "export" ? ["export_data"] : [],
+          keywords: [noun, domain, operation],
           scopeAlternatives: operation === "export" ? [["Simulation.Export"]] : [],
-          features: operation === "export" ? ["sim_exports"] : [],
           constraints: ["Synthetic data only; never calls Graph or PowerShell.", ...(destructive ? ["Explicit confirmation is required."] : [])],
           examples: [{ arguments: operation === "list" ? { limit: 25 } : { identity: "sandbox-alpha", ...(destructive ? { confirm: true } : {}) } }],
           inputSchema: object(properties, required),

@@ -3,11 +3,8 @@
 
 import { graphGet, appOnly } from "./graph.js";
 import { powershell } from "./powershell.js";
-import { truncate, bulletFields, shortDate, asArray, formatWriteResult } from "./format.js";
-
-// Re-exported so index.js can call labels.formatWriteResult for the label
-// write tools (shared implementation lives in format.js).
-export { formatWriteResult };
+import { truncate, bulletFields, shortDate } from "./format.js";
+import { asArray, identityKey } from "./util.js";
 
 // App-only tokens have no /me/, so the Graph policy-settings read switches to
 // the tenant-wide informationProtection path in that mode.
@@ -39,10 +36,6 @@ const LABEL_READ_PROPS = [
 ];
 
 // ---- data access -----------------------------------------------------------
-
-function identityKey(value) {
-  return String(value ?? "").trim().toLowerCase();
-}
 
 /** Normalise Get-Label output into a stable cross-plane public model. */
 export function normalizeLabel(raw, knownLabels = []) {
@@ -126,30 +119,14 @@ export function filterLabels(labels, f = {}) {
 
 // ---- data access (write: Security & Compliance PowerShell) -----------------
 
-export async function createLabel(params) {
-  return powershell.invoke("New-Label", params, LABEL_WRITE_PROPS);
-}
-
-export async function setLabel(params) {
-  return powershell.invoke("Set-Label", params, LABEL_WRITE_PROPS);
-}
-
-export async function createLabelPolicy(params) {
-  return powershell.invoke("New-LabelPolicy", params, LABELPOLICY_WRITE_PROPS);
-}
-
-export async function setLabelPolicy(params) {
-  return powershell.invoke("Set-LabelPolicy", params, LABELPOLICY_WRITE_PROPS);
-}
-
+const cmdlet = (name, props) => (params) => powershell.invoke(name, params, props);
+export const createLabel = cmdlet("New-Label", LABEL_WRITE_PROPS);
+export const setLabel = cmdlet("Set-Label", LABEL_WRITE_PROPS);
+export const createLabelPolicy = cmdlet("New-LabelPolicy", LABELPOLICY_WRITE_PROPS);
+export const setLabelPolicy = cmdlet("Set-LabelPolicy", LABELPOLICY_WRITE_PROPS);
 // Deletes: pass { Identity, Confirm: false } to avoid the interactive prompt.
-export async function removeLabel(params) {
-  return powershell.invoke("Remove-Label", params);
-}
-
-export async function removeLabelPolicy(params) {
-  return powershell.invoke("Remove-LabelPolicy", params);
-}
+export const removeLabel = cmdlet("Remove-Label");
+export const removeLabelPolicy = cmdlet("Remove-LabelPolicy");
 
 // ---- data access (read-back: Security & Compliance PowerShell) -------------
 
@@ -159,11 +136,6 @@ export async function listLabelPolicies() {
 
 export async function getLabelPolicy(identity) {
   return asArray(await powershell.invoke("Get-LabelPolicy", { Identity: identity }, LABELPOLICY_READ_PROPS))[0];
-}
-
-/** Backwards-compatible helper; the authoritative read includes protection. */
-export async function getLabelProtectionSettings(identity) {
-  return getLabel(identity);
 }
 
 /**
@@ -376,6 +348,3 @@ export function formatLabelProtectionSettings(label) {
   }
   return lines.join("\n");
 }
-
-// Re-exported so index.js can reference the shared helper without another import.
-export { shortDate };

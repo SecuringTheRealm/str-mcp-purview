@@ -1,4 +1,5 @@
 import { performance } from "node:perf_hooks";
+import { envFlag } from "./util.js";
 
 const MAX_FIELD_LENGTH = 256;
 
@@ -15,10 +16,14 @@ function safeField(value) {
 export function createRequestLogger({
   transport = "unknown",
   era = "unknown",
-  enabled = process.env.MCP_REQUEST_LOGGING !== "false",
+  enabled = envFlag("MCP_REQUEST_LOGGING", true),
   sink = (line) => console.error(line),
   clock = () => performance.now(),
   timestamp = () => new Date().toISOString(),
+  // Who made the call, for the audit trail. Purview's own audit log shows only
+  // the app identity, so this is the record of which person ran a write. Only
+  // pseudonymous IDs (tenant/object ID, client app ID), never names or UPNs.
+  caller = {},
 } = {}) {
   return function withRequestLogging(method, handler, requestFields = () => ({})) {
     return async (request, context) => {
@@ -41,7 +46,8 @@ export function createRequestLogger({
         client_name: safeField(clientInfo.name),
         client_version: safeField(clientInfo.version),
         traceparent: safeField(envelope.traceparent),
-        authenticated_client_id: safeField(context?.http?.authInfo?.clientId),
+        caller_principal: safeField(caller.principal),
+        caller_client_id: safeField(caller.client),
         ...extraFields,
       };
 
@@ -52,6 +58,7 @@ export function createRequestLogger({
             ...base,
             level: result?.isError === true ? "warn" : "info",
             outcome: result?.isError === true ? "tool_error" : result?.resultType === "input_required" ? "input_required" : "success",
+            error_code: safeField(result?.structuredContent?.error?.code),
             duration_ms: Math.max(0, Math.round(clock() - started)),
           }));
         }

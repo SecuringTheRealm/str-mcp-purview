@@ -32,8 +32,8 @@ eight scenarios. The lifecycle transcript showed:
 | Download legal schedules | Routes to the synthetic export handler; no real export is claimed |
 | Delete finance markings | Record removed from fake state |
 
-All 13 additional checks passed in each mode. Unknown and hidden capabilities
-produced the same unavailable code, including hidden aliases. Direct execution
+All 12 additional checks passed in each mode. Unknown and hidden capabilities
+produced the same unavailable code. Direct execution
 could not bypass read-only policy. A production-resource request was denied by
 the argument-policy hook. Missing confirmation and unknown argument fields were
 rejected before any handler ran. Restricted searches did not disclose write or

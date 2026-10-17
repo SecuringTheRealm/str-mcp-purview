@@ -15,7 +15,7 @@
 
 ## What exists and what remains unverified
 
-The branch has 37 canonical capabilities, two prompts and three resources. Full, compact and dispatcher projections expose 37, eight and three tools respectively. Label/DLP configuration CRUD, Endpoint/Copilot phase-one controls, authoritative label reads and ten core automatic-label policy/rule operations are implemented; see [README](README.md) for their contracts and limitations.
+The server has 37 canonical capabilities, two prompts and three resources. Full, compact and dispatcher projections expose 37, eight and three tools respectively. Label/DLP configuration CRUD, Endpoint/Copilot phase-one controls, authoritative label reads and ten core automatic-label policy/rule operations are implemented; see [docs/tools.md](docs/tools.md) for their contracts and limitations.
 
 Implementation is not the same as deployed acceptance. Copilot label formatting and DLP setter confirmation fixes passed selected live tests through the local PowerShell bridge. Deployed HTTP/proxy execution, the supported authentication matrix, automatic-label simulation/status/activation and the timeout-recovery live retest remain release work. Advanced automatic-label parameters currently fail explicitly where mappings are unverified.
 

@@ -1,16 +1,12 @@
-import { createHash } from "node:crypto";
 import { powershell } from "./powershell.js";
-import { CapabilityError } from "./dispatch/errors.js";
+import { CapabilityError, invalid } from "./dispatch/errors.js";
+import { asArray as array, digest, CONFIDENCE, identityKey as key } from "./util.js";
 
-const array = v => v == null ? [] : Array.isArray(v) ? v : [v];
-const key = v => String(v ?? "").trim().toLowerCase();
-const invalid = message => { throw new CapabilityError("VALIDATION_ERROR", message); };
 const unavailable = message => { throw new CapabilityError("FEATURE_UNAVAILABLE", message); };
-const stable = v => Array.isArray(v) ? v.map(stable) : v && typeof v === "object" ? Object.fromEntries(Object.keys(v).sort().map(k => [k, stable(v[k])])) : v;
 const transient = /^(revision|Distribution|TestMode|Simulation|Progress|Execution|WhenChanged|WhenCreated|Last|Status)/i;
 export function revisionOf(value) {
   const configuration = Object.fromEntries(Object.entries(value).filter(([k]) => !transient.test(k)));
-  return createHash("sha256").update(JSON.stringify(stable(configuration))).digest("hex");
+  return digest(configuration);
 }
 function exact(value, identity) {
   if (typeof identity !== "string" || !identity.trim()) invalid("Identity must be a non-empty name or GUID.");
@@ -60,9 +56,7 @@ const scopeFields = {
 };
 const locationName = { sharepoint: "SharePointLocation", onedrive: "OneDriveLocation", exchange: "ExchangeLocation" };
 function validateScope(workload, scope) {
-  if (scope.selection === "adaptive" || Object.keys(scope).some(k => k.includes("adaptive") && scope[k]?.length)) unavailable("Adaptive-scope mappings require tenant verification and are not enabled.");
-  for (const [field, values] of Object.entries(scope)) {
-    if (field !== "selection" && !scopeFields[workload][field] && values?.length) unavailable(`Scope field ${workload}.${field} is not yet supported.`);
+  for (const values of Object.values(scope)) {
     if (Array.isArray(values) && values.some(v => key(v) === "all")) invalid("Use selection:all explicitly instead of All in a collection.");
   }
   const includes = Object.entries(scope).some(([k, v]) => k.startsWith("include_") && v.length);
@@ -119,7 +113,6 @@ function policyConfig(args) {
   if (args.priority !== undefined) p.Priority = args.priority;
   if (args.administrative_unit_ids !== undefined) p.PolicyRBACScopes = args.administrative_unit_ids;
   if (args.existing_label_behaviour) {
-    if (args.existing_label_behaviour.overwrite_workloads !== undefined) unavailable("Cross-workload overwrite encoding is not verified.");
     if (args.existing_label_behaviour.overwrite_manual_labels !== undefined) p.OverwriteLabel = args.existing_label_behaviour.overwrite_manual_labels;
   }
   if (args.external_email_protection?.rights_management_owner !== undefined) p.ExternalMailRightsManagementOwner = args.external_email_protection.rights_management_owner;
@@ -137,7 +130,6 @@ async function mutate(cmdlet, params, getter, identity, simulation = false) {
   catch { throw new CapabilityError("READBACK_FAILED", "The mutation was submitted, but readback failed. Its outcome is uncertain; inspect the object before retrying the write."); }
 }
 export async function createPolicy(args) {
-  if (args.behaviour !== "apply") unavailable("Removal and library-default policies are reserved but their backend encodings are not verified.");
   if (!args.label_identity) invalid("Apply policies require label_identity.");
   const params = { Name: args.name, Mode: "Disable", SharePointLocation: [], OneDriveLocation: [], ExchangeLocation: [], ...policyConfig(args), ...scopeParams(args.locations) };
   validateProtection(params, {});
@@ -150,17 +142,8 @@ export async function setPolicy(args) {
   if (Object.keys(args).every(k => ["identity", "expected_revision"].includes(k))) invalid("Provide at least one change or action.");
   const config = policyConfig(args);
   if (args.location_changes && args.locations) invalid("Use either locations or location_changes in one request.");
-  if (args.enabled !== undefined) unavailable("The interaction of Enabled and Mode is not verified; use mode to change the policy state.");
   if (args.restart_simulation && args.mode !== "TestWithoutNotifications") invalid("Restart simulation requires mode:TestWithoutNotifications.");
   if (args.retry_distribution && Object.keys(args).some(k => !["identity", "retry_distribution", "expected_revision"].includes(k))) invalid("Distribution retry must be requested separately from configuration and lifecycle changes.");
-  let duration;
-  if (args.auto_enable_after != null) {
-    const match = /^(?:(\d+)\.)?(\d{1,2}):(\d{2}):(\d{2})$/.exec(args.auto_enable_after);
-    if (!match || +match[2] > 23 || +match[3] > 59 || +match[4] > 59) invalid("Use duration dd.hh:mm:ss.");
-    duration = (+match[1] || 0) * 86400 + +match[2] * 3600 + +match[3] * 60 + +match[4];
-    if (duration < 3600 || duration > 25 * 86400 || !args.restart_simulation) invalid("Scheduled enablement requires a simulation restart and a duration between 1 hour and 25 days.");
-    unavailable("Scheduled automatic enablement is reserved until its authorization and simulation eligibility can be verified at activation time.");
-  }
   const current = await getPolicy(args.identity);
   let replacementLocations = args.locations;
   if (args.location_changes) {
@@ -168,8 +151,7 @@ export async function setPolicy(args) {
     for (const [workload, fields] of Object.entries(args.location_changes)) {
       const scope = {};
       for (const [field, delta] of Object.entries(fields)) {
-        const native = scopeFields[workload]?.[field];
-        if (!native) unavailable(`Location delta ${workload}.${field} requires a verified backend mapping.`);
+        const native = scopeFields[workload][field];
         if (delta.add?.some(x => delta.remove?.some(y => key(x) === key(y)))) invalid("A location cannot be added and removed in the same delta.");
         const previous = array(current[native]);
         scope[field] = [...new Set(previous.filter(v => !delta.remove?.some(x => key(x) === key(v))).concat(delta.add ?? []))];
@@ -178,7 +160,7 @@ export async function setPolicy(args) {
       const locationsNow = scope.include_sites ?? scope.include_site_urls ?? [];
       const included = Object.entries(scope).some(([k, v]) => k.startsWith("include_") && Array.isArray(v) && v.length);
       scope.selection = array(current[locationName[workload]]).some(v => key(v) === "all") && !included ? "all" : "selected";
-      if (!locationsNow.length && !Object.entries(scope).some(([k, v]) => k.startsWith("include_") && Array.isArray(v) && v.length) && scope.selection !== "all") scope.selection = "none";
+      if (!locationsNow.length && !included && scope.selection !== "all") scope.selection = "none";
       replacementLocations[workload] = scope;
     }
   }
@@ -222,17 +204,15 @@ const nativePredicates = {
   recipients: "SentTo", recipient_groups: "SentToMemberOf", recipient_domains: "RecipientDomainIs", recipient_address_contains_words: "AnyOfRecipientAddressContainsWords",
   recipient_address_matches_patterns: "AnyOfRecipientAddressMatchesPatterns", subject_matches_patterns: "SubjectMatchesPatterns", senders: "From", sender_groups: "FromMemberOf",
 };
-const exchangeOnly = new Set(["document_size_over", "document_is_password_protected", "document_is_unsupported", "processing_limit_exceeded", "sender_address_contains_words", "sender_address_matches_patterns", "sender_domains", "sender_ip_ranges", "recipients", "recipient_groups", "recipient_domains", "recipient_address_contains_words", "recipient_address_matches_patterns", "subject_matches_patterns", "header_matches_patterns", "senders", "sender_groups"]);
+const exchangeOnly = new Set(["document_size_over", "document_is_password_protected", "document_is_unsupported", "processing_limit_exceeded", "sender_address_contains_words", "sender_address_matches_patterns", "sender_domains", "sender_ip_ranges", "recipients", "recipient_groups", "recipient_domains", "recipient_address_contains_words", "recipient_address_matches_patterns", "subject_matches_patterns", "senders", "sender_groups"]);
 function sensitiveParams(value) {
-  if (value.groups.length !== 1 || value.groups[0].operator !== "any") unavailable("Only a single OR detector group is currently supported; advanced Boolean/EDM encodings require verification.");
   return value.groups[0].detectors.map(d => {
-    if (d.kind !== "sit") unavailable("EDM and trainable-classifier mappings are not yet verified.");
     if (d.confidence_level && (d.min_confidence !== undefined || d.max_confidence !== undefined)) invalid("Choose named or numeric confidence, not both.");
     if (d.max_count !== undefined && d.max_count !== -1 && (d.max_count < 1 || d.max_count < (d.min_count ?? 1))) invalid("max_count must be unlimited (-1) or at least min_count.");
     const p = { Name: d.identity };
     if (d.min_count !== undefined) p.minCount = d.min_count;
     if (d.max_count !== undefined) p.maxCount = d.max_count;
-    if (d.confidence_level) p.minConfidence = { Low: 65, Medium: 75, High: 85 }[d.confidence_level];
+    if (d.confidence_level) p.minConfidence = CONFIDENCE[d.confidence_level];
     if (d.min_confidence !== undefined) p.minConfidence = d.min_confidence;
     if (d.max_confidence !== undefined) p.maxConfidence = d.max_confidence;
     if (p.minConfidence > p.maxConfidence) invalid("Minimum confidence cannot exceed maximum confidence.");
@@ -240,11 +220,9 @@ function sensitiveParams(value) {
   });
 }
 export function ruleParams(args, workload, parent) {
-  if (args.expression !== undefined || args.label_to_remove !== undefined) unavailable("Advanced expressions and label-removal encodings are not yet verified.");
   const p = {};
   for (const [part, prefix] of [["conditions", ""], ["exceptions", "ExceptIf"]]) for (const [field, value] of Object.entries(args[part] ?? {})) {
-    if (field !== "sensitive_information" && !nativePredicates[field] && !["document_created_by", "header_matches_patterns"].includes(field)) invalid(`Unknown rule predicate: ${field}.`);
-    if (field === "document_created_by" || field === "header_matches_patterns") unavailable(`The backend encoding for ${field} is not verified.`);
+    if (field !== "sensitive_information" && !nativePredicates[field]) invalid(`Unknown rule predicate: ${field}.`);
     if (exchangeOnly.has(field) && (workload !== "Exchange" || hasWorkload(parent, "sharepoint") || hasWorkload(parent, "onedrive"))) invalid(`${field} requires an Exchange-only parent policy.`);
     if (Array.isArray(value) && !value.length) unavailable("Clearing condition lists requires verified backend clear semantics.");
     if (/matches_patterns$/.test(field) && (value.length > 10 || value.some(s => s.length > 128))) invalid("Address/subject patterns support at most 10 expressions of 128 characters each.");

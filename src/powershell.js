@@ -41,16 +41,24 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { getToken } from "./auth.js";
+import { dlpAuthMode, envInt, maxQueued, platformSupported } from "./util.js";
 
-const EXEC_TIMEOUT_MS = Number(process.env.PURVIEW_EXEC_TIMEOUT_MS) || 60_000;
+// Limits are read per call, so the HTTP host can set tighter defaults, and once
+// at load so a bad value stops the server at startup.
+const execTimeout = () => envInt("PURVIEW_EXEC_TIMEOUT_MS", 60_000);
 // Connecting does more work than a normal cmdlet (module import, session
-// handshake), so it gets a larger budget than EXEC_TIMEOUT_MS.
-const CONNECT_TIMEOUT_MS = Number(process.env.PURVIEW_CONNECT_TIMEOUT_MS) || 300_000;
+// handshake), so it gets a larger budget.
+const connectTimeout = () => envInt("PURVIEW_CONNECT_TIMEOUT_MS", 300_000);
 // Acquiring the token happens HERE in Node, before anything is sent to pwsh, so
-// CONNECT_TIMEOUT_MS does not cover it. An interactive sign-in blocks on a human
+// the connect timeout does not cover it. An interactive sign-in blocks on a human
 // finding a browser window they may never have seen open, and without a bound of
 // its own that blocks the agent's tool call forever.
-const SIGNIN_TIMEOUT_MS = Number(process.env.PURVIEW_SIGNIN_TIMEOUT_MS) || CONNECT_TIMEOUT_MS;
+const signinTimeout = () => envInt("PURVIEW_SIGNIN_TIMEOUT_MS", connectTimeout());
+// One session runs one cmdlet at a time, so a deep queue means minutes of
+// waiting. Beyond PURVIEW_MAX_QUEUED_COMMANDS waiting commands (set by the HTTP
+// host, whose front door times out; unlimited on stdio), new ones are refused
+// at once. Nothing is sent, so a retry is safe.
+execTimeout(); signinTimeout(); maxQueued(); dlpAuthMode();
 // Resource scope for a Security & Compliance access token.
 const EXO_SCOPE = process.env.PURVIEW_EXO_SCOPE || "https://outlook.office365.com/.default";
 
@@ -62,10 +70,10 @@ const q = (s) => String(s).replace(/'/g, "''");
  * retry path can tell "the session went stale, safely re-run" apart from "the
  * command timed out and may already have applied" — see isAuthExpiry.
  */
-function bridgeError(message) {
+function bridgeError(message, extra = {}) {
   const err = new Error(message);
   err.bridge = true;
-  return err;
+  return Object.assign(err, extra);
 }
 
 /**
@@ -104,6 +112,25 @@ export function wrapScript(script, start, end) {
   ].join("\n");
 }
 
+/**
+ * The script for one cmdlet call. `cmdlet` and `selectProps` are constants from
+ * this codebase; `params` may hold model-supplied values, so it travels as
+ * base64 JSON and is rebuilt as a hashtable, never as script text. Exported for
+ * the real-pwsh smoke test.
+ */
+export function cmdletScript(cmdlet, params = {}, selectProps = null) {
+  const b64 = Buffer.from(JSON.stringify(params ?? {}), "utf8").toString("base64");
+  const select = selectProps?.length ? ` | Select-Object ${selectProps.join(",")}` : "";
+  return [
+    // -DateKind String (PowerShell 7.5+) keeps an ISO timestamp in free text,
+    // such as a Comment, as text; 7.4 would turn it into a DateTime.
+    "$__o = @{ AsHashtable = $true }; if ((Get-Command ConvertFrom-Json).Parameters.ContainsKey('DateKind')) { $__o.DateKind = 'String' }",
+    `$__p = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${b64}')) | ConvertFrom-Json @__o`,
+    "if ($null -eq $__p) { $__p = @{} }",
+    `${cmdlet} @__p${select}`,
+  ].join("\n");
+}
+
 /** Reject if `promise` has not settled within `ms`, so a tool call cannot hang. */
 function withTimeout(promise, ms, message) {
   let timer;
@@ -119,7 +146,7 @@ const PLATFORM_ERROR =
   "The DLP and sensitivity-label configuration tools need Security & Compliance PowerShell " +
   "(Connect-IPPSSession), which Microsoft only supports on Windows — it is not " +
   "available in PowerShell 7 on macOS or Linux. The Graph-backed label-policy-settings " +
-  "tool still works on this platform. See README → 'Platform support'. " +
+  "tool and get_auth_status still work on this platform. " +
   "Set PURVIEW_ALLOW_UNSUPPORTED_OS=1 to attempt the connection anyway.";
 
 // Derive the tenant org domain (Connect-IPPSSession -Organization) from the
@@ -140,6 +167,11 @@ class PowerShellBridge {
     this.proc = null;
     this.queue = Promise.resolve();
     this.connecting = null;
+    this.depth = 0; // commands running or waiting
+    // The child whose Connect-IPPSSession succeeded. A cmdlet only runs on this
+    // child: if a timeout replaced it while the cmdlet waited in the queue, the
+    // new child has no session, so the cmdlet is refused before it is sent.
+    this.connectedProc = null;
   }
 
   #ensureProc() {
@@ -149,6 +181,9 @@ class PowerShellBridge {
       stdio: ["pipe", "pipe", "pipe"],
     });
     this.proc.stdin.setDefaultEncoding("utf8");
+    // Decode in the stream so a multibyte character split across two chunks
+    // is not corrupted (chunk.toString() decodes each chunk on its own).
+    this.proc.stdout.setEncoding("utf8");
     // A write racing a dying child emits 'error' (EPIPE) on stdin; without a
     // listener that is an uncaught exception that kills the whole MCP server.
     this.proc.stdin.on?.("error", (err) => {
@@ -176,14 +211,14 @@ class PowerShellBridge {
   }
 
   // Serialise every request so their framed output blocks cannot interleave.
-  #enqueue(script, timeoutMs = EXEC_TIMEOUT_MS) {
-    const run = this.queue.then(() => this.#exec(script, timeoutMs));
+  #enqueue(script, timeoutMs = execTimeout(), connect = false) {
+    const run = this.queue.then(() => this.#exec(script, timeoutMs, connect));
     // Keep the chain alive even if a call rejects.
     this.queue = run.catch(() => {});
     return run;
   }
 
-  #exec(script, timeoutMs = EXEC_TIMEOUT_MS) {
+  #exec(script, timeoutMs, connect) {
     return new Promise((resolve, reject) => {
       this.#ensureProc();
       // Capture the process reference now: it can flip to null (via the
@@ -192,6 +227,11 @@ class PowerShellBridge {
       const proc = this.proc;
       if (!proc) {
         reject(bridgeError("PowerShell (pwsh) is not available. Install PowerShell 7+ or set PURVIEW_PWSH."));
+        return;
+      }
+      if (!connect && proc !== this.connectedProc) {
+        // Nothing was written to the child, so invoke() can reconnect and retry.
+        reject(bridgeError("The PowerShell session was reset before this command started.", { notStarted: true }));
         return;
       }
 
@@ -210,6 +250,7 @@ class PowerShellBridge {
         clearTimeout(timer);
         proc.stdout.off("data", onData);
         proc.off("exit", onExit);
+        proc.off("error", onError);
         fn(value);
       };
       const timer = setTimeout(() => {
@@ -222,7 +263,8 @@ class PowerShellBridge {
         // Settle before killing: kill() triggers the 'exit' listener, which
         // must not win the race and mask the timeout message.
         settle(reject, bridgeError(
-          `PowerShell command timed out after ${timeoutMs}ms. The PowerShell session was reset; the next call will reconnect.`
+          `PowerShell command timed out after ${timeoutMs}ms. The PowerShell session was reset; the next call will reconnect.`,
+          { uncertain: true }
         ));
         // The command is still running inside the child and would keep the
         // serialised session wedged for every later request — kill the child
@@ -230,7 +272,10 @@ class PowerShellBridge {
         proc.kill();
       }, timeoutMs);
       const onExit = () => {
-        settle(reject, bridgeError("The PowerShell process exited before responding. The next call will start a fresh session."));
+        settle(reject, bridgeError("The PowerShell process exited before responding. The next call will start a fresh session.", { uncertain: true }));
+      };
+      const onError = (err) => {
+        settle(reject, bridgeError(`PowerShell could not be started (${err.message}). Install PowerShell 7 or set PURVIEW_PWSH to its path.`));
       };
       const onData = (chunk) => {
         buffer += chunk.toString();
@@ -244,6 +289,7 @@ class PowerShellBridge {
         const body = nl === -1 ? "" : block.slice(nl + 1).trim();
 
         if (status === "__OK__") {
+          if (connect) this.connectedProc = proc;
           if (!body || body === "null") return settle(resolve, null);
           try {
             settle(resolve, JSON.parse(body));
@@ -256,11 +302,12 @@ class PowerShellBridge {
       };
       proc.stdout.on("data", onData);
       proc.on("exit", onExit);
+      proc.on("error", onError);
 
       try {
         proc.stdin.write(wrapScript(script, START, END));
       } catch (err) {
-        settle(reject, bridgeError(`Failed to send command to PowerShell: ${err.message}`));
+        settle(reject, bridgeError(`Failed to send command to PowerShell: ${err.message}`, { uncertain: true }));
       }
     });
   }
@@ -281,10 +328,7 @@ class PowerShellBridge {
    *     it HANGS on this server's piped-stdio child, so it is not the default.
    */
   #certCommand() {
-    const appId = process.env.PURVIEW_APP_ID;
-    const org = process.env.PURVIEW_ORGANIZATION;
-    const thumbprint = process.env.PURVIEW_CERT_THUMBPRINT;
-    if (!appId || !org || !thumbprint) return null;
+    const { PURVIEW_APP_ID: appId, PURVIEW_ORGANIZATION: org, PURVIEW_CERT_THUMBPRINT: thumbprint } = process.env;
     return (
       `Connect-IPPSSession -AppId '${q(appId)}' -CertificateThumbprint '${q(thumbprint)}' ` +
       `-Organization '${q(org)}' -ShowBanner:$false`
@@ -297,8 +341,8 @@ class PowerShellBridge {
   async #tokenCommand() {
     const token = await withTimeout(
       getToken(EXO_SCOPE),
-      SIGNIN_TIMEOUT_MS,
-      `Timed out after ${SIGNIN_TIMEOUT_MS}ms acquiring a Security & Compliance access token. ` +
+      signinTimeout(),
+      `Timed out after ${signinTimeout()}ms acquiring a Security & Compliance access token. ` +
         "If PURVIEW_AUTH_MODE is interactive, a browser sign-in window is waiting for you — " +
         "complete it and call the tool again, or switch to PURVIEW_AUTH_MODE=devicecode."
     );
@@ -339,9 +383,8 @@ class PowerShellBridge {
   }
 
   async #connectCommand() {
-    const cert = this.#certCommand();
-    if (cert) return cert;
-    const mode = (process.env.PURVIEW_DLP_AUTH_MODE || "token").toLowerCase();
+    const mode = dlpAuthMode();
+    if (mode === "certificate") return this.#certCommand();
     return mode === "interactive" ? this.#interactiveCommand() : this.#tokenCommand();
   }
 
@@ -359,7 +402,7 @@ class PowerShellBridge {
     const tokenMode = connect.includes("Connect-IPPSSession -AccessToken");
     return [
       "if (-not (Get-Module -ListAvailable -Name ExchangeOnlineManagement)) {",
-      "  throw 'The ExchangeOnlineManagement module is not installed. Run: Install-Module ExchangeOnlineManagement -Scope CurrentUser'",
+      "  throw 'The ExchangeOnlineManagement module is not installed. In PowerShell 7 run: Install-Module ExchangeOnlineManagement -RequiredVersion 3.9.2 -Scope CurrentUser'",
       "}",
       `Import-Module ExchangeOnlineManagement -MinimumVersion ${tokenMode ? "3.8.0" : "3.2.0"} -ErrorAction Stop`,
       ...(tokenMode ? ["if (-not (Get-Command Connect-IPPSSession -ErrorAction Stop).Parameters.ContainsKey('AccessToken')) { throw 'ExchangeOnlineManagement 3.8.0 or later with Connect-IPPSSession -AccessToken is required.' }"] : []),
@@ -372,16 +415,16 @@ class PowerShellBridge {
   /** Connect the IPPSSession on first use (single-flight, safe under concurrency). */
   #ensureConnected() {
     if (this.connecting) return this.connecting;
-    if (process.platform !== "win32" && process.env.PURVIEW_ALLOW_UNSUPPORTED_OS !== "1") {
+    if (!platformSupported()) {
       return Promise.reject(bridgeError(PLATFORM_ERROR));
     }
     // Acquiring the token is async, so the whole build-and-connect runs inside
     // the single-flight promise: concurrent first calls share one sign-in.
     this.connecting = (async () => {
-      // The sign-in inside connectScript() is bounded by SIGNIN_TIMEOUT_MS; this
+      // The sign-in inside connectScript() is bounded by signinTimeout(); this
       // budget covers only the module import and session handshake in pwsh.
       const script = await this.connectScript();
-      return this.#enqueue(script, CONNECT_TIMEOUT_MS);
+      return this.#enqueue(script, connectTimeout(), true);
     })().catch((err) => {
       this.connecting = null; // allow a retry on the next call
       throw err;
@@ -395,24 +438,38 @@ class PowerShellBridge {
    * @param {object} [params]  Splatted parameters; values may be nested arrays/objects.
    * @param {string[]} [selectProps]  If given, pipe through Select-Object to trim output.
    */
-  async invoke(cmdlet, params = {}, selectProps = null, retried = false) {
-    await this.#ensureConnected();
-    const b64 = Buffer.from(JSON.stringify(params ?? {}), "utf8").toString("base64");
-    const select = selectProps?.length ? ` | Select-Object ${selectProps.join(",")}` : "";
-    const script = [
-      `$__p = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${b64}')) | ConvertFrom-Json -AsHashtable`,
-      "if ($null -eq $__p) { $__p = @{} }",
-      `${cmdlet} @__p${select}`,
-    ].join("\n");
+  async invoke(cmdlet, params = {}, selectProps = null) {
+    // Counted from the start, so callers waiting on a slow sign-in count too.
+    if (this.depth > maxQueued()) {
+      throw bridgeError(`PowerShell is busy with ${this.depth} commands. Nothing was sent; retry in a few seconds.`, { notStarted: true });
+    }
+    this.depth += 1;
     try {
-      return await this.#enqueue(script);
+      return await this.#invoke(cmdlet, params, selectProps, false);
+    } finally {
+      this.depth -= 1;
+    }
+  }
+
+  async #invoke(cmdlet, params, selectProps, retried) {
+    const connection = this.#ensureConnected();
+    await connection;
+    try {
+      return await this.#enqueue(cmdletScript(cmdlet, params, selectProps));
     } catch (err) {
       // An injected access token lasts about an hour; when it lapses the cmdlet
       // rejects the call outright. Drop the stale session and reconnect once
       // (which mints a fresh token) before giving up.
-      if (!retried && isAuthExpiry(err, cmdlet)) {
-        this.connecting = null;
-        return this.invoke(cmdlet, params, selectProps, true);
+      // A command refused because the session was reset never ran: same retry.
+      if (!retried && (err.notStarted || isAuthExpiry(err, cmdlet, params))) {
+        // Only drop the session this call used: another caller may already
+        // have started a reconnect, and clearing that would run a second one.
+        if (this.connecting === connection) this.connecting = null;
+        return this.#invoke(cmdlet, params, selectProps, true);
+      }
+      // A write that timed out or lost its process may still have applied.
+      if (err.uncertain && !/^get-/i.test(cmdlet)) {
+        err.message += " The change may already have applied: read the object before retrying.";
       }
       throw err;
     }
@@ -452,10 +509,13 @@ const OPAQUE_NON_JSON_RESPONSE = "unexpected character encountered while parsing
  * reached the service, and re-running an unproven New-/Set-/Remove- is a worse
  * outcome than returning the error.
  */
-function isAuthExpiry(err, cmdlet = "") {
+function isAuthExpiry(err, cmdlet = "", params = {}) {
   if (!err || err.bridge) return false;
   const m = String(err.message || "").toLowerCase();
-  if (AUTH_REJECTIONS.some((s) => m.includes(s))) return true;
+  // A write's error can quote its own arguments (a policy named "Unauthorized
+  // access"), so a match inside an argument value is not evidence of expiry.
+  const args = /^get-/i.test(cmdlet) ? "" : JSON.stringify(params).toLowerCase();
+  if (AUTH_REJECTIONS.some((s) => m.includes(s) && !args.includes(s))) return true;
   return m.includes(OPAQUE_NON_JSON_RESPONSE) && /^get-/i.test(cmdlet);
 }
 
@@ -463,4 +523,6 @@ export const powershell = new PowerShellBridge();
 // Simulation uses a separate process/session, preserving the ordinary SCC
 // connection and queue for label and DLP management.
 const simulationBridge = new PowerShellBridge({ searchOnly: true });
+/** True when neither bridge has a command running or waiting. */
+export const bridgesIdle = () => powershell.depth === 0 && simulationBridge.depth === 0;
 powershell.invokeSimulation = (cmdlet, params, selectProps) => simulationBridge.invoke(cmdlet, params, selectProps);

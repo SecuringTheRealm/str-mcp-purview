@@ -6,8 +6,11 @@ const DESTROY = { readOnlyHint: false, destructiveHint: true, idempotentHint: tr
 const CONFIRM_DELETE = {
   type: "boolean",
   const: true,
-  description: "Deprecated compatibility argument. Does not authorize deletion; the server always requires form elicitation confirmation.",
+  description: "Deprecated and ignored; will be removed in 3.0. Does not authorize deletion: the server always requires form elicitation confirmation.",
 };
+
+// New policies start in test mode; the schema default is applied before the handler runs.
+const CREATE_MODE_DESCRIPTION = "Policy mode. Defaults to TestWithNotifications: matches are reported and users see policy tips, but nothing is blocked. Use Enable to enforce once impact is checked.";
 
 const STRING_LIST = (description) => ({
   type: "array",
@@ -206,7 +209,7 @@ const TOOLS = [
         label_id: { type: "string", description: "Sensitivity label SCC name or GUID, from list_sensitivity_labels" },
         include_protection_settings: {
           type: "boolean",
-          description: "Deprecated compatibility flag; protection configuration is now always returned.",
+          description: "Deprecated and ignored; will be removed in 3.0. Protection configuration is always returned.",
         },
       },
     },
@@ -424,7 +427,7 @@ const TOOLS = [
         mode: {
           type: "string",
           enum: ["Enable", "TestWithNotifications", "TestWithoutNotifications", "Disable"],
-          description: "Policy mode (default Enable)",
+          description: CREATE_MODE_DESCRIPTION, default: "TestWithNotifications",
         },
         comment: { type: "string", description: "Optional description/comment" },
         exchange_location: {
@@ -622,7 +625,7 @@ const TOOLS = [
         mode: {
           type: "string",
           enum: ["Enable", "TestWithNotifications", "TestWithoutNotifications", "Disable"],
-          description: "Policy mode (default Enable). Prefer a Test mode first to see impact before blocking.",
+          description: CREATE_MODE_DESCRIPTION, default: "TestWithNotifications",
         },
         comment: { type: "string", description: "Optional description/comment" },
       },
@@ -693,7 +696,7 @@ const TOOLS = [
         mode: {
           type: "string",
           enum: ["Enable", "TestWithNotifications", "TestWithoutNotifications", "Disable"],
-          description: "Policy mode (default Enable). Prefer a Test mode first.",
+          description: CREATE_MODE_DESCRIPTION, default: "TestWithNotifications",
         },
         comment: { type: "string", description: "Optional description/comment" },
       },

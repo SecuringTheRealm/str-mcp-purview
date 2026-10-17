@@ -6,8 +6,7 @@ const identifier = /^[a-z][a-z0-9_]*$/;
 /** Explicit extension contract. Operation names never determine safety. */
 export function defineCapability(entry) {
   const c = {
-    aliases: [], permissions: [], scopeAlternatives: [], features: [],
-    constraints: [], examples: [], executionKind: "immediate", ...entry,
+    scopeAlternatives: [], constraints: [], examples: [], deletes: false, ...entry,
   };
   c.tool = {
     name: c.id, description: c.description, inputSchema: c.inputSchema,
@@ -34,17 +33,18 @@ export function validateRegistry(entries) {
       || !["read-only", "non-destructive", "destructive"].includes(c.risk)
       || c.risk !== (c.destructive ? "destructive" : c.action === "read" ? "read-only" : "non-destructive")
       || (c.action === "read" && c.destructive)) throw new Error(`Invalid capability safety metadata: ${c.id}`);
-    if (c.executionKind !== "immediate") throw new Error(`Unsupported execution kind: ${c.id}`);
+    // `deletes` gates form-elicitation confirmation, so it is declared, never
+    // inferred, and a delete-like name or operation without it is refused.
+    if (typeof c.deletes !== "boolean" || (c.deletes && !c.destructive)
+      || (!c.deletes && (c.operation === "delete" || /^(remove|delete|purge)_/.test(c.id)))) throw new Error(`Invalid deletes flag: ${c.id}`);
     if (typeof c.handler !== "function") throw new Error(`Invalid capability handler: ${c.id}`);
-    for (const key of ["keywords", "aliases", "permissions", "features", "constraints"]) {
+    for (const key of ["keywords", "constraints"]) {
       if (!Array.isArray(c[key]) || c[key].some((s) => typeof s !== "string" || !s.trim())) throw new Error(`Invalid ${key}: ${c.id}`);
     }
     if (!c.keywords.length || !Array.isArray(c.scopeAlternatives)
       || c.scopeAlternatives.some((set) => !Array.isArray(set) || !set.length || set.some((s) => typeof s !== "string" || !s))) throw new Error(`Invalid capability metadata: ${c.id}`);
-    for (const id of [c.id, ...c.aliases]) {
-      if (!identifier.test(id) || identifiers.has(id)) throw new Error(`Duplicate or invalid capability ID/alias: ${id}`);
-      identifiers.add(id);
-    }
+    if (!identifier.test(c.id) || identifiers.has(c.id)) throw new Error(`Duplicate or invalid capability ID: ${c.id}`);
+    identifiers.add(c.id);
     if (c.inputSchema.type !== "object" || c.inputSchema.additionalProperties !== false) throw new Error(`Capability requires a closed object schema: ${c.id}`);
     const validate = ajv.compile(c.inputSchema);
     if (c.outputSchema) ajv.compile(c.outputSchema);
@@ -55,5 +55,5 @@ export function validateRegistry(entries) {
 
 export function indexCapabilities(entries) {
   validateRegistry(entries);
-  return new Map(entries.flatMap((c) => [c.id, ...c.aliases].map((id) => [id, c])));
+  return new Map(entries.map((c) => [c.id, c]));
 }

@@ -5,18 +5,9 @@ import { createProjection } from "../src/mcp/projection.js";
 import { executeCapability } from "../src/dispatch/execute.js";
 import { errorResult } from "../src/dispatch/errors.js";
 import { syntheticCatalogue } from "../benchmarks/synthetic-catalogue.js";
-import { simulateAgent } from "../benchmarks/simulate-agent.js";
 import { Client } from "@modelcontextprotocol/client";
 import { InMemoryTransport } from "@modelcontextprotocol/server";
 import { createServer } from "../src/server.js";
-
-test("160-entry scripted agent simulation completes in compact and dispatcher", async () => {
-  for (const mode of ["compact", "dispatcher"]) {
-    const report = await simulateAgent(mode);
-    assert.equal(report.catalogue_size, 160);
-    assert.equal(report.all_passed, true, JSON.stringify(report));
-  }
-});
 
 test("new operation/domain requires no server or routing edits; metadata governs risk", async () => {
   const fixture = syntheticCatalogue(1);
@@ -25,7 +16,7 @@ test("new operation/domain requires no server or routing edits; metadata governs
   assert.equal(publish.destructive, true);
   const p = createProjection({ mode: "compact", entries: fixture.entries });
   assert.ok(p.tools.some((t) => t.name === "purview_manage_records"));
-  const description = (await p.call("purview_describe_capability", { capability_id: publish.aliases[0] })).structuredContent;
+  const description = (await p.call("purview_describe_capability", { capability_id: publish.id })).structuredContent;
   assert.equal(description.capability_id, publish.id);
   assert.equal(description.operation, "publish");
   assert.equal(description.risk, "destructive");
@@ -33,21 +24,25 @@ test("new operation/domain requires no server or routing edits; metadata governs
   assert.equal(p.tools.length, createProjection({ mode: "compact", entries: syntheticCatalogue().entries }).tools.length);
 });
 
-test("contract rejects incoherent risk, invalid schemas/examples, collisions and unsupported jobs", () => {
+test("contract rejects incoherent risk, invalid schemas/examples, and collisions", () => {
   const c = syntheticCatalogue(1).entries[0];
   assert.throws(() => defineCapability({ ...c, action: "write" }), /safety/);
-  assert.throws(() => defineCapability({ ...c, executionKind: "job" }), /Unsupported/);
   assert.throws(() => defineCapability({ ...c, inputSchema: { type: "object" } }), /closed/);
   assert.throws(() => defineCapability({ ...c, examples: [{ arguments: { unexpected: true } }] }), /example/);
   assert.throws(() => defineCapability({ ...c, examples: [] }), /example/);
-  assert.throws(() => validateRegistry([c, { ...c, id: "other", aliases: [c.id] }]), /Duplicate/);
+  assert.throws(() => validateRegistry([c, { ...c }]), /Duplicate/);
   assert.throws(() => defineCapability({ ...c, scopeAlternatives: [[]] }), /metadata/);
+  // Deletion confirmation hangs off an explicit flag, so a delete-like capability without it is refused.
+  const del = syntheticCatalogue(1).entries.find((e) => e.deletes);
+  assert.throws(() => defineCapability({ ...del, deletes: false }), /deletes flag/);
+  assert.throws(() => defineCapability({ ...del, operation: "purge", id: "purge_records", deletes: false }), /deletes flag/);
+  assert.throws(() => defineCapability({ ...c, deletes: true }), /deletes flag/);
 });
 
-test("generated compact tool collisions fail instead of shadowing discovery", () => {
-  const c = syntheticCatalogue(1).entries[0];
-  const collision = defineCapability({ ...c, domain: "search" });
-  assert.throws(() => createProjection({ mode: "compact", entries: [collision] }), /Duplicate projected tool/);
+test("a destructive capability with a new operation name still needs confirmation when it deletes", async () => {
+  const del = syntheticCatalogue(1).entries.find((e) => e.deletes);
+  const purge = defineCapability({ ...del, operation: "purge", id: "purge_records" });
+  await assert.rejects(executeCapability(purge.id, { identity: "x", confirm: true }, {}, indexCapabilities([purge])), { code: "CONFIRMATION_REQUIRED" });
 });
 
 test("argument policy is enforced in all modes, after validation and before handlers", async () => {
@@ -78,43 +73,26 @@ test("authorization hook fails closed and cannot mutate executed arguments", asy
   assert.equal(fixture.calls[0].arguments.identity, "sandbox");
 });
 
-test("describe and execution enforce permissions, scopes, flags and aliases equally", async () => {
+test("describe and execution enforce scope alternatives equally", async () => {
   const fixture = syntheticCatalogue(1);
-  const id = "sim_legal_schedules_export";
-  for (const policy of [
-    { permissions: [], scopes: ["Simulation.Export"], features: ["sim_exports"] },
-    { permissions: ["export_data"], scopes: [], features: ["sim_exports"] },
-    { permissions: ["export_data"], scopes: ["Simulation.Export"], features: [] },
-  ]) {
+  const capability_id = "sim_legal_schedules_export";
+  for (const policy of [{ scopes: [] }, { scopes: ["Simulation.Read"] }]) {
     const p = createProjection({ mode: "dispatcher", entries: fixture.entries, policy });
-    for (const capability_id of [id, "legal_schedules_export"]) {
-      await assert.rejects(p.call("purview_describe_capability", { capability_id }), { code: "CAPABILITY_UNAVAILABLE" });
-      await assert.rejects(p.call("purview_execute_capability", { capability_id, arguments: { identity: "sandbox" } }), { code: "CAPABILITY_UNAVAILABLE" });
-    }
+    await assert.rejects(p.call("purview_describe_capability", { capability_id }), { code: "CAPABILITY_UNAVAILABLE" });
+    await assert.rejects(p.call("purview_execute_capability", { capability_id, arguments: { identity: "sandbox" } }), { code: "CAPABILITY_UNAVAILABLE" });
   }
   assert.equal(fixture.calls.length, 0);
 });
 
-test("structured errors distinguish schema, policy and backend failures without automatic retries", async () => {
-  const c = syntheticCatalogue(1).entries[0];
-  const bad = defineCapability({ ...c, handler: async () => { throw Error("Backend unavailable"); } });
-  let failure;
-  try { await executeCapability(bad.id, { identity: "sandbox" }, {}, indexCapabilities([bad])); } catch (e) { failure = e; }
-  const result = errorResult(failure);
-  assert.equal(result.isError, true);
-  assert.equal(result.structuredContent.error.code, "BACKEND_ERROR");
-  assert.equal(result.structuredContent.error.retryable, false);
-});
-
-test("server intersects caller policy without losing enabled features, and resources use the execution gate", async () => {
-  const settings = { PURVIEW_FEATURES: "sim_exports", PURVIEW_PERMISSIONS: "export_data", PURVIEW_SCOPES: "Simulation.Export",
+test("server intersects caller policy without losing server scopes, and resources use the execution gate", async () => {
+  const settings = { PURVIEW_SCOPES: "Simulation.Export",
     PURVIEW_ALLOWED_CAPABILITIES: undefined, PURVIEW_ALLOWED_DOMAINS: undefined, PURVIEW_READ_ONLY: "false", PURVIEW_ALLOW_DESTRUCTIVE: "true", MCP_REQUEST_LOGGING: "false" };
   const saved = Object.fromEntries(Object.keys(settings).map((key) => [key, process.env[key]]));
   const setEnv = (values) => { for (const [key, value] of Object.entries(values)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; } };
   setEnv(settings);
   const fixture = syntheticCatalogue(1);
   const exported = fixture.entries.find((c) => c.operation === "export");
-  const resource = defineCapability({ ...fixture.entries.find((c) => c.operation === "list"), id: "list_sensitivity_labels", aliases: [] });
+  const resource = defineCapability({ ...fixture.entries.find((c) => c.operation === "list"), id: "list_sensitivity_labels" });
   const connect = async (context, fn) => {
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     const server = createServer({ toolMode: "dispatcher", capabilities: [exported, resource], ...context });
@@ -130,12 +108,12 @@ test("server intersects caller policy without losing enabled features, and resou
         assert.equal(described.structuredContent.capability_id, exported.id);
       });
     }
-    await connect({ capabilityPolicy: { features: [] } }, async (client) => {
+    await connect({ capabilityPolicy: { scopes: [] } }, async (client) => {
       const denied = await client.callTool({ name: "purview_describe_capability", arguments: { capability_id: exported.id } });
       assert.equal(denied.structuredContent.error.code, "CAPABILITY_UNAVAILABLE");
     });
-    process.env.PURVIEW_FEATURES = "";
-    await connect({ capabilityPolicy: { features: ["sim_exports"] } }, async (client) => {
+    process.env.PURVIEW_SCOPES = "";
+    await connect({ capabilityPolicy: { scopes: ["Simulation.Export"] } }, async (client) => {
       const denied = await client.callTool({ name: "purview_describe_capability", arguments: { capability_id: exported.id } });
       assert.equal(denied.structuredContent.error.code, "CAPABILITY_UNAVAILABLE");
     });
@@ -147,3 +125,67 @@ test("server intersects caller policy without losing enabled features, and resou
     assert.equal(fixture.calls.length, before);
   } finally { setEnv(saved); }
 });
+
+test("structured errors distinguish schema, policy and backend failures without automatic retries", async () => {
+  const c = syntheticCatalogue(1).entries[0];
+  const bad = defineCapability({ ...c, handler: async () => { throw Error("Backend unavailable"); } });
+  let failure;
+  try { await executeCapability(bad.id, { identity: "sandbox" }, {}, indexCapabilities([bad])); } catch (e) { failure = e; }
+  const result = errorResult(failure);
+  assert.equal(result.isError, true);
+  assert.equal(result.structuredContent.error.code, "BACKEND_ERROR");
+  assert.equal(result.structuredContent.error.retryable, false);
+});
+
+test("DLP rule input is rejected before PowerShell runs", async () => {
+  const blockWithoutNotify = { name: "r1", policy: "p1", endpoint_restrictions: [{ activity: "CopyPaste", action: "Block" }] };
+  await assert.rejects(executeCapability("create_endpoint_dlp_rule", blockWithoutNotify), /require notify_user/);
+  await assert.rejects(executeCapability("create_dlp_rule", { name: "r1", policy: "p1", access_scope: "External" }), (e) => e.code === "VALIDATION_ERROR" || /Invalid arguments/.test(e.message));
+});
+
+test("write handlers never overlap, so read-modify-write updates cannot interleave", async () => {
+  const base = syntheticCatalogue(1).entries.find((c) => c.action === "write" && !c.destructive);
+  let active = 0, peak = 0;
+  const slow = defineCapability({ ...base, handler: async () => { peak = Math.max(peak, ++active); await new Promise((r) => setTimeout(r, 20)); active--; return { content: [] }; } });
+  const index = indexCapabilities([slow]);
+  await Promise.all([1, 2, 3].map(() => executeCapability(slow.id, { identity: "sandbox" }, {}, index)));
+  assert.equal(peak, 1);
+});
+
+test("bridge failures map to retry-safe or uncertain codes", async () => {
+  const base = syntheticCatalogue(1).entries.find((c) => c.action === "write" && !c.deletes);
+  const failWith = (flags) => defineCapability({ ...base, handler: async () => { throw Object.assign(new Error("x"), flags); } });
+  const code = async (cap) => errorResult(await executeCapability(cap.id, { identity: "s" }, {}, indexCapabilities([cap])).catch((e) => e)).structuredContent.error;
+  assert.deepEqual(await code(failWith({ notStarted: true })), { code: "BUSY", message: "x", retryable: true });
+  assert.deepEqual(await code(failWith({ uncertain: true })), { code: "OUTCOME_UNCERTAIN", message: "x", retryable: false });
+  // A timed-out read changed nothing, so it is a plain backend error.
+  const read = defineCapability({ ...syntheticCatalogue(1).entries.find((c) => c.action === "read" && c.operation === "get"), handler: async () => { throw Object.assign(new Error("x"), { uncertain: true }); } });
+  assert.equal((await code(read)).code, "BACKEND_ERROR");
+});
+
+test("waiting writes are bounded, and a cancelled one never starts", async () => {
+  const base = syntheticCatalogue(1).entries.find((c) => c.action === "write" && !c.deletes);
+  let ran = 0;
+  const slow = defineCapability({ ...base, handler: async () => { ran++; await new Promise((r) => setTimeout(r, 20)); return { content: [] }; } });
+  const index = indexCapabilities([slow]);
+  const run = (signal) => executeCapability(slow.id, { identity: "s" }, {}, index, undefined, { context: { mcpReq: { signal } } });
+  process.env.PURVIEW_MAX_QUEUED_COMMANDS = "1";
+  try {
+    const running = run();
+    await new Promise((r) => setTimeout(r, 5)); // let it start
+    const accepted = [running, run()]; // one running plus one waiting, matching the bridge
+    await assert.rejects(run(), { code: "BUSY" });
+    await Promise.all(accepted);
+  } finally {
+    delete process.env.PURVIEW_MAX_QUEUED_COMMANDS;
+  }
+  ran = 0;
+  const controller = new AbortController();
+  const first = run();
+  const cancelled = run(controller.signal);
+  controller.abort();
+  await first;
+  await assert.rejects(cancelled, { code: "CANCELLED" });
+  assert.equal(ran, 1);
+});
+

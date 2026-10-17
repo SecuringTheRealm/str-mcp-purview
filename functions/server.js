@@ -8,7 +8,7 @@
 // Auth in this hosting mode must be app-only (no human to sign in):
 //   Graph — AZURE_CLIENT_CERTIFICATE_PATH (+ AZURE_TENANT_ID/AZURE_CLIENT_ID).
 //   DLP/label-write — PURVIEW_APP_ID + PURVIEW_ORGANIZATION + PURVIEW_CERT_*.
-// See README → "Hosting on Azure Functions". Endpoint access itself is gated
+// See docs/hosting.md. Endpoint access itself is gated
 // by the Functions key (host.json DefaultAuthorizationLevel "function"); use
 // built-in auth (Easy Auth) as well for anything beyond a demo.
 
@@ -16,10 +16,16 @@ import { createServer as createHttpServer } from "node:http";
 import { createMcpHandler } from "@modelcontextprotocol/server";
 import { hostHeaderValidation, toNodeHandler } from "@modelcontextprotocol/node";
 import { createServer } from "../src/server.js";
+import { envFlag } from "../src/util.js";
 
 const PORT = Number(process.env.PORT || process.env.FUNCTIONS_CUSTOMHANDLER_PORT || 3000);
 const HOST = process.env.MCP_HTTP_HOST || (process.env.FUNCTIONS_CUSTOMHANDLER_PORT ? "0.0.0.0" : "127.0.0.1");
 const MAX_BODY_BYTES = 4 * 1024 * 1024;
+// Keep a request inside the Functions front door's ~230 s limit: bound the
+// PowerShell queue and the hosted (app-only, no human) sign-in and connect.
+process.env.PURVIEW_MAX_QUEUED_COMMANDS ||= "3";
+process.env.PURVIEW_SIGNIN_TIMEOUT_MS ||= "60000";
+process.env.PURVIEW_CONNECT_TIMEOUT_MS ||= "90000";
 if (process.env.FUNCTIONS_CUSTOMHANDLER_PORT && !process.env.MCP_CURSOR_SECRET) {
   throw new Error("MCP_CURSOR_SECRET is required on Azure Functions so pagination cursors work across scaled instances.");
 }
@@ -29,15 +35,24 @@ if (!Number.isSafeInteger(configuredConcurrency) || configuredConcurrency < 1) {
 }
 const MAX_CONCURRENT_REQUESTS = configuredConcurrency;
 let activeRequests = 0;
+// Loopback Host values are trusted only when nothing but this machine (or the
+// Azure Functions host, which proxies to the custom handler over loopback) can
+// reach the listener. On any other bind, a caller could send `Host: localhost`
+// to step around MCP_ALLOWED_HOSTS, so loopback names must be listed there.
+const LOOPBACK_HOSTS = ["localhost", "127.0.0.1", "[::1]"];
+const loopbackOnly =
+  Boolean(process.env.FUNCTIONS_CUSTOMHANDLER_PORT) ||
+  ["127.0.0.1", "::1", "localhost"].includes(HOST);
 const allowedHosts = [
-  "localhost",
-  "127.0.0.1",
-  "[::1]",
+  ...(loopbackOnly ? LOOPBACK_HOSTS : []),
   ...(process.env.MCP_ALLOWED_HOSTS ?? "")
     .split(",")
     .map((hostname) => hostname.trim().toLowerCase())
     .filter(Boolean),
 ];
+if (allowedHosts.length === 0) {
+  throw new Error(`MCP_ALLOWED_HOSTS is required when listening on ${HOST}; without it every request is refused.`);
+}
 const validateHost = hostHeaderValidation([...new Set(allowedHosts)]);
 const allowedOrigins = new Set(
   (process.env.MCP_ALLOWED_ORIGINS ?? "")
@@ -45,37 +60,52 @@ const allowedOrigins = new Set(
     .map((origin) => origin.trim())
     .filter(Boolean)
 );
+// Build one server now, so a bad setting such as PURVIEW_TOOL_MODE fails at
+// startup rather than as an opaque 500 on every request.
+createServer({ transport: "http" });
 const mcpHandler = createMcpHandler(
   (context) => createServer({ ...context, transport: "http" }),
   { responseMode: "json" }
 );
-const handleMcp = toNodeHandler(mcpHandler);
+const handleMcp = toNodeHandler(mcpHandler, { maxRequestBodySize: MAX_BODY_BYTES });
 
 function rpcError(code, message) {
   return JSON.stringify({ jsonrpc: "2.0", error: { code, message }, id: null });
 }
 
-function readBody(req) {
-  return new Promise((resolve, reject) => {
-    let size = 0;
-    const chunks = [];
-    req.on("data", (chunk) => {
-      size += chunk.length;
-      if (size > MAX_BODY_BYTES) {
-        reject(new Error("Request body too large."));
-        req.destroy();
-        return;
-      }
-      chunks.push(chunk);
-    });
-    req.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
-    req.on("error", reject);
-  });
+// App Service Authentication (Easy Auth) validates the caller's Entra token and
+// passes the result in X-MS-CLIENT-PRINCIPAL, removing any copy a client sent.
+// Trust it only when Easy Auth is on with "require authentication"; it gives
+// deletion confirmation a real caller (oid) and client (azp) to bind to.
+const TRUST_EASY_AUTH = envFlag("MCP_TRUST_EASY_AUTH", false);
+// Without Easy Auth in front, anyone could send that header, so refuse to start.
+if (TRUST_EASY_AUTH && (String(process.env.WEBSITE_AUTH_ENABLED).toLowerCase() !== "true" || !process.env.AZURE_TENANT_ID)) {
+  throw new Error("MCP_TRUST_EASY_AUTH needs App Service Authentication enabled (WEBSITE_AUTH_ENABLED) and AZURE_TENANT_ID set.");
 }
 
-const http = createHttpServer(async (req, res) => {
+function easyAuthIdentity(req) {
+  try {
+    const { claims = [] } = JSON.parse(Buffer.from(String(req.headers["x-ms-client-principal"] ?? ""), "base64").toString("utf8"));
+    const claim = (...types) => claims.find((c) => types.includes(c.typ))?.val;
+    const oid = claim("http://schemas.microsoft.com/identity/claims/objectidentifier", "oid");
+    const tid = claim("http://schemas.microsoft.com/identity/claims/tenantid", "tid");
+    const client = claim("azp", "appid");
+    // Callers from another tenant get no identity, so they are refused like anonymous ones.
+    return oid && client && tid === process.env.AZURE_TENANT_ID ? { token: "", clientId: client, scopes: [], extra: { principal: `${tid}/${oid}` } } : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+async function handle(req, res) {
   if (!validateHost(req, res)) return;
-  const url = new URL(req.url, "http://localhost");
+  let url;
+  try {
+    url = new URL(req.url, "http://localhost");
+  } catch {
+    res.writeHead(400, { "content-type": "application/json" }).end(rpcError(-32600, "Malformed request URL."));
+    return;
+  }
 
   if (url.pathname === "/healthz") {
     res.writeHead(200, { "content-type": "text/plain" }).end("ok");
@@ -96,44 +126,40 @@ const http = createHttpServer(async (req, res) => {
     res.writeHead(403, { "content-type": "application/json" }).end(rpcError(-32000, "Origin is not allowed."));
     return;
   }
-  if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
-    res.writeHead(415, { "content-type": "application/json" }).end(rpcError(-32600, "Content-Type must be application/json."));
-    return;
-  }
-  const accept = String(req.headers.accept ?? "").toLowerCase();
-  if (accept && !accept.includes("application/json") && !accept.includes("text/event-stream") && !accept.includes("*/*")) {
-    res.writeHead(406, { "content-type": "application/json" }).end(rpcError(-32600, "Accept must allow application/json or text/event-stream."));
-    return;
-  }
-  const contentLength = Number(req.headers["content-length"] ?? 0);
-  if (Number.isFinite(contentLength) && contentLength > MAX_BODY_BYTES) {
-    res.writeHead(413, { "content-type": "application/json" }).end(rpcError(-32600, "Request body too large."));
-    return;
+  if (TRUST_EASY_AUTH) {
+    req.auth = easyAuthIdentity(req);
+    if (!req.auth) {
+      res.writeHead(401, { "content-type": "application/json" }).end(rpcError(-32000, "Authentication by this tenant is required."));
+      return;
+    }
   }
   if (activeRequests >= MAX_CONCURRENT_REQUESTS) {
     res.writeHead(429, { "content-type": "application/json", "retry-after": "1" }).end(rpcError(-32000, "Server is busy. Retry after one second."));
     return;
   }
 
+  // The SDK handler checks Content-Type (415), Accept (406), body size (413)
+  // and JSON syntax (400) itself.
   activeRequests += 1;
   try {
-    const raw = await readBody(req);
-    let body;
-    try {
-      body = raw ? JSON.parse(raw) : null;
-    } catch {
-      res.writeHead(400, { "content-type": "application/json" }).end(rpcError(-32700, "Malformed JSON request body."));
-      return;
-    }
-    await handleMcp(req, res, body);
-  } catch (err) {
-    console.error("MCP request failed:", err);
-    if (!res.headersSent) {
-      res.writeHead(500, { "content-type": "application/json" }).end(rpcError(-32603, "Internal server error"));
-    }
+    await handleMcp(req, res);
   } finally {
     activeRequests -= 1;
   }
+}
+
+// A client gets 30 seconds to send its whole request (Node's default is 5
+// minutes); headersTimeout must not exceed it or it wins. Responses are not bound.
+const http = createHttpServer({ requestTimeout: 30_000, headersTimeout: 15_000 }, (req, res) => {
+  // Any failure ends this request with a 500; none can take the process down.
+  handle(req, res).catch((err) => {
+    console.error("MCP request failed:", err);
+    if (!res.headersSent) {
+      res.writeHead(500, { "content-type": "application/json" }).end(rpcError(-32603, "Internal server error"));
+    } else {
+      res.destroy();
+    }
+  });
 });
 
 http.listen(PORT, HOST, () => {
@@ -152,5 +178,12 @@ async function shutdown() {
   ]);
 }
 
-process.on("SIGINT", () => void shutdown());
-process.on("SIGTERM", () => void shutdown());
+// Exit explicitly: a live pwsh child keeps the event loop open, and exiting
+// closes its stdin, which ends it.
+// A half-open request would hold close() open, so stop waiting after 10 s.
+const stop = () => {
+  setTimeout(() => process.exit(0), 10_000).unref();
+  void shutdown().finally(() => process.exit(0));
+};
+process.on("SIGINT", stop);
+process.on("SIGTERM", stop);

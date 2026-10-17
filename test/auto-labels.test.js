@@ -97,6 +97,31 @@ test("closed schemas and host authorization deny writes in every projection", as
     assert.equal(calls.length, 0);
   }
 });
+test("schemas no longer advertise unsupported options, so they fail validation rather than FEATURE_UNAVAILABLE", async () => {
+  reset();
+  const p = createProjection({ mode: "full" });
+  const detector = (extra) => ({ sensitive_information: { operator: "any", groups: [{ name: "G", operator: "any", detectors: [{ kind: "sit", identity: "Credit Card Number", ...extra }] }] } });
+  const rejected = [
+    ["set_auto_label_policy", { identity: "Finance", enabled: true }],
+    ["set_auto_label_policy", { identity: "Finance", auto_enable_after: "1.00:00:00" }],
+    ["set_auto_label_policy", { identity: "Finance", existing_label_behaviour: { overwrite_workloads: ["Exchange"] } }],
+    ["set_auto_label_policy", { identity: "Finance", locations: { sharepoint: { selection: "adaptive" } } }],
+    ["set_auto_label_policy", { identity: "Finance", location_changes: { onedrive: { include_groups: { add: ["g"] } } } }],
+    ["create_auto_label_policy", { name: "N", behaviour: "remove", label_identity: "Confidential", locations: { sharepoint: { selection: "all" } } }],
+    ["set_auto_label_rule", { identity: "Identifiers", expression: { all: [] } }],
+    ["set_auto_label_rule", { identity: "Identifiers", label_to_remove: "Confidential" }],
+    ["set_auto_label_rule", { identity: "Identifiers", conditions: { header_matches_patterns: [{ header: "h", patterns: ["p"] }] } }],
+    ["set_auto_label_rule", { identity: "Identifiers", conditions: detector({ kind: "edm" }) }],
+    ["set_auto_label_rule", { identity: "Identifiers", conditions: { sensitive_information: { operator: "all", groups: [{ name: "G", operator: "all", detectors: [{ kind: "sit", identity: "X" }] }] } } }],
+  ];
+  for (const [id, args] of rejected) await assert.rejects(p.call(id, args), { code: "VALIDATION_ERROR" }, id + JSON.stringify(args));
+  assert.equal(calls.length, 0);
+});
+test("auto_enable_after accepts only null, which clears a scheduled enablement", async () => {
+  reset();
+  await createProjection({ mode: "full" }).call("set_auto_label_policy", { identity: "Finance", auto_enable_after: null });
+  assert.equal(writeCalls()[0].params.AutoEnableAfter, null);
+});
 test("policy pagination preserves filters and missing identity never returns an unrelated object", async () => {
   reset(); policies.push({ ...policies[0], Name: "Finance 2", Guid: "44444444-4444-4444-4444-444444444444" });
   const p = createProjection({ mode: "full" });
@@ -109,17 +134,15 @@ test("policy pagination preserves filters and missing identity never returns an 
 });
 test("unknown identities, stale revisions, unsupported features and workload mismatches never mutate", async () => {
   const attempts = [
-    () => auto.setPolicy({ identity: "Missing", mode: "Disable" }),
-    () => auto.setPolicy({ identity: "Finance", expected_revision: "stale", mode: "Disable" }),
-    () => auto.setPolicy({ identity: "Finance", retry_distribution: true, description: "changed" }),
-    () => auto.setPolicy({ identity: "Finance", mode: "Enable", restart_simulation: true }),
-    () => auto.setPolicy({ identity: "Finance", enabled: true }),
-    () => auto.setPolicy({ identity: "Finance", mode: "TestWithoutNotifications", restart_simulation: true, auto_enable_after: "1.00:00:00" }),
-    () => auto.createRule({ name: "Other", policy_identity: "Finance", workload: "Exchange", conditions }),
-    () => auto.setRule({ identity: "Identifiers", expression: { all: [] } }),
-    () => auto.setRule({ identity: "Identifiers", conditions: { subject_matches_patterns: ["x"] } }),
+    ["TARGET_NOT_FOUND", () => auto.setPolicy({ identity: "Missing", mode: "Disable" })],
+    ["REVISION_CONFLICT", () => auto.setPolicy({ identity: "Finance", expected_revision: "stale", mode: "Disable" })],
+    ["VALIDATION_ERROR", () => auto.setPolicy({ identity: "Finance", retry_distribution: true, description: "changed" })],
+    ["VALIDATION_ERROR", () => auto.setPolicy({ identity: "Finance", mode: "Enable", restart_simulation: true })],
+    ["VALIDATION_ERROR", () => auto.createRule({ name: "Other", policy_identity: "Finance", workload: "Exchange", conditions })],
+    ["FEATURE_UNAVAILABLE", () => auto.setRule({ identity: "Identifiers", conditions: { file_extensions: [] } })],
+    ["VALIDATION_ERROR", () => auto.setRule({ identity: "Identifiers", conditions: { subject_matches_patterns: ["x"] } })],
   ];
-  for (const attempt of attempts) { reset(); await assert.rejects(attempt); assert.equal(writeCalls().length, 0); }
+  for (const [code, attempt] of attempts) { reset(); await assert.rejects(attempt, { code }); assert.equal(writeCalls().length, 0); }
   reset(); calls.length = 0;
   await assert.rejects(auto.getPolicy(""), /Identity/);
 });

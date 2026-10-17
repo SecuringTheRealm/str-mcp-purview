@@ -39,7 +39,7 @@ mock.module("../src/auth.js", {
   namedExports: { getToken: async () => fakeJwt("admin@contoso.onmicrosoft.com") },
 });
 
-const { wrapScript, powershell } = await import("../src/powershell.js");
+const { wrapScript, cmdletScript, powershell } = await import("../src/powershell.js");
 
 /**
  * Send one framed script to a real pwsh over piped stdin and read the response.
@@ -53,6 +53,7 @@ function runReal(script, { timeoutMs = 15_000 } = {}) {
     });
     proc.stdin.setDefaultEncoding("utf8");
     proc.stdin.on("error", () => {});
+    proc.stdout.setEncoding("utf8");
 
     const id = randomUUID();
     const START = `@@PVW_${id}_START@@`;
@@ -100,6 +101,26 @@ test("real pwsh: framed protocol", SUITE, async (t) => {
     assert.equal(res.status, "__ERR__");
     assert.match(res.body, /boom/);
   });
+});
+
+test("real pwsh: hostile parameter values stay data", SUITE, async () => {
+  const hostile = {
+    Name: "x'; Write-Output pwned; '",
+    Comment: 'line1\n$(Write-Output pwned) `"quoted`" @{a=1}; exit 1\nCréé – ünïcode',
+  };
+  const echo = "function Get-Echo { param($Name, $Comment) [pscustomobject]@{ Name = $Name; Comment = $Comment } }";
+  const res = await runReal(`${echo}\n${cmdletScript("Get-Echo", hostile, ["Name", "Comment"])}`);
+  assert.equal(res.status, "__OK__", res.body);
+  assert.deepEqual(JSON.parse(res.body), hostile, "values must round-trip unchanged and never execute");
+});
+
+test("real pwsh: an ISO timestamp in free text stays text (PowerShell 7.5+)", SUITE, async (t) => {
+  const version = spawnSync(PWSH, ["-NoLogo", "-NoProfile", "-Command", "$PSVersionTable.PSVersion.Minor"], { encoding: "utf8" }).stdout.trim();
+  if (Number(version) < 5) return t.skip("needs PowerShell 7.5 for -DateKind");
+  const echo = "function Get-Echo { param($Comment) [pscustomobject]@{ Comment = $Comment; Type = $Comment.GetType().Name } }";
+  const res = await runReal(`${echo}\n${cmdletScript("Get-Echo", { Comment: "2025-03-01T10:00:00Z" }, ["Comment", "Type"])}`);
+  assert.equal(res.status, "__OK__", res.body);
+  assert.deepEqual(JSON.parse(res.body), { Comment: "2025-03-01T10:00:00Z", Type: "String" });
 });
 
 test("real pwsh: connect script", SUITE, async (t) => {

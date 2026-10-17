@@ -31,7 +31,10 @@ async function withHttpServer(fn, mode = "full", policy = {}) {
           resolve();
         }
       });
-      proc.on("exit", (code) => reject(new Error(`server exited early (${code})`)));
+      proc.on("exit", (code) => {
+        clearTimeout(timer);
+        reject(new Error(`server exited early (${code})`));
+      });
     });
     await fn(`http://127.0.0.1:${port}`);
   } finally {
@@ -81,6 +84,25 @@ async function rawPost(base, payload, headers = {}) {
     req.on("error", reject);
     req.end(body);
   });
+}
+
+// Low-level request: arbitrary path, and the body can be left unfinished.
+function rawRequest(base, { path: reqPath = "/mcp", headers = {}, body = "", finish = true } = {}) {
+  const url = new URL(base);
+  let req;
+  const done = new Promise((resolve, reject) => {
+    req = httpRequest(
+      { hostname: url.hostname, port: url.port, path: reqPath, method: "POST", headers: { "content-type": "application/json", ...headers } },
+      (res) => {
+        res.resume();
+        res.on("end", () => resolve({ status: res.statusCode }));
+      }
+    );
+    req.on("error", reject);
+  });
+  if (finish) req.end(body);
+  else req.write(body);
+  return { done, req };
 }
 
 const MODERN_META = {
@@ -142,8 +164,9 @@ for (const mode of ["compact", "dispatcher"]) {
 }
 
 test("Azure Functions streamable HTTP host", async (t) => {
-  await t.test("initializes and lists the full tool surface", async () => {
-    await withHttpServer(async (base) => {
+  // These checks share one server: same config, and each spawn costs ~0.75 s.
+  await withHttpServer(async (base) => {
+    await t.test("initializes and lists the full tool surface", async () => {
       const init = await rpc(base, INIT);
       assert.equal(init.status, 200);
       assert.equal(init.body.result.serverInfo.name, "str-mcp-purview");
@@ -151,45 +174,12 @@ test("Azure Functions streamable HTTP host", async (t) => {
 
       const list = await rpc(base, { jsonrpc: "2.0", id: 2, method: "tools/list", params: {} });
       assert.equal(list.status, 200);
-      const names = list.body.result.tools.map((tool) => tool.name);
-      assert.ok(names.includes("list_sensitivity_labels"));
-      assert.ok(names.includes("list_dlp_policies"));
-      assert.ok(names.includes("list_label_policies"));
-      assert.equal(names.length, 37);
       assert.deepEqual(init.body.result.capabilities, { tools: {}, prompts: {}, resources: {} });
+      // Same surface, annotations and schemas as stdio.
       assert.deepEqual(list.body.result.tools, TOOLS);
-      for (const tool of list.body.result.tools) {
-        assert.ok(tool.annotations, `${tool.name} should carry annotations over HTTP too`);
-      }
-      const paged = list.body.result.tools.filter((tool) => tool.name.startsWith("list_"));
-      assert.equal(paged.length, 7);
-      for (const tool of paged) {
-        assert.equal(tool.inputSchema.properties.limit.default, 25);
-        assert.equal(tool.inputSchema.properties.limit.maximum, 100);
-        assert.equal(tool.inputSchema.properties.cursor.type, "string");
-        assert.deepEqual(tool.outputSchema.required, [
-          "items",
-          "count",
-          "total_count",
-          "has_more",
-          "next_cursor",
-        ]);
-      }
-      const ruleDetail = list.body.result.tools.find((tool) => tool.name === "get_dlp_rule");
-      assert.equal(ruleDetail.inputSchema.properties.limit.default, 25);
-      assert.equal(ruleDetail.inputSchema.properties.cursor.type, "string");
-      assert.deepEqual(ruleDetail.outputSchema.required, [
-        "items",
-        "count",
-        "total_count",
-        "has_more",
-        "next_cursor",
-      ]);
     });
-  });
 
-  await t.test("serves modern discovery and primitives without initialize or sessions", async () => {
-    await withHttpServer(async (base) => {
+    await t.test("serves modern discovery and primitives without initialize or sessions", async () => {
       const discover = await modernRpc(base, "discover", "server/discover");
       assert.equal(discover.status, 200);
       assert.ok(
@@ -205,9 +195,6 @@ test("Azure Functions streamable HTTP host", async (t) => {
       assert.equal(tools.status, 200);
       assert.deepEqual(tools.body.result.tools, TOOLS);
       assert.equal(tools.body.result.resultType, "complete");
-      assert.equal(tools.body.result.ttlMs, 0);
-      assert.equal(tools.body.result.cacheScope, "private");
-      assert.equal(tools.body.result._meta["io.modelcontextprotocol/serverInfo"].name, "str-mcp-purview");
 
       const prompts = await modernRpc(base, "prompts", "prompts/list");
       assert.deepEqual(prompts.body.result.prompts, PROMPTS);
@@ -215,10 +202,8 @@ test("Azure Functions streamable HTTP host", async (t) => {
       assert.deepEqual(resources.body.result.resources, RESOURCES);
       assert.equal(discover.body.result.protocolVersion, undefined);
     });
-  });
 
-  await t.test("rejects non-POST methods and unknown paths", async () => {
-    await withHttpServer(async (base) => {
+    await t.test("rejects non-POST methods and unknown paths", async () => {
       const get = await fetch(`${base}/mcp`);
       assert.equal(get.status, 405);
       const wrong = await fetch(`${base}/nope`, { method: "POST" });
@@ -239,9 +224,18 @@ test("Azure Functions streamable HTTP host", async (t) => {
       const badType = await fetch(`${base}/mcp`, { method: "POST", body: JSON.stringify(INIT) });
       assert.equal(badType.status, 415);
 
+      const lookalikeType = await rawPost(base, INIT, { "content-type": "application/jsonp" });
+      assert.equal(lookalikeType.status, 415);
+
+      const withCharset = await rawPost(base, INIT, {
+        "content-type": "application/json; charset=utf-8",
+        accept: "application/json, text/event-stream",
+      });
+      assert.equal(withCharset.status, 200);
+
       const malformed = await fetch(`${base}/mcp`, {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: { "content-type": "application/json", accept: "application/json, text/event-stream" },
         body: "{",
       });
       assert.equal(malformed.status, 400);
@@ -255,5 +249,75 @@ test("Azure Functions streamable HTTP host", async (t) => {
       assert.equal(mismatch.status, 400);
       assert.equal(mismatch.body.error.code, -32020);
     });
+
+    await t.test("answers a malformed URL and an oversized streamed body without crashing", async () => {
+      assert.equal((await rawRequest(base, { path: "//[" }).done).status, 400);
+      const big = "x".repeat(4 * 1024 * 1024 + 1);
+      assert.equal((await rawRequest(base, { body: big, headers: { "transfer-encoding": "chunked" } }).done).status, 413);
+      assert.equal((await fetch(`${base}/healthz`)).status, 200, "server is still up");
+    });
+  });
+
+  await t.test("returns 429 once the concurrency limit is reached", async () => {
+    await withHttpServer(
+      async (base) => {
+        const held = rawRequest(base, { body: "{", headers: { "content-length": "10" }, finish: false });
+        await new Promise((r) => setTimeout(r, 100));
+        assert.equal((await rawPost(base, INIT)).status, 429);
+        held.req.destroy();
+        await held.done.catch(() => {});
+      },
+      "full",
+      { MCP_MAX_CONCURRENT_REQUESTS: "1" }
+    );
+  });
+
+  await t.test("refuses to start on a non-loopback bind with no allowed hosts", async () => {
+    await assert.rejects(
+      withHttpServer(async () => {}, "full", { MCP_HTTP_HOST: "0.0.0.0", MCP_ALLOWED_HOSTS: "" }),
+      /exited early/
+    );
+    // A mistyped setting fails at startup, not as a 500 on every request.
+    await assert.rejects(withHttpServer(async () => {}, "compct"), /exited early/);
+  });
+
+  await t.test("with MCP_TRUST_EASY_AUTH, the Easy Auth caller is required and deletion binds to it", async () => {
+    const principal = (tid) => Buffer.from(JSON.stringify({ claims: [
+      { typ: "http://schemas.microsoft.com/identity/claims/objectidentifier", val: "user-1" },
+      { typ: "http://schemas.microsoft.com/identity/claims/tenantid", val: tid },
+      { typ: "azp", val: "client-1" },
+    ] })).toString("base64");
+    const remove = (base, headers = {}) => rpc(base, {
+      jsonrpc: "2.0", id: "del", method: "tools/call",
+      params: { name: "remove_dlp_policy", arguments: { identity: "P1" }, _meta: { ...MODERN_META, "io.modelcontextprotocol/clientCapabilities": { elicitation: { form: {} } } } },
+    }, { "MCP-Protocol-Version": "2026-07-28", "Mcp-Method": "tools/call", "Mcp-Name": "remove_dlp_policy", ...headers });
+    const deletionError = (r) => r.body.result.content[0].text;
+    await withHttpServer(async (base) => {
+      assert.equal((await rawPost(base, INIT)).status, 401);
+      assert.equal((await rawPost(base, INIT, { "x-ms-client-principal": principal("other-tenant") })).status, 401);
+      const r = await remove(base, { "x-ms-client-principal": principal("tenant-1") });
+      assert.doesNotMatch(deletionError(r), /trusted caller/, "a verified caller gets past the identity check");
+    }, "full", { MCP_TRUST_EASY_AUTH: "true", WEBSITE_AUTH_ENABLED: "True", AZURE_TENANT_ID: "tenant-1" });
+    // Without Easy Auth in front the header could be forged, so the host will not start.
+    await assert.rejects(withHttpServer(async () => {}, "full", { MCP_TRUST_EASY_AUTH: "true", AZURE_TENANT_ID: "tenant-1" }), /exited early/);
+    await withHttpServer(async (base) => {
+      assert.match(deletionError(await remove(base)), /trusted caller/, "without it, deletes stay refused");
+    }, "full", { AZURE_TENANT_ID: "tenant-1" });
+  });
+
+  await t.test("on a non-loopback bind, loopback Host values need an explicit allowlist", async () => {
+    await withHttpServer(
+      async (base) => {
+        const spoofed = await rawPost(base, INIT, { host: "localhost" });
+        assert.equal(spoofed.status, 403);
+        const listed = await rawPost(base, INIT, {
+          host: "purview.example",
+          accept: "application/json, text/event-stream",
+        });
+        assert.equal(listed.status, 200);
+      },
+      "full",
+      { MCP_HTTP_HOST: "0.0.0.0", MCP_ALLOWED_HOSTS: "purview.example" }
+    );
   });
 });

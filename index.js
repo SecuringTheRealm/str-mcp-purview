@@ -9,5 +9,13 @@
 
 import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import { createServer } from "./src/server.js";
+import { bridgesIdle } from "./src/powershell.js";
 
+// Build one server now, so a bad setting stops startup with its message
+// instead of failing every connection with "Internal server error".
+createServer({ transport: "stdio" });
+// When the client goes away, finish what it already asked for, then exit: a live
+// pwsh child would otherwise keep this process (and its signed-in session)
+// running. Exiting closes the child's stdin, which ends it.
+process.stdin.once("end", () => setInterval(() => bridgesIdle() && process.exit(0), 100));
 await serveStdio((context) => createServer({ ...context, transport: "stdio" }));

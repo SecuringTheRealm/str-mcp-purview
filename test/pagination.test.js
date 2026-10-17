@@ -6,7 +6,7 @@ import { createListPaginator } from "../src/pagination.js";
 const format = (items) => items.map((item) => item.Name).join(",");
 
 function paginator(now = () => 1_000) {
-  return createListPaginator({ secret: "test-pagination-secret", cursorTtlMs: 100, now });
+  return createListPaginator({ secret: "test-pagination-secret-0123456789", cursorTtlMs: 100, now });
 }
 
 test("keyset pagination returns a complete ordered collection without overlap", () => {

@@ -6,7 +6,7 @@ import { validateArguments } from "../src/dispatch/execute.js";
 import { createDeletionConfirmation } from "../src/mcp/deletion-confirmation.js";
 
 const bytes = (value) => Buffer.byteLength(JSON.stringify(value));
-const policy = { permissions: ["export_data"], scopes: ["Simulation.Export"], features: ["sim_exports"] };
+const policy = { scopes: ["Simulation.Export"] };
 
 export async function simulateAgent(mode = "dispatcher") {
   const fixture = syntheticCatalogue();
@@ -54,9 +54,8 @@ export async function simulateAgent(mode = "dispatcher") {
     try { await p.call(tool, args); checks.push({ name, pass: false, reason: "Unexpected success" }); }
     catch (error) { checks.push({ name, pass: fixture.calls.length === before && error.code === code, code: error.code ?? "ERROR" }); }
   };
-  const restricted = createProjection({ mode, entries: fixture.entries, policy: { readOnly: true }, authorize });
+  const restricted = createProjection({ mode, entries: fixture.entries, policy: { readOnly: true, scopes: [] }, authorize });
   await expectDenied("describe hidden write", restricted, "purview_describe_capability", { capability_id: "sim_finance_markings_publish" });
-  await expectDenied("describe hidden alias", restricted, "purview_describe_capability", { capability_id: "finance_markings_publish" });
   await expectDenied("describe unknown ID", restricted, "purview_describe_capability", { capability_id: "unknown" });
   const invoke = mode === "compact" ? "purview_manage_labels" : "purview_execute_capability";
   const route = (id, args) => ({ [mode === "compact" ? "operation" : "capability_id"]: id, arguments: args });

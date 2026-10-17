@@ -3,10 +3,12 @@
     "purview": {
       "type": "stdio",
       "command": "node",
-      "args": ["index.js"],
+      "args": ["/absolute/path/to/str-mcp-purview/index.js"],
       "env": {
-        "AZURE_TENANT_ID": "your-tenant-id-or-domain",
-        "AZURE_CLIENT_ID": "your-public-client-app-id"
+        "AZURE_TENANT_ID": "<tenant-id>",
+        "AZURE_CLIENT_ID": "<client-id>",
+        "PURVIEW_ORGANIZATION": "<tenant>.onmicrosoft.com",
+        "PURVIEW_TOOL_MODE": "compact"
       }
     }
   }

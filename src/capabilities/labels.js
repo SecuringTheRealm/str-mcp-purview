@@ -1,6 +1,7 @@
 import * as labels from "../labels.js";
-import { text, pageResult } from "./shared.js";
-import { CapabilityError } from "../dispatch/errors.js";
+import { formatWriteResult } from "../format.js";
+import { text, pageResult, assertChanges } from "./shared.js";
+import { invalid } from "../dispatch/errors.js";
 
 export const handlers = {
   list_sensitivity_labels: async (args) => {
@@ -25,30 +26,32 @@ export const handlers = {
     const params = { Name: args.name, ...labels.labelSettingsParams(args) };
     if (args.is_label_group) params.IsLabelGroup = true;
     if (args.parent_id) params.ParentId = args.parent_id;
-    return text(labels.formatWriteResult("Create sensitivity label", await labels.createLabel(params)));
+    return text(formatWriteResult("Create sensitivity label", await labels.createLabel(params)));
   },
   set_sensitivity_label: async (args) => {
     const params = { Identity: args.identity, ...labels.labelSettingsParams(args) };
-    return text(labels.formatWriteResult("Set sensitivity label", await labels.setLabel(params)));
+    assertChanges(params);
+    return text(formatWriteResult("Set sensitivity label", await labels.setLabel(params)));
   },
   create_label_policy: async (args) => {
     if (!args.exchange_location?.length && !args.modern_group_location?.length) {
-      throw new CapabilityError("VALIDATION_ERROR", "Provide at least one nonempty exchange_location or modern_group_location target to publish labels.");
+      invalid("Provide at least one nonempty exchange_location or modern_group_location target to publish labels.");
     }
     const params = { Name: args.name, Labels: args.labels };
     if (args.exchange_location?.length) params.ExchangeLocation = args.exchange_location;
     if (args.modern_group_location?.length) params.ModernGroupLocation = args.modern_group_location;
     if (args.advanced_settings) params.AdvancedSettings = args.advanced_settings;
     if (args.comment) params.Comment = args.comment;
-    return text(labels.formatWriteResult("Create label policy", await labels.createLabelPolicy(params)));
+    return text(formatWriteResult("Create label policy", await labels.createLabelPolicy(params)));
   },
   set_label_policy: async (args) => {
     const params = { Identity: args.identity };
     if (args.add_labels?.length) params.AddLabels = args.add_labels;
     if (args.remove_labels?.length) params.RemoveLabels = args.remove_labels;
     if (args.advanced_settings) params.AdvancedSettings = args.advanced_settings;
-    if (args.comment) params.Comment = args.comment;
-    return text(labels.formatWriteResult("Set label policy", await labels.setLabelPolicy(params)));
+    if (args.comment != null) params.Comment = args.comment;
+    assertChanges(params);
+    return text(formatWriteResult("Set label policy", await labels.setLabelPolicy(params)));
   },
   remove_sensitivity_label: async (args) => {
     await labels.removeLabel({ Identity: args.identity, Confirm: false });

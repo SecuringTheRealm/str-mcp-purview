@@ -2,6 +2,6 @@
  * Existing list handlers retain {items,count,total_count,has_more,next_cursor}.
  * Completion is immediate; async jobs require an explicit future contract.
  */
-export function capabilityResult(data, summary) {
+export function capabilityResult(data, summary = JSON.stringify(data)) {
   return { content: [{ type: "text", text: summary }], structuredContent: data };
 }

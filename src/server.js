@@ -39,6 +39,14 @@ export function createServer(factoryContext = {}) {
   // Caller restrictions must be supplied by a trusted host, never request arguments.
   // Server policy and caller policy are intersected, so callers cannot widen access.
   const serverPolicy = policyFromEnvironment();
+  // A typo in an allow-list would silently hide tools, so name it instead.
+  for (const [setting, values, known] of [
+    ["PURVIEW_ALLOWED_CAPABILITIES", serverPolicy.allowedIds, new Set(entries.map((c) => c.id))],
+    ["PURVIEW_ALLOWED_DOMAINS", serverPolicy.domains, new Set(entries.map((c) => c.domain))],
+  ]) {
+    const unknown = (values ?? []).filter((v) => !known.has(v));
+    if (unknown.length) throw new Error(`${setting} has unknown values: ${unknown.join(", ")}.`);
+  }
   // Unspecified caller fields inherit server settings (notably enabled features).
   // Explicit caller fields can narrow them; the intersection below prevents widening.
   const callerPolicy = { ...serverPolicy, ...factoryContext.capabilityPolicy };
@@ -46,15 +54,18 @@ export function createServer(factoryContext = {}) {
     ...serverPolicy,
     allowedIds: entries.filter((c) => permitted(c, serverPolicy) && permitted(c, callerPolicy)).map((c) => c.id),
   };
-  const mode = toolMode(factoryContext.toolMode ?? process.env.PURVIEW_TOOL_MODE ?? "full");
+  const mode = toolMode(factoryContext.toolMode);
   const authorize = factoryContext.authorizeCapability;
-  const confirmDeletion = createDeletionConfirmation({
-    principal: factoryContext.confirmationPrincipal ?? (factoryContext.transport === "stdio" ? "local-stdio" : undefined),
+  // The verified caller, used to bind deletion confirmations and in the audit log.
+  const caller = {
+    principal: factoryContext.confirmationPrincipal ?? factoryContext.authInfo?.extra?.principal
+      ?? (factoryContext.transport === "stdio" ? "local-stdio" : undefined),
     client: factoryContext.transport === "stdio" ? randomUUID() : factoryContext.confirmationClientId ?? factoryContext.authInfo?.clientId,
-  });
+  };
+  const confirmDeletion = createDeletionConfirmation(caller);
   const projection = createProjection({ mode, policy, limit: searchLimit(), entries, authorize, confirmDeletion });
   const visibleResources = RESOURCES.filter((r) => policy.allowedIds.includes(resourceCapabilities[r.uri][0]));
-  const withLogging = createRequestLogger({ transport: factoryContext.transport, era: factoryContext.era });
+  const withLogging = createRequestLogger({ transport: factoryContext.transport, era: factoryContext.era, caller });
   const server = new Server(
     { name: "str-mcp-purview", version },
     {
@@ -80,7 +91,7 @@ export function createServer(factoryContext = {}) {
       clientCapabilities: context?.mcpReq?.envelope?.["io.modelcontextprotocol/clientCapabilities"] ?? server.getClientCapabilities(),
     }); }
     catch (error) { return errorResult(error); }
-  }, (request) => ({ tool: request.params.name })));
+  }, (request) => ({ tool: request.params.name, capability: request.params.arguments?.operation ?? request.params.arguments?.capability_id })));
   server.setRequestHandler("prompts/list", withLogging("prompts/list", async () => ({ prompts: PROMPTS })));
   server.setRequestHandler("prompts/get", withLogging("prompts/get", async (request) => {
     const result = getPrompt(request.params.name, request.params.arguments);
