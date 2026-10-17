@@ -91,7 +91,7 @@ Read once from the server's process environment, on stdio and HTTP alike. Auth v
 | `PURVIEW_PERMISSIONS` | unset (not checked) | Trusted permission labels matched against capability metadata. |
 | `PURVIEW_SCOPES` | unset (not checked) | Trusted Microsoft scope names matched against declared alternatives. |
 | `PURVIEW_FEATURES` | unset (none enabled) | Enabled feature flags for feature-gated capabilities. |
-| `PURVIEW_MAX_QUEUED_COMMANDS` | `3` | PowerShell commands that may wait behind the running one; more are refused at once (nothing sent, safe to retry). |
+| `PURVIEW_MAX_QUEUED_COMMANDS` | `3` on HTTP, unlimited on stdio | PowerShell commands that may wait behind the running one; more are refused at once (nothing sent, safe to retry). |
 
 `PURVIEW_READ_ONLY` and `PURVIEW_ALLOW_DESTRUCTIVE` accept `true`/`false` (also `1`/`0`, `yes`/`no`, case-insensitive); any other value stops the server at startup.
 

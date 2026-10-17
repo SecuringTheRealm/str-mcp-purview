@@ -294,10 +294,12 @@ test("Azure Functions streamable HTTP host", async (t) => {
     const deletionError = (r) => r.body.result.content[0].text;
     await withHttpServer(async (base) => {
       assert.equal((await rawPost(base, INIT)).status, 401);
-      assert.equal((await rawPost(base, INIT, { "x-ms-client-principal": principal("other-tenant") })).status, 403);
+      assert.equal((await rawPost(base, INIT, { "x-ms-client-principal": principal("other-tenant") })).status, 401);
       const r = await remove(base, { "x-ms-client-principal": principal("tenant-1") });
       assert.doesNotMatch(deletionError(r), /trusted caller/, "a verified caller gets past the identity check");
-    }, "full", { MCP_TRUST_EASY_AUTH: "true", AZURE_TENANT_ID: "tenant-1" });
+    }, "full", { MCP_TRUST_EASY_AUTH: "true", WEBSITE_AUTH_ENABLED: "True", AZURE_TENANT_ID: "tenant-1" });
+    // Without Easy Auth in front the header could be forged, so the host will not start.
+    await assert.rejects(withHttpServer(async () => {}, "full", { MCP_TRUST_EASY_AUTH: "true", AZURE_TENANT_ID: "tenant-1" }), /exited early/);
     await withHttpServer(async (base) => {
       assert.match(deletionError(await remove(base)), /trusted caller/, "without it, deletes stay refused");
     }, "full", { AZURE_TENANT_ID: "tenant-1" });

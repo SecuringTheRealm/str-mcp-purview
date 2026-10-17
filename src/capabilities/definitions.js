@@ -9,6 +9,9 @@ const CONFIRM_DELETE = {
   description: "Deprecated compatibility argument. Does not authorize deletion; the server always requires form elicitation confirmation.",
 };
 
+// New policies start in test mode; the schema default is applied before the handler runs.
+const CREATE_MODE_DESCRIPTION = "Policy mode. Defaults to TestWithNotifications: matches are reported and users see policy tips, but nothing is blocked. Use Enable to enforce once impact is checked.";
+
 const STRING_LIST = (description) => ({
   type: "array",
   items: { type: "string", minLength: 1 },
@@ -424,7 +427,7 @@ const TOOLS = [
         mode: {
           type: "string",
           enum: ["Enable", "TestWithNotifications", "TestWithoutNotifications", "Disable"],
-          description: "Policy mode. Defaults to TestWithNotifications: matches are reported and users see policy tips, but nothing is blocked. Use Enable to enforce once impact is checked.", default: "TestWithNotifications",
+          description: CREATE_MODE_DESCRIPTION, default: "TestWithNotifications",
         },
         comment: { type: "string", description: "Optional description/comment" },
         exchange_location: {
@@ -622,7 +625,7 @@ const TOOLS = [
         mode: {
           type: "string",
           enum: ["Enable", "TestWithNotifications", "TestWithoutNotifications", "Disable"],
-          description: "Policy mode. Defaults to TestWithNotifications: matches are reported and users see policy tips, but nothing is blocked. Use Enable to enforce once impact is checked.", default: "TestWithNotifications",
+          description: CREATE_MODE_DESCRIPTION, default: "TestWithNotifications",
         },
         comment: { type: "string", description: "Optional description/comment" },
       },
@@ -693,7 +696,7 @@ const TOOLS = [
         mode: {
           type: "string",
           enum: ["Enable", "TestWithNotifications", "TestWithoutNotifications", "Disable"],
-          description: "Policy mode. Defaults to TestWithNotifications: matches are reported and users see policy tips, but nothing is blocked. Use Enable to enforce once impact is checked.", default: "TestWithNotifications",
+          description: CREATE_MODE_DESCRIPTION, default: "TestWithNotifications",
         },
         comment: { type: "string", description: "Optional description/comment" },
       },

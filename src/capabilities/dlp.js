@@ -57,8 +57,7 @@ export const handlers = {
   },
   create_dlp_policy: async (args) => {
     const params = { Name: args.name };
-    // New policies start in test mode unless the caller asks to enforce.
-    params.Mode = args.mode ?? "TestWithNotifications";
+    if (args.mode) params.Mode = args.mode;
     if (args.comment) params.Comment = args.comment;
     if (args.exchange_location) params.ExchangeLocation = args.exchange_location;
     if (args.sharepoint_location) params.SharePointLocation = args.sharepoint_location;
@@ -119,8 +118,7 @@ export const handlers = {
       params,
       dlp.createPolicyLocationExceptionParams({ endpoint: args.endpoint_location_exception })
     );
-    // New policies start in test mode unless the caller asks to enforce.
-    params.Mode = args.mode ?? "TestWithNotifications";
+    if (args.mode) params.Mode = args.mode;
     if (args.comment) params.Comment = args.comment;
     assertLocationExceptions(params);
     return text(formatWriteResult("Create endpoint DLP policy", await dlp.createPolicy(params)));
@@ -136,8 +134,7 @@ export const handlers = {
       Locations: dlp.copilotLocations(args.user_scope),
       EnforcementPlanes: ["CopilotExperiences"],
     };
-    // New policies start in test mode unless the caller asks to enforce.
-    params.Mode = args.mode ?? "TestWithNotifications";
+    if (args.mode) params.Mode = args.mode;
     if (args.comment) params.Comment = args.comment;
     return text(formatWriteResult("Create Copilot DLP policy", await dlp.createPolicy(params)));
   },

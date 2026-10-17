@@ -21,6 +21,8 @@ import { envFlag } from "../src/util.js";
 const PORT = Number(process.env.PORT || process.env.FUNCTIONS_CUSTOMHANDLER_PORT || 3000);
 const HOST = process.env.MCP_HTTP_HOST || (process.env.FUNCTIONS_CUSTOMHANDLER_PORT ? "0.0.0.0" : "127.0.0.1");
 const MAX_BODY_BYTES = 4 * 1024 * 1024;
+// Bound the PowerShell queue so a request fails fast instead of outliving the front door.
+process.env.PURVIEW_MAX_QUEUED_COMMANDS ||= "3";
 if (process.env.FUNCTIONS_CUSTOMHANDLER_PORT && !process.env.MCP_CURSOR_SECRET) {
   throw new Error("MCP_CURSOR_SECRET is required on Azure Functions so pagination cursors work across scaled instances.");
 }
@@ -73,14 +75,20 @@ function rpcError(code, message) {
 // Trust it only when Easy Auth is on with "require authentication"; it gives
 // deletion confirmation a real caller (oid) and client (azp) to bind to.
 const TRUST_EASY_AUTH = envFlag("MCP_TRUST_EASY_AUTH", false);
-const CLAIM = { oid: "http://schemas.microsoft.com/identity/claims/objectidentifier", tid: "http://schemas.microsoft.com/identity/claims/tenantid" };
+// Without Easy Auth in front, anyone could send that header, so refuse to start.
+if (TRUST_EASY_AUTH && (String(process.env.WEBSITE_AUTH_ENABLED).toLowerCase() !== "true" || !process.env.AZURE_TENANT_ID)) {
+  throw new Error("MCP_TRUST_EASY_AUTH needs App Service Authentication enabled (WEBSITE_AUTH_ENABLED) and AZURE_TENANT_ID set.");
+}
 
 function easyAuthIdentity(req) {
   try {
     const { claims = [] } = JSON.parse(Buffer.from(String(req.headers["x-ms-client-principal"] ?? ""), "base64").toString("utf8"));
     const claim = (...types) => claims.find((c) => types.includes(c.typ))?.val;
-    const oid = claim(CLAIM.oid, "oid"), tid = claim(CLAIM.tid, "tid"), client = claim("azp", "appid");
-    return oid && tid && client ? { token: "", clientId: client, scopes: [], extra: { principal: `${tid}/${oid}`, tenant: tid } } : undefined;
+    const oid = claim("http://schemas.microsoft.com/identity/claims/objectidentifier", "oid");
+    const tid = claim("http://schemas.microsoft.com/identity/claims/tenantid", "tid");
+    const client = claim("azp", "appid");
+    // Callers from another tenant get no identity, so they are refused like anonymous ones.
+    return oid && client && tid === process.env.AZURE_TENANT_ID ? { token: "", clientId: client, scopes: [], extra: { principal: `${tid}/${oid}` } } : undefined;
   } catch {
     return undefined;
   }
@@ -118,11 +126,7 @@ async function handle(req, res) {
   if (TRUST_EASY_AUTH) {
     req.auth = easyAuthIdentity(req);
     if (!req.auth) {
-      res.writeHead(401, { "content-type": "application/json" }).end(rpcError(-32000, "Authentication required."));
-      return;
-    }
-    if (process.env.AZURE_TENANT_ID && req.auth.extra.tenant !== process.env.AZURE_TENANT_ID) {
-      res.writeHead(403, { "content-type": "application/json" }).end(rpcError(-32000, "Caller is from another tenant."));
+      res.writeHead(401, { "content-type": "application/json" }).end(rpcError(-32000, "Authentication by this tenant is required."));
       return;
     }
   }

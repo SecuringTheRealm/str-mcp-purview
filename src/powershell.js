@@ -53,9 +53,10 @@ const CONNECT_TIMEOUT_MS = Number(process.env.PURVIEW_CONNECT_TIMEOUT_MS) || 300
 // its own that blocks the agent's tool call forever.
 const SIGNIN_TIMEOUT_MS = Number(process.env.PURVIEW_SIGNIN_TIMEOUT_MS) || CONNECT_TIMEOUT_MS;
 // One session runs one cmdlet at a time, so a deep queue means minutes of
-// waiting (past the HTTP front door's timeout). Beyond this many waiting
-// commands, new ones are refused at once; nothing is sent, so a retry is safe.
-const MAX_QUEUED = Number(process.env.PURVIEW_MAX_QUEUED_COMMANDS) || 3;
+// waiting. Beyond PURVIEW_MAX_QUEUED_COMMANDS waiting commands (set by the HTTP
+// host, whose front door times out; unlimited on stdio), new ones are refused
+// at once. Nothing is sent, so a retry is safe. Read per call.
+const maxQueued = () => Number(process.env.PURVIEW_MAX_QUEUED_COMMANDS) || Infinity;
 // Resource scope for a Security & Compliance access token.
 const EXO_SCOPE = process.env.PURVIEW_EXO_SCOPE || "https://outlook.office365.com/.default";
 
@@ -209,7 +210,7 @@ class PowerShellBridge {
 
   // Serialise every request so their framed output blocks cannot interleave.
   #enqueue(script, timeoutMs = EXEC_TIMEOUT_MS, connect = false) {
-    if (!connect && this.depth > MAX_QUEUED) {
+    if (!connect && this.depth > maxQueued()) {
       return Promise.reject(bridgeError(`PowerShell is busy with ${this.depth} commands. Nothing was sent; retry in a few seconds.`));
     }
     this.depth += 1;

@@ -306,7 +306,7 @@ test("PowerShellBridge.invoke", async (t) => {
     }));
 
   await t.test("refuses new commands at once when too many are already waiting", () =>
-    withEnv({ PURVIEW_EXEC_TIMEOUT_MS: "40", PURVIEW_CONNECT_TIMEOUT_MS: "40" }, async () => {
+    withEnv({ PURVIEW_EXEC_TIMEOUT_MS: "40", PURVIEW_CONNECT_TIMEOUT_MS: "40", PURVIEW_MAX_QUEUED_COMMANDS: "3" }, async () => {
       const bridge = await freshBridge("queue-limit");
       useFakes();
       const warm = bridge.invoke("Get-Label", {});
