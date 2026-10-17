@@ -18,10 +18,10 @@ const { executeCapability } = await import("../src/dispatch/execute.js");
 const { filterCapabilities, policyFromEnvironment } = await import("../src/retrieval/filters.js");
 const { authStatus } = await import("../src/capabilities/auth.js");
 
-test("registry rejects missing metadata, unresolved handlers and colliding aliases", () => {
+test("registry rejects missing metadata, unresolved handlers and colliding IDs", () => {
   assert.equal(validateRegistry(capabilities), capabilities);
   const c = capabilities[0];
-  assert.throws(() => validateRegistry([c, { ...c, id: "other", aliases: [c.id] }]), /Duplicate/);
+  assert.throws(() => validateRegistry([c, { ...c }]), /Duplicate/);
   assert.throws(() => validateRegistry([{ ...c, handler: undefined }]), /handler/);
   assert.throws(() => validateRegistry([{ ...c, domain: "" }]), /domain/);
 });
@@ -39,9 +39,6 @@ test("domain, action and destructive filters run before ranking", () => {
   const graph = capabilities.find((c) => c.id === "get_label_policy_settings");
   assert.equal(filterCapabilities([graph], { scopes: [] }).length, 0);
   assert.equal(filterCapabilities([graph], { scopes: ["InformationProtectionPolicy.Read"] }).length, 1);
-  const restricted = { ...graph, permissions: ["review"], features: ["preview"] };
-  assert.equal(filterCapabilities([restricted], { permissions: [], features: ["preview"] }).length, 0);
-  assert.equal(filterCapabilities([restricted], { permissions: ["review"], features: [] }).length, 0);
 });
 
 test("mode projections carry conservative annotations and honour read-only policy", () => {

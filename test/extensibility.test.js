@@ -16,7 +16,7 @@ test("new operation/domain requires no server or routing edits; metadata governs
   assert.equal(publish.destructive, true);
   const p = createProjection({ mode: "compact", entries: fixture.entries });
   assert.ok(p.tools.some((t) => t.name === "purview_manage_records"));
-  const description = (await p.call("purview_describe_capability", { capability_id: publish.aliases[0] })).structuredContent;
+  const description = (await p.call("purview_describe_capability", { capability_id: publish.id })).structuredContent;
   assert.equal(description.capability_id, publish.id);
   assert.equal(description.operation, "publish");
   assert.equal(description.risk, "destructive");
@@ -24,25 +24,24 @@ test("new operation/domain requires no server or routing edits; metadata governs
   assert.equal(p.tools.length, createProjection({ mode: "compact", entries: syntheticCatalogue().entries }).tools.length);
 });
 
-test("contract rejects incoherent risk, invalid schemas/examples, collisions and unsupported jobs", () => {
+test("contract rejects incoherent risk, invalid schemas/examples, and collisions", () => {
   const c = syntheticCatalogue(1).entries[0];
   assert.throws(() => defineCapability({ ...c, action: "write" }), /safety/);
-  assert.throws(() => defineCapability({ ...c, executionKind: "job" }), /Unsupported/);
   assert.throws(() => defineCapability({ ...c, inputSchema: { type: "object" } }), /closed/);
   assert.throws(() => defineCapability({ ...c, examples: [{ arguments: { unexpected: true } }] }), /example/);
   assert.throws(() => defineCapability({ ...c, examples: [] }), /example/);
-  assert.throws(() => validateRegistry([c, { ...c, id: "other", aliases: [c.id] }]), /Duplicate/);
+  assert.throws(() => validateRegistry([c, { ...c }]), /Duplicate/);
   assert.throws(() => defineCapability({ ...c, scopeAlternatives: [[]] }), /metadata/);
   // Deletion confirmation hangs off an explicit flag, so a delete-like capability without it is refused.
   const del = syntheticCatalogue(1).entries.find((e) => e.deletes);
   assert.throws(() => defineCapability({ ...del, deletes: false }), /deletes flag/);
-  assert.throws(() => defineCapability({ ...del, operation: "purge", id: "purge_records", aliases: [], deletes: false }), /deletes flag/);
+  assert.throws(() => defineCapability({ ...del, operation: "purge", id: "purge_records", deletes: false }), /deletes flag/);
   assert.throws(() => defineCapability({ ...c, deletes: true }), /deletes flag/);
 });
 
 test("a destructive capability with a new operation name still needs confirmation when it deletes", async () => {
   const del = syntheticCatalogue(1).entries.find((e) => e.deletes);
-  const purge = defineCapability({ ...del, operation: "purge", id: "purge_records", aliases: [] });
+  const purge = defineCapability({ ...del, operation: "purge", id: "purge_records" });
   await assert.rejects(executeCapability(purge.id, { identity: "x", confirm: true }, {}, indexCapabilities([purge])), { code: "CONFIRMATION_REQUIRED" });
 });
 
@@ -74,32 +73,26 @@ test("authorization hook fails closed and cannot mutate executed arguments", asy
   assert.equal(fixture.calls[0].arguments.identity, "sandbox");
 });
 
-test("describe and execution enforce permissions, scopes, flags and aliases equally", async () => {
+test("describe and execution enforce scope alternatives equally", async () => {
   const fixture = syntheticCatalogue(1);
-  const id = "sim_legal_schedules_export";
-  for (const policy of [
-    { permissions: [], scopes: ["Simulation.Export"], features: ["sim_exports"] },
-    { permissions: ["export_data"], scopes: [], features: ["sim_exports"] },
-    { permissions: ["export_data"], scopes: ["Simulation.Export"], features: [] },
-  ]) {
+  const capability_id = "sim_legal_schedules_export";
+  for (const policy of [{ scopes: [] }, { scopes: ["Simulation.Read"] }]) {
     const p = createProjection({ mode: "dispatcher", entries: fixture.entries, policy });
-    for (const capability_id of [id, "legal_schedules_export"]) {
-      await assert.rejects(p.call("purview_describe_capability", { capability_id }), { code: "CAPABILITY_UNAVAILABLE" });
-      await assert.rejects(p.call("purview_execute_capability", { capability_id, arguments: { identity: "sandbox" } }), { code: "CAPABILITY_UNAVAILABLE" });
-    }
+    await assert.rejects(p.call("purview_describe_capability", { capability_id }), { code: "CAPABILITY_UNAVAILABLE" });
+    await assert.rejects(p.call("purview_execute_capability", { capability_id, arguments: { identity: "sandbox" } }), { code: "CAPABILITY_UNAVAILABLE" });
   }
   assert.equal(fixture.calls.length, 0);
 });
 
-test("server intersects caller policy without losing enabled features, and resources use the execution gate", async () => {
-  const settings = { PURVIEW_FEATURES: "sim_exports", PURVIEW_PERMISSIONS: "export_data", PURVIEW_SCOPES: "Simulation.Export",
+test("server intersects caller policy without losing server scopes, and resources use the execution gate", async () => {
+  const settings = { PURVIEW_SCOPES: "Simulation.Export",
     PURVIEW_ALLOWED_CAPABILITIES: undefined, PURVIEW_ALLOWED_DOMAINS: undefined, PURVIEW_READ_ONLY: "false", PURVIEW_ALLOW_DESTRUCTIVE: "true", MCP_REQUEST_LOGGING: "false" };
   const saved = Object.fromEntries(Object.keys(settings).map((key) => [key, process.env[key]]));
   const setEnv = (values) => { for (const [key, value] of Object.entries(values)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; } };
   setEnv(settings);
   const fixture = syntheticCatalogue(1);
   const exported = fixture.entries.find((c) => c.operation === "export");
-  const resource = defineCapability({ ...fixture.entries.find((c) => c.operation === "list"), id: "list_sensitivity_labels", aliases: [] });
+  const resource = defineCapability({ ...fixture.entries.find((c) => c.operation === "list"), id: "list_sensitivity_labels" });
   const connect = async (context, fn) => {
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     const server = createServer({ toolMode: "dispatcher", capabilities: [exported, resource], ...context });
@@ -115,12 +108,12 @@ test("server intersects caller policy without losing enabled features, and resou
         assert.equal(described.structuredContent.capability_id, exported.id);
       });
     }
-    await connect({ capabilityPolicy: { features: [] } }, async (client) => {
+    await connect({ capabilityPolicy: { scopes: [] } }, async (client) => {
       const denied = await client.callTool({ name: "purview_describe_capability", arguments: { capability_id: exported.id } });
       assert.equal(denied.structuredContent.error.code, "CAPABILITY_UNAVAILABLE");
     });
-    process.env.PURVIEW_FEATURES = "";
-    await connect({ capabilityPolicy: { features: ["sim_exports"] } }, async (client) => {
+    process.env.PURVIEW_SCOPES = "";
+    await connect({ capabilityPolicy: { scopes: ["Simulation.Export"] } }, async (client) => {
       const denied = await client.callTool({ name: "purview_describe_capability", arguments: { capability_id: exported.id } });
       assert.equal(denied.structuredContent.error.code, "CAPABILITY_UNAVAILABLE");
     });

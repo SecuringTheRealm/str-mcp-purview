@@ -88,20 +88,18 @@ Read once from the server's process environment, on stdio and HTTP alike. Auth v
 | `PURVIEW_ALLOW_DESTRUCTIVE` | `true` | `false` denies capabilities marked destructive (deletes and `set_*` updates). |
 | `PURVIEW_ALLOWED_CAPABILITIES` | unset (all allowed) | Comma-separated canonical IDs. Set but empty denies all. An unknown ID stops the server. |
 | `PURVIEW_ALLOWED_DOMAINS` | unset (all allowed) | Comma-separated `labels`, `dlp`, `classification`, `auth` (case-insensitive). Set but empty denies all. An unknown domain stops the server. |
-| `PURVIEW_PERMISSIONS` | unset (not checked) | Trusted permission labels matched against capability metadata. |
 | `PURVIEW_SCOPES` | unset (not checked) | Trusted Microsoft scope names matched against declared alternatives. |
-| `PURVIEW_FEATURES` | unset (none enabled) | Enabled feature flags for feature-gated capabilities. |
 | `PURVIEW_MAX_QUEUED_COMMANDS` | `3` on HTTP, unlimited on stdio | Positive integer. PowerShell commands, and write capabilities, that may wait behind the running one. More are refused at once with `BUSY` (nothing sent; retry). A write whose caller has cancelled never starts (`CANCELLED`). |
 
 `PURVIEW_READ_ONLY` and `PURVIEW_ALLOW_DESTRUCTIVE` accept `true`/`false` (also `1`/`0`, `yes`/`no`, case-insensitive). Settings are checked once when the server is built at startup, on stdio and HTTP alike, and a bad value stops the server with a message naming it instead of failing each request. The same applies to the numeric, enum and secret settings in the [auth](auth.md#auth-environment-variables) and [HTTP host](hosting.md#http-host-environment-variables) tables.
 
 ### Capability policies and retrieval
 
-Retrieval runs entirely in-process: permission/domain/action/risk filtering, then deterministic BM25 with ID/alias, domain and verb boosts. There is no routing LLM, vector database, network search or new dependency. The client model chooses among the candidates and supplies arguments; the server resolves the exact ID and validates the original schema before calling Graph or PowerShell. Unknown fields, denied operations and mismatched compact domains are rejected.
+Retrieval runs entirely in-process: scope/domain/action/risk filtering, then deterministic BM25 with ID, domain and verb boosts. There is no routing LLM, vector database, network search or new dependency. The client model chooses among the candidates and supplies arguments; the server resolves the exact ID and validates the original schema before calling Graph or PowerShell. Unknown fields, denied operations and mismatched compact domains are rejected.
 
 Server-side restrictions are set through the environment variables [listed above](#environment-variables).
 
-These restrictions apply to discovery, retrieval and execution; resources cannot bypass them. Unset permission/scope lists defer to backend authorization. Currently Graph policy settings declare delegated/application scope alternatives; PowerShell operations still rely on Microsoft's tenant RBAC, not an inferred role list. Configuration values do **not** grant Microsoft permissions, and the HTTP host does not automatically turn caller claims into capability scopes. A trusted embedding host can pass `capabilityPolicy` to `createServer`; it is intersected with server restrictions, never widened by tool arguments. Permission-sensitive discovery is privately cached with zero TTL.
+These restrictions apply to discovery, retrieval and execution; resources cannot bypass them. An unset scope list defers to backend authorization. Currently Graph policy settings declare delegated/application scope alternatives; PowerShell operations still rely on Microsoft's tenant RBAC, not an inferred role list. Configuration values do **not** grant Microsoft permissions, and the HTTP host does not automatically turn caller claims into capability scopes. A trusted embedding host can pass `capabilityPolicy` to `createServer`; it is intersected with server restrictions, never widened by tool arguments. Policy-sensitive discovery is privately cached with zero TTL.
 
 Catalogue resources return only the first 25 items with pagination information. Existing list capabilities remain bounded (default 25, maximum 100); backend calls may still fetch a full collection before local filtering/pagination. This reduces model context, not necessarily backend retrieval cost.
 
