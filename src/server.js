@@ -3,6 +3,7 @@
 // Chris Lloyd-Jones (Sealjay) & Josh McDonald (KnowledgeRatio).
 // Licensed under MIT — this attribution notice must be retained (see LICENCE).
 // MCP transport registration; capability implementations and metadata live separately.
+import { createRequire } from "node:module";
 import { Server, ProtocolError, ProtocolErrorCode } from "@modelcontextprotocol/server";
 import { capabilities } from "./capabilities/registry.js";
 import { createProjection, toolMode, searchLimit } from "./mcp/projection.js";
@@ -13,6 +14,9 @@ import { createRequestLogger } from "./request-logging.js";
 import { errorResult } from "./dispatch/errors.js";
 import { indexCapabilities } from "./capabilities/contract.js";
 import { createDeletionConfirmation } from "./mcp/deletion-confirmation.js";
+
+// serverInfo.version comes from package.json so a release bump cannot drift.
+const { version } = createRequire(import.meta.url)("../package.json");
 import { randomUUID } from "node:crypto";
 
 // Compatibility exports for consumers that inspect the full surface.
@@ -52,7 +56,7 @@ export function createServer(factoryContext = {}) {
   const visibleResources = RESOURCES.filter((r) => policy.allowedIds.includes(resourceCapabilities[r.uri][0]));
   const withLogging = createRequestLogger({ transport: factoryContext.transport, era: factoryContext.era });
   const server = new Server(
-    { name: "str-mcp-purview", version: "2.0.0" },
+    { name: "str-mcp-purview", version },
     {
       capabilities: { tools: {}, prompts: {}, resources: {} },
       instructions: projection.instructions,

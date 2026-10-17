@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { request as httpRequest } from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -146,7 +147,7 @@ test("Azure Functions streamable HTTP host", async (t) => {
       const init = await rpc(base, INIT);
       assert.equal(init.status, 200);
       assert.equal(init.body.result.serverInfo.name, "str-mcp-purview");
-      assert.equal(init.body.result.serverInfo.version, "2.0.0");
+      assert.equal(init.body.result.serverInfo.version, JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version);
 
       const list = await rpc(base, { jsonrpc: "2.0", id: 2, method: "tools/list", params: {} });
       assert.equal(list.status, 200);
