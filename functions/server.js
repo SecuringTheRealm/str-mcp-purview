@@ -44,6 +44,9 @@ const allowedHosts = [
     .map((hostname) => hostname.trim().toLowerCase())
     .filter(Boolean),
 ];
+if (allowedHosts.length === 0) {
+  throw new Error(`MCP_ALLOWED_HOSTS is required when listening on ${HOST}; without it every request is refused.`);
+}
 const validateHost = hostHeaderValidation([...new Set(allowedHosts)]);
 const allowedOrigins = new Set(
   (process.env.MCP_ALLOWED_ORIGINS ?? "")
@@ -68,8 +71,9 @@ function readBody(req) {
     req.on("data", (chunk) => {
       size += chunk.length;
       if (size > MAX_BODY_BYTES) {
-        reject(new Error("Request body too large."));
-        req.destroy();
+        // Stop reading but keep the socket, so the caller gets a 413 back.
+        req.pause();
+        reject(Object.assign(new Error("Request body too large."), { status: 413 }));
         return;
       }
       chunks.push(chunk);
@@ -79,9 +83,15 @@ function readBody(req) {
   });
 }
 
-const http = createHttpServer(async (req, res) => {
+async function handle(req, res) {
   if (!validateHost(req, res)) return;
-  const url = new URL(req.url, "http://localhost");
+  let url;
+  try {
+    url = new URL(req.url, "http://localhost");
+  } catch {
+    res.writeHead(400, { "content-type": "application/json" }).end(rpcError(-32600, "Malformed request URL."));
+    return;
+  }
 
   if (url.pathname === "/healthz") {
     res.writeHead(200, { "content-type": "text/plain" }).end("ok");
@@ -136,14 +146,29 @@ const http = createHttpServer(async (req, res) => {
     }
     await handleMcp(req, res, body);
   } catch (err) {
-    console.error("MCP request failed:", err);
-    if (!res.headersSent) {
-      res.writeHead(500, { "content-type": "application/json" }).end(rpcError(-32603, "Internal server error"));
+    if (err.status === 413 && !res.headersSent) {
+      res.writeHead(413, { "content-type": "application/json", connection: "close" }).end(rpcError(-32600, "Request body too large."));
+      return;
     }
+    throw err;
   } finally {
     activeRequests -= 1;
   }
+}
+
+const http = createHttpServer((req, res) => {
+  // Any failure ends this request with a 500; none can take the process down.
+  handle(req, res).catch((err) => {
+    console.error("MCP request failed:", err);
+    if (!res.headersSent) {
+      res.writeHead(500, { "content-type": "application/json" }).end(rpcError(-32603, "Internal server error"));
+    } else {
+      res.destroy();
+    }
+  });
 });
+// A client gets 30 seconds to send its whole request (Node's default is 5 minutes).
+http.requestTimeout = 30_000;
 
 http.listen(PORT, HOST, () => {
   console.log(`str-mcp-purview streamable HTTP listening on http://${HOST}:${PORT}/mcp`);

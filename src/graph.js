@@ -11,6 +11,7 @@ import { getToken, appOnly } from "./auth.js";
 export { appOnly };
 
 const GRAPH_BETA = "https://graph.microsoft.com/beta";
+const GRAPH_TIMEOUT_MS = 30_000;
 
 // Scopes required for the sensitivity-label read tools. Delegated permission
 // InformationProtectionPolicy.Read is the least-privileged option per the
@@ -28,7 +29,8 @@ const bearer = () => getToken(appOnly ? APP_SCOPES : LABEL_SCOPES);
  * @param {object} [params]  Query string parameters (OData $select, $filter, ...).
  */
 export async function graphGet(path, params = {}) {
-  const url = new URL(path.startsWith("https://") ? path : `${GRAPH_BETA}${path}`);
+  // Relative paths only, so the bearer token can only ever go to Graph.
+  const url = new URL(`${GRAPH_BETA}${path}`);
   for (const [k, v] of Object.entries(params)) {
     if (v != null) url.searchParams.set(k, String(v));
   }
@@ -37,26 +39,13 @@ export async function graphGet(path, params = {}) {
       Authorization: `Bearer ${await bearer()}`,
       Accept: "application/json",
     },
+    signal: AbortSignal.timeout(GRAPH_TIMEOUT_MS),
   });
   if (!res.ok) {
     const detail = await res.text().catch(() => "");
     throw new Error(`Graph ${res.status} ${res.statusText}${detail ? `: ${truncateError(detail)}` : ""}`);
   }
   return res.json();
-}
-
-/**
- * GET a Graph collection, following @odata.nextLink so large tenants are not
- * silently truncated to the first page.
- */
-export async function graphGetAll(path, params = {}) {
-  const items = [];
-  let data = await graphGet(path, params);
-  for (;;) {
-    items.push(...(data.value ?? []));
-    if (!data["@odata.nextLink"]) return items;
-    data = await graphGet(data["@odata.nextLink"]);
-  }
 }
 
 function truncateError(text) {

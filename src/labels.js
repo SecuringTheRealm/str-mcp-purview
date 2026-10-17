@@ -161,11 +161,6 @@ export async function getLabelPolicy(identity) {
   return asArray(await powershell.invoke("Get-LabelPolicy", { Identity: identity }, LABELPOLICY_READ_PROPS))[0];
 }
 
-/** Backwards-compatible helper; the authoritative read includes protection. */
-export async function getLabelProtectionSettings(identity) {
-  return getLabel(identity);
-}
-
 /**
  * Map the structured, category-grouped tool input into the flat PascalCase
  * parameters that New-/Set-Label expect. Shared by create and modify; only

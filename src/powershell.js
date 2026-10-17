@@ -62,10 +62,10 @@ const q = (s) => String(s).replace(/'/g, "''");
  * retry path can tell "the session went stale, safely re-run" apart from "the
  * command timed out and may already have applied" — see isAuthExpiry.
  */
-function bridgeError(message) {
+function bridgeError(message, extra = {}) {
   const err = new Error(message);
   err.bridge = true;
-  return err;
+  return Object.assign(err, extra);
 }
 
 /**
@@ -140,6 +140,10 @@ class PowerShellBridge {
     this.proc = null;
     this.queue = Promise.resolve();
     this.connecting = null;
+    // The child whose Connect-IPPSSession succeeded. A cmdlet only runs on this
+    // child: if a timeout replaced it while the cmdlet waited in the queue, the
+    // new child has no session, so the cmdlet is refused before it is sent.
+    this.connectedProc = null;
   }
 
   #ensureProc() {
@@ -149,6 +153,9 @@ class PowerShellBridge {
       stdio: ["pipe", "pipe", "pipe"],
     });
     this.proc.stdin.setDefaultEncoding("utf8");
+    // Decode in the stream so a multibyte character split across two chunks
+    // is not corrupted (chunk.toString() decodes each chunk on its own).
+    this.proc.stdout.setEncoding("utf8");
     // A write racing a dying child emits 'error' (EPIPE) on stdin; without a
     // listener that is an uncaught exception that kills the whole MCP server.
     this.proc.stdin.on?.("error", (err) => {
@@ -176,14 +183,14 @@ class PowerShellBridge {
   }
 
   // Serialise every request so their framed output blocks cannot interleave.
-  #enqueue(script, timeoutMs = EXEC_TIMEOUT_MS) {
-    const run = this.queue.then(() => this.#exec(script, timeoutMs));
+  #enqueue(script, timeoutMs = EXEC_TIMEOUT_MS, connect = false) {
+    const run = this.queue.then(() => this.#exec(script, timeoutMs, connect));
     // Keep the chain alive even if a call rejects.
     this.queue = run.catch(() => {});
     return run;
   }
 
-  #exec(script, timeoutMs = EXEC_TIMEOUT_MS) {
+  #exec(script, timeoutMs, connect) {
     return new Promise((resolve, reject) => {
       this.#ensureProc();
       // Capture the process reference now: it can flip to null (via the
@@ -192,6 +199,11 @@ class PowerShellBridge {
       const proc = this.proc;
       if (!proc) {
         reject(bridgeError("PowerShell (pwsh) is not available. Install PowerShell 7+ or set PURVIEW_PWSH."));
+        return;
+      }
+      if (!connect && proc !== this.connectedProc) {
+        // Nothing was written to the child, so invoke() can reconnect and retry.
+        reject(bridgeError("The PowerShell session was reset before this command started.", { notStarted: true }));
         return;
       }
 
@@ -244,6 +256,7 @@ class PowerShellBridge {
         const body = nl === -1 ? "" : block.slice(nl + 1).trim();
 
         if (status === "__OK__") {
+          if (connect) this.connectedProc = proc;
           if (!body || body === "null") return settle(resolve, null);
           try {
             settle(resolve, JSON.parse(body));
@@ -381,7 +394,7 @@ class PowerShellBridge {
       // The sign-in inside connectScript() is bounded by SIGNIN_TIMEOUT_MS; this
       // budget covers only the module import and session handshake in pwsh.
       const script = await this.connectScript();
-      return this.#enqueue(script, CONNECT_TIMEOUT_MS);
+      return this.#enqueue(script, CONNECT_TIMEOUT_MS, true);
     })().catch((err) => {
       this.connecting = null; // allow a retry on the next call
       throw err;
@@ -410,7 +423,8 @@ class PowerShellBridge {
       // An injected access token lasts about an hour; when it lapses the cmdlet
       // rejects the call outright. Drop the stale session and reconnect once
       // (which mints a fresh token) before giving up.
-      if (!retried && isAuthExpiry(err, cmdlet)) {
+      // A command refused because the session was reset never ran: same retry.
+      if (!retried && (err.notStarted || isAuthExpiry(err, cmdlet))) {
         this.connecting = null;
         return this.invoke(cmdlet, params, selectProps, true);
       }

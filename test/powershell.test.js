@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mock } from "node:test";
 import { EventEmitter } from "node:events";
+import { StringDecoder } from "node:string_decoder";
 
 // The bridge is Windows-only by default (Connect-IPPSSession platform gate);
 // tests exercise the protocol itself, so opt out of the gate.
@@ -12,10 +13,22 @@ process.env.PURVIEW_ALLOW_UNSUPPORTED_OS = "1";
 // drive manually to simulate the framed @@PVW_<id>_START/END@@ protocol.
 // Frame markers are unique per request, so responses derive them from the
 // most recently written script.
+// Mimics Readable.setEncoding: once set, Buffer chunks are decoded across
+// chunk boundaries, so a split multibyte character arrives whole.
+class FakeStdout extends EventEmitter {
+  setEncoding(encoding) {
+    this.decoder = new StringDecoder(encoding);
+  }
+  emit(event, chunk) {
+    if (event === "data" && this.decoder && Buffer.isBuffer(chunk)) chunk = this.decoder.write(chunk);
+    return super.emit(event, chunk);
+  }
+}
+
 class FakeChildProcess extends EventEmitter {
   constructor() {
     super();
-    this.stdout = new EventEmitter();
+    this.stdout = new FakeStdout();
     this.stderr = new EventEmitter();
     this.writes = [];
     this.killed = false;
@@ -278,6 +291,59 @@ test("PowerShellBridge.invoke", async (t) => {
     } finally {
       delete process.env.PURVIEW_EXEC_TIMEOUT_MS;
     }
+  });
+
+  await t.test("a command queued behind a timeout reconnects instead of running on an unconnected child", async () => {
+    process.env.PURVIEW_EXEC_TIMEOUT_MS = "40";
+    try {
+      const bridge = await freshBridge("queued-behind-timeout");
+      const procs = [];
+      spawnImpl = () => {
+        lastProc = new FakeChildProcess();
+        procs.push(lastProc);
+        return lastProc;
+      };
+      const warm = bridge.invoke("Get-Label", {});
+      await tick();
+      procs[0].respondOk("connected");
+      await tick();
+      procs[0].respondOk([]);
+      await warm;
+
+      // A hangs and times out; B is already past the connect check, queued behind it.
+      const a = bridge.invoke("Set-DlpComplianceRule", { Identity: "R1" });
+      const b = bridge.invoke("Get-DlpComplianceRule", { Identity: "R1" });
+      await assert.rejects(a, /timed out/);
+      await tick();
+      assert.equal(procs.length, 2);
+      assert.match(procs[1].writes[0], /Connect-IPPSSession/, "B must reconnect before it runs");
+      procs[1].respondOk("connected");
+      await tick();
+      assert.match(procs[1].writes[1], /Get-DlpComplianceRule/);
+      procs[1].respondOk({ Name: "R1" });
+      assert.deepEqual(await b, { Name: "R1" });
+      assert.equal(procs[0].writes.filter((w) => w.includes("Set-DlpComplianceRule")).length, 1, "A is not retried");
+    } finally {
+      delete process.env.PURVIEW_EXEC_TIMEOUT_MS;
+    }
+  });
+
+  await t.test("decodes a multibyte character split across stdout chunks", async () => {
+    const bridge = await freshBridge("utf8-split");
+    spawnImpl = () => {
+      lastProc = new FakeChildProcess();
+      return lastProc;
+    };
+    const p = bridge.invoke("Get-Label", {});
+    await tick();
+    lastProc.respondOk("connected");
+    await tick();
+    const { start, end } = lastProc.markers();
+    const frame = Buffer.from(`${start}\n__OK__\n{"Name":"Confidentiel – Société"}\n${end}\n`, "utf8");
+    const cut = frame.indexOf(Buffer.from("é", "utf8")) + 1; // inside the two-byte é
+    lastProc.stdout.emit("data", frame.subarray(0, cut));
+    lastProc.stdout.emit("data", frame.subarray(cut));
+    assert.deepEqual(await p, { Name: "Confidentiel – Société" });
   });
 
   await t.test("rejects the in-flight request promptly when the pwsh process dies", async () => {

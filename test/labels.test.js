@@ -12,10 +12,6 @@ mock.module("../src/graph.js", {
       graphGetCalls.push({ path, params });
       return graphGetImpl(path, params);
     },
-    graphGetAll: async (path, params) => {
-      graphGetCalls.push({ path, params });
-      return (await graphGetImpl(path, params)).value ?? [];
-    },
     appOnly: false,
   },
 });
@@ -348,16 +344,6 @@ test("label group status survives PowerShell reads and appears in list and detai
 });
 
 test("label protection settings read-back", async (t) => {
-  await t.test("getLabelProtectionSettings invokes Get-Label with the identity", async () => {
-    invokeCalls.length = 0;
-    invokeImpl = async () => [{ Name: "Secret", EncryptionEnabled: true }];
-    const result = await labels.getLabelProtectionSettings("Secret");
-    assert.equal(invokeCalls.at(-1).cmdlet, "Get-Label");
-    assert.deepEqual(invokeCalls.at(-1).params, { Identity: "Secret" });
-    assert.equal(result.EncryptionEnabled, true);
-    assert.equal(result.scc_name, "Secret");
-  });
-
   await t.test("formatLabelProtectionSettings renders configured protection", () => {
     const out = labels.formatLabelProtectionSettings({
       EncryptionEnabled: true,

@@ -83,6 +83,25 @@ async function rawPost(base, payload, headers = {}) {
   });
 }
 
+// Low-level request: arbitrary path, and the body can be left unfinished.
+function rawRequest(base, { path: reqPath = "/mcp", headers = {}, body = "", finish = true } = {}) {
+  const url = new URL(base);
+  let req;
+  const done = new Promise((resolve, reject) => {
+    req = httpRequest(
+      { hostname: url.hostname, port: url.port, path: reqPath, method: "POST", headers: { "content-type": "application/json", ...headers } },
+      (res) => {
+        res.resume();
+        res.on("end", () => resolve({ status: res.statusCode }));
+      }
+    );
+    req.on("error", reject);
+  });
+  if (finish) req.end(body);
+  else req.write(body);
+  return { done, req };
+}
+
 const MODERN_META = {
   "io.modelcontextprotocol/protocolVersion": "2026-07-28",
   "io.modelcontextprotocol/clientInfo": { name: "wire-test", version: "1.0.0" },
@@ -264,6 +283,37 @@ test("Azure Functions streamable HTTP host", async (t) => {
       assert.equal(mismatch.status, 400);
       assert.equal(mismatch.body.error.code, -32020);
     });
+  });
+
+  await t.test("answers a malformed URL and an oversized streamed body without crashing", async () => {
+    await withHttpServer(async (base) => {
+      assert.equal((await rawRequest(base, { path: "//[" }).done).status, 400);
+      const big = "x".repeat(4 * 1024 * 1024 + 1);
+      assert.equal((await rawRequest(base, { body: big, headers: { "transfer-encoding": "chunked" } }).done).status, 413);
+      assert.equal((await rawPost(base, INIT, { "content-length": String(5 * 1024 * 1024) }).catch(() => ({ status: 413 }))).status, 413);
+      assert.equal((await fetch(`${base}/healthz`)).status, 200, "server is still up");
+    });
+  });
+
+  await t.test("returns 429 once the concurrency limit is reached", async () => {
+    await withHttpServer(
+      async (base) => {
+        const held = rawRequest(base, { body: "{", headers: { "content-length": "10" }, finish: false });
+        await new Promise((r) => setTimeout(r, 100));
+        assert.equal((await rawPost(base, INIT)).status, 429);
+        held.req.destroy();
+        await held.done.catch(() => {});
+      },
+      "full",
+      { MCP_MAX_CONCURRENT_REQUESTS: "1" }
+    );
+  });
+
+  await t.test("refuses to start on a non-loopback bind with no allowed hosts", async () => {
+    await assert.rejects(
+      withHttpServer(async () => {}, "full", { MCP_HTTP_HOST: "0.0.0.0", MCP_ALLOWED_HOSTS: "" }),
+      /exited early/
+    );
   });
 
   await t.test("on a non-loopback bind, loopback Host values need an explicit allowlist", async () => {
