@@ -41,6 +41,27 @@ Smoke tests in `test/powershell.smoke.test.js` drive a real `pwsh` and skip with
 
 Test behaviour that can break: cmdlet parameter mapping, validation, safety gates, protocol eras. Do not add tests for formatted text output, or that only check which cmdlet was called. A regression test must fail on the old code.
 
+## Branching and releases
+
+- `main` is always stable and only moves by a release: a PR from `dev`, merged with a **merge commit** (never squash, or `dev` and `main` diverge and the next release conflicts), then a tag on the merge commit (`v2.1.0`). The `release-source` workflow fails any other PR into `main`; it blocks merging once it and `test` are required status checks on `main`.
+- New work branches off `dev` and merges back into `dev` by PR. Untested or new code lives on `dev`, never `main`.
+- Before a PR merges to `dev`, run three reviews: **ponytail** (needed? smaller? already here?), **junior-to-senior** (correctness, concurrency, failure paths) and **last-20-percent** (docs, contracts, operator experience). The last two are in `.agents/skills/`; ponytail is [DietrichGebert/ponytail](https://github.com/DietrichGebert/ponytail).
+- Delete feature branches once merged, and leave a branch alone if it holds unmerged work by someone else.
+
+```bash
+git switch dev && git switch -c feat/<name>          # start
+gh pr create --base dev --fill                        # land (or the GitHub UI)
+gh pr create --base main --head dev --fill            # release: merge commit, then tag it
+```
+
+## Working in this repo
+
+- **This repository is public.** No tenant domains, object IDs, tenant user names or UAT output in files, commits, issues or pasted snippets; use `contoso.onmicrosoft.com` or `<tenant>.onmicrosoft.com`. `artifacts/` (UAT reports) is gitignored for this reason.
+- **Stage explicitly; never `git add -A`.** That is how UAT reports with tenant identifiers reached a commit (#71).
+- **One worktree per session and feature** (`git worktree add`, or `claude --worktree <name>`). Two sessions in one checkout move HEAD under each other and put commits on the wrong branch.
+- `.githooks/pre-commit` catches the commonest slips: staged gitignored files and real `*.onmicrosoft.com` domains (not GUIDs or UPNs, so still check). `npm install` turns it on (`prepare`); otherwise run `git config core.hooksPath .githooks` once per clone. CI's `public-data` job repeats the domain check.
+- `.claude/skills/` entries are symlinks; on Windows set `git config core.symlinks true` before cloning for Claude Code to see them.
+
 ## Conventions
 
-Conventional commits (`.cz-config.js`). British English in prose, American English in code. Bump `package.json` by the lowest semver step; `serverInfo.version` reads it. `.agents/skills/` and `.codex/` hold the imported product-owner agent: update them from Agent OS, not by hand.
+Conventional commits (`.cz-config.js`). British English in prose, American English in code. Bump `package.json` by the lowest semver step; `serverInfo.version` reads it. `.agents/skills/` holds the skills, with `.claude/skills/` symlinks for Claude Code: the product-owner and user-story skills and `.codex/` come from Agent OS, and junior-to-senior and last-20-percent from `Sealjay/dotfiles`. Update each from its source, not by hand.

@@ -1,0 +1,24 @@
+name: Release source
+
+# main only moves by a release from dev (AGENTS.md "Branching and releases").
+# Runs on retargeting too (edited). Enforced only once `release-source` is a
+# required status check on main.
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, edited]
+
+jobs:
+  release-source:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Pull requests into main must come from this repository's dev
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          if [ "$HEAD_REF" != "dev" ] || [ "$HEAD_REPO" != "$REPO" ]; then
+            echo "::error::PRs into main must come from $REPO:dev (this one is from $HEAD_REPO:$HEAD_REF). Target dev instead."
+            exit 1
+          fi
