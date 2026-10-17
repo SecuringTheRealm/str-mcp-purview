@@ -239,6 +239,15 @@ test("Azure Functions streamable HTTP host", async (t) => {
       const badType = await fetch(`${base}/mcp`, { method: "POST", body: JSON.stringify(INIT) });
       assert.equal(badType.status, 415);
 
+      const lookalikeType = await rawPost(base, INIT, { "content-type": "application/jsonp" });
+      assert.equal(lookalikeType.status, 415);
+
+      const withCharset = await rawPost(base, INIT, {
+        "content-type": "application/json; charset=utf-8",
+        accept: "application/json, text/event-stream",
+      });
+      assert.equal(withCharset.status, 200);
+
       const malformed = await fetch(`${base}/mcp`, {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -255,5 +264,21 @@ test("Azure Functions streamable HTTP host", async (t) => {
       assert.equal(mismatch.status, 400);
       assert.equal(mismatch.body.error.code, -32020);
     });
+  });
+
+  await t.test("on a non-loopback bind, loopback Host values need an explicit allowlist", async () => {
+    await withHttpServer(
+      async (base) => {
+        const spoofed = await rawPost(base, INIT, { host: "localhost" });
+        assert.equal(spoofed.status, 403);
+        const listed = await rawPost(base, INIT, {
+          host: "purview.example",
+          accept: "application/json, text/event-stream",
+        });
+        assert.equal(listed.status, 200);
+      },
+      "full",
+      { MCP_HTTP_HOST: "0.0.0.0", MCP_ALLOWED_HOSTS: "purview.example" }
+    );
   });
 });

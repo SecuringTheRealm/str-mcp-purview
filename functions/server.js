@@ -29,10 +29,16 @@ if (!Number.isSafeInteger(configuredConcurrency) || configuredConcurrency < 1) {
 }
 const MAX_CONCURRENT_REQUESTS = configuredConcurrency;
 let activeRequests = 0;
+// Loopback Host values are trusted only when nothing but this machine (or the
+// Azure Functions host, which proxies to the custom handler over loopback) can
+// reach the listener. On any other bind, a caller could send `Host: localhost`
+// to step around MCP_ALLOWED_HOSTS, so loopback names must be listed there.
+const LOOPBACK_HOSTS = ["localhost", "127.0.0.1", "[::1]"];
+const loopbackOnly =
+  Boolean(process.env.FUNCTIONS_CUSTOMHANDLER_PORT) ||
+  ["127.0.0.1", "::1", "localhost"].includes(HOST);
 const allowedHosts = [
-  "localhost",
-  "127.0.0.1",
-  "[::1]",
+  ...(loopbackOnly ? LOOPBACK_HOSTS : []),
   ...(process.env.MCP_ALLOWED_HOSTS ?? "")
     .split(",")
     .map((hostname) => hostname.trim().toLowerCase())
@@ -96,7 +102,10 @@ const http = createHttpServer(async (req, res) => {
     res.writeHead(403, { "content-type": "application/json" }).end(rpcError(-32000, "Origin is not allowed."));
     return;
   }
-  if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
+  // Compare the media type itself, so `application/jsonp` and similar are refused
+  // while parameters such as `; charset=utf-8` are still accepted.
+  const mediaType = String(req.headers["content-type"] ?? "").split(";")[0].trim().toLowerCase();
+  if (mediaType !== "application/json") {
     res.writeHead(415, { "content-type": "application/json" }).end(rpcError(-32600, "Content-Type must be application/json."));
     return;
   }
