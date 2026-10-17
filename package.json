@@ -1,6 +1,6 @@
 {
   "name": "str-mcp-purview",
-  "version": "2.1.0",
+  "version": "2.1.1",
   "description": "MCP server (stdio or streamable HTTP) for Microsoft Purview data security: sensitivity labels, label policies, auto-labelling and DLP via Security & Compliance PowerShell, with Microsoft Graph only for per-user label policy settings.",
   "type": "module",
   "author": "Securing the Realm (https://securing.quest/) — Chris Lloyd-Jones (Sealjay) & Josh McDonald (KnowledgeRatio)",
