@@ -5,7 +5,7 @@ import { powershell } from "./powershell.js";
 import { truncate, shortDate, bulletFields } from "./format.js";
 import { POLICY_LOCATION_FIELDS } from "./dlp-validation.js";
 import { asArray, CONFIDENCE } from "./util.js";
-import { CapabilityError } from "./dispatch/errors.js";
+import { invalid } from "./dispatch/errors.js";
 
 // Trimmed property sets keep ConvertTo-Json output small and free of the deep,
 // occasionally self-referential graph that Exchange policy objects carry.
@@ -123,8 +123,7 @@ export function sensitiveInformationTypeConditions(items = []) {
       item.min_count !== undefined &&
       item.max_count < item.min_count
     ) {
-      throw new CapabilityError("VALIDATION_ERROR",
-        `max_count must be -1 (unlimited) or at least min_count for sensitive information type "${item.name}".`
+      invalid(`max_count must be -1 (unlimited) or at least min_count for sensitive information type "${item.name}".`
       );
     }
     const condition = { Name: item.name };
@@ -230,7 +229,7 @@ export function copilotCondition({ sits, labels } = {}) {
   // Use the complete sensitivity-label condition documented for
   // New-DlpComplianceRule's ContentContainsSensitiveInformation parameter.
   if (labels?.length) return [{ operator: "And", groups: [{ operator: "Or", name: "Default", labels: labels.map((g) => ({ name: g, type: "Sensitivity" })) }] }];
-  throw new CapabilityError("VALIDATION_ERROR", "A Copilot rule needs a condition: sensitive_information_types or sensitivity_labels.");
+  invalid("A Copilot rule needs a condition: sensitive_information_types or sensitivity_labels.");
 }
 
 /**

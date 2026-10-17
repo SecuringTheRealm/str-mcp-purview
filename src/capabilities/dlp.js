@@ -2,7 +2,7 @@ import * as dlp from "../dlp.js";
 import { formatWriteResult } from "../format.js";
 import { text, pageResult, assertEndpointNotify, assertChanges } from "./shared.js";
 import { oneDriveCreate, oneDriveUpdate, needsOneDriveRead, assertExchangeOnly, assertLocationExceptions } from "../dlp-validation.js";
-import { CapabilityError } from "../dispatch/errors.js";
+import { invalid } from "../dispatch/errors.js";
 
 async function validateRulePolicy(args, updating = false) {
   if (!args.exceptions?.from?.length && !args.exceptions?.sent_to?.length) return;
@@ -12,7 +12,7 @@ async function validateRulePolicy(args, updating = false) {
     policyId = rule?.ParentPolicyName ?? rule?.Policy;
     if (policyId && typeof policyId === "object") policyId = policyId.Name ?? policyId.Identity;
   }
-  if (typeof policyId !== "string" || !policyId) throw new CapabilityError("VALIDATION_ERROR", "Cannot resolve the rule's parent policy to verify Exchange-only exceptions.");
+  if (typeof policyId !== "string" || !policyId) invalid("Cannot resolve the rule's parent policy to verify Exchange-only exceptions.");
   assertExchangeOnly(await dlp.getPolicy(policyId));
 }
 
@@ -53,7 +53,7 @@ export const handlers = {
         (item) => item
       );
     }
-    throw new CapabilityError("VALIDATION_ERROR", "get_dlp_rule requires either 'identity' (one rule) or 'policy' (all rules in a policy).");
+    invalid("get_dlp_rule requires either 'identity' (one rule) or 'policy' (all rules in a policy).");
   },
   create_dlp_policy: async (args) => {
     const params = { Name: args.name };
@@ -140,7 +140,7 @@ export const handlers = {
   },
   create_copilot_dlp_rule: async (args) => {
     if (args.action === "block_web_search" && args.sensitivity_labels) {
-      throw new CapabilityError("VALIDATION_ERROR", "block_web_search supports only a sensitive_information_types condition, not sensitivity_labels.");
+      invalid("block_web_search supports only a sensitive_information_types condition, not sensitivity_labels.");
     }
     const params = {
       Name: args.name,

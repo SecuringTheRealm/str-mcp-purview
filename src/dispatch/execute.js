@@ -17,11 +17,7 @@ export function validateArguments(schema, args, name) {
 // so two interleaved writes could silently drop one change. The lock covers
 // only the handler, so a pending deletion form does not hold up other writes.
 let writeQueue = Promise.resolve();
-function serialised(fn) {
-  const run = writeQueue.then(fn);
-  writeQueue = run.catch(() => {});
-  return run;
-}
+const serialised = (fn) => { const run = writeQueue.then(fn); writeQueue = run.catch(() => {}); return run; };
 
 export async function executeCapability(id, args = {}, policy = {}, registry = capabilityById, authorize, interaction = {}) {
   const capability = registry.get(id);

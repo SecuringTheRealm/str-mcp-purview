@@ -41,6 +41,7 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { getToken } from "./auth.js";
+import { dlpAuthMode, platformSupported } from "./util.js";
 
 const EXEC_TIMEOUT_MS = Number(process.env.PURVIEW_EXEC_TIMEOUT_MS) || 60_000;
 // Connecting does more work than a normal cmdlet (module import, session
@@ -251,7 +252,8 @@ class PowerShellBridge {
         // Settle before killing: kill() triggers the 'exit' listener, which
         // must not win the race and mask the timeout message.
         settle(reject, bridgeError(
-          `PowerShell command timed out after ${timeoutMs}ms. The PowerShell session was reset; the next call will reconnect.`
+          `PowerShell command timed out after ${timeoutMs}ms. The PowerShell session was reset; the next call will reconnect.`,
+          { uncertain: true }
         ));
         // The command is still running inside the child and would keep the
         // serialised session wedged for every later request — kill the child
@@ -259,7 +261,7 @@ class PowerShellBridge {
         proc.kill();
       }, timeoutMs);
       const onExit = () => {
-        settle(reject, bridgeError("The PowerShell process exited before responding. The next call will start a fresh session."));
+        settle(reject, bridgeError("The PowerShell process exited before responding. The next call will start a fresh session.", { uncertain: true }));
       };
       const onError = (err) => {
         settle(reject, bridgeError(`PowerShell could not be started (${err.message}). Install PowerShell 7 or set PURVIEW_PWSH to its path.`));
@@ -294,7 +296,7 @@ class PowerShellBridge {
       try {
         proc.stdin.write(wrapScript(script, START, END));
       } catch (err) {
-        settle(reject, bridgeError(`Failed to send command to PowerShell: ${err.message}`));
+        settle(reject, bridgeError(`Failed to send command to PowerShell: ${err.message}`, { uncertain: true }));
       }
     });
   }
@@ -315,10 +317,7 @@ class PowerShellBridge {
    *     it HANGS on this server's piped-stdio child, so it is not the default.
    */
   #certCommand() {
-    const appId = process.env.PURVIEW_APP_ID;
-    const org = process.env.PURVIEW_ORGANIZATION;
-    const thumbprint = process.env.PURVIEW_CERT_THUMBPRINT;
-    if (!appId || !org || !thumbprint) return null;
+    const { PURVIEW_APP_ID: appId, PURVIEW_ORGANIZATION: org, PURVIEW_CERT_THUMBPRINT: thumbprint } = process.env;
     return (
       `Connect-IPPSSession -AppId '${q(appId)}' -CertificateThumbprint '${q(thumbprint)}' ` +
       `-Organization '${q(org)}' -ShowBanner:$false`
@@ -373,9 +372,8 @@ class PowerShellBridge {
   }
 
   async #connectCommand() {
-    const cert = this.#certCommand();
-    if (cert) return cert;
-    const mode = (process.env.PURVIEW_DLP_AUTH_MODE || "token").toLowerCase();
+    const mode = dlpAuthMode();
+    if (mode === "certificate") return this.#certCommand();
     return mode === "interactive" ? this.#interactiveCommand() : this.#tokenCommand();
   }
 
@@ -406,7 +404,7 @@ class PowerShellBridge {
   /** Connect the IPPSSession on first use (single-flight, safe under concurrency). */
   #ensureConnected() {
     if (this.connecting) return this.connecting;
-    if (process.platform !== "win32" && process.env.PURVIEW_ALLOW_UNSUPPORTED_OS !== "1") {
+    if (!platformSupported()) {
       return Promise.reject(bridgeError(PLATFORM_ERROR));
     }
     // Acquiring the token is async, so the whole build-and-connect runs inside
@@ -446,7 +444,7 @@ class PowerShellBridge {
         return this.invoke(cmdlet, params, selectProps, true);
       }
       // A write that timed out or lost its process may still have applied.
-      if (err.bridge && !/^get-/i.test(cmdlet)) {
+      if (err.uncertain && !/^get-/i.test(cmdlet)) {
         err.message += " The change may already have applied: read the object before retrying.";
       }
       throw err;

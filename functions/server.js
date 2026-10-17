@@ -143,6 +143,10 @@ async function shutdown() {
 
 // Exit explicitly: a live pwsh child keeps the event loop open, and exiting
 // closes its stdin, which ends it.
-const stop = () => void shutdown().finally(() => process.exit(0));
+// A half-open request would hold close() open, so stop waiting after 10 s.
+const stop = () => {
+  setTimeout(() => process.exit(0), 10_000).unref();
+  void shutdown().finally(() => process.exit(0));
+};
 process.on("SIGINT", stop);
 process.on("SIGTERM", stop);

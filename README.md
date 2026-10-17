@@ -40,7 +40,7 @@ Insider Risk, Communications Compliance and DSPM are not covered yet; see [ROADM
   ```powershell
   Install-Module ExchangeOnlineManagement -RequiredVersion 3.9.2 -Scope CurrentUser
   ```
-  The server needs 3.8.0 or later. 3.9.2 is pinned because module 3.10+ requires PowerShell 7.6 (the `Containerfile` pins the 7.4 / 3.9.2 pair).
+  The default token sign-in needs 3.8.0 or later (certificate and interactive modes need 3.2.0). 3.9.2 is pinned because module 3.10+ requires PowerShell 7.6 (the `Containerfile` pins the 7.4 / 3.9.2 pair).
 - A **Microsoft 365 tenant** where you (or an admin) can register an app and grant consent.
 - An **admin account** with the Purview role for the tools you'll use (step 2).
 

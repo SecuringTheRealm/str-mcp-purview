@@ -9,7 +9,8 @@
 //   interactive (default)  browser sign-in as the operator — local use
 //   devicecode             URL + code on stderr — headless boxes with a human
 //   managedidentity        platform-minted token — hosted use, no secret at rest
-// Setting AZURE_CLIENT_CERTIFICATE_PATH selects certificate app-only instead.
+// Setting AZURE_CLIENT_CERTIFICATE_PATH selects certificate app-only instead,
+// unless managedidentity is chosen.
 
 import {
   InteractiveBrowserCredential,
@@ -20,15 +21,18 @@ import {
 
 import { envChoice } from "./util.js";
 
-const MODE = envChoice("PURVIEW_AUTH_MODE", ["interactive", "devicecode", "managedidentity"], "interactive");
-const CERT_PATH = process.env.AZURE_CLIENT_CERTIFICATE_PATH;
+/** The credential in use: managed identity if chosen, else a certificate if one is set, else the mode. */
+export function resolveAuthMode(env = process.env) {
+  const mode = envChoice("PURVIEW_AUTH_MODE", ["interactive", "devicecode", "managedidentity"], "interactive", env);
+  return mode !== "managedidentity" && env.AZURE_CLIENT_CERTIFICATE_PATH ? "certificate" : mode;
+}
 
-/** The resolved credential choice, for diagnostics. A certificate path overrides the mode. */
-export const authMode = CERT_PATH ? "certificate" : MODE;
+const MODE = resolveAuthMode();
+const CERT_PATH = process.env.AZURE_CLIENT_CERTIFICATE_PATH;
 
 // App-only tokens carry no user context, so Graph's /me/ paths do not exist and
 // the label-policy-settings read uses the tenant-wide path instead (see labels.js).
-export const appOnly = MODE === "managedidentity" || Boolean(CERT_PATH);
+export const appOnly = MODE === "managedidentity" || MODE === "certificate";
 
 let credential = null;
 
@@ -52,7 +56,7 @@ function getCredential() {
     );
   }
 
-  if (CERT_PATH) {
+  if (MODE === "certificate") {
     credential = new ClientCertificateCredential(tenantId, clientId, {
       certificatePath: CERT_PATH,
     });

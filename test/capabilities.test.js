@@ -15,6 +15,7 @@ const { capabilities, validateRegistry } = await import("../src/capabilities/reg
 const { createProjection, searchCapabilities, toolMode } = await import("../src/mcp/projection.js");
 const { executeCapability } = await import("../src/dispatch/execute.js");
 const { filterCapabilities, policyFromEnvironment } = await import("../src/retrieval/filters.js");
+const { authStatus } = await import("../src/capabilities/auth.js");
 
 test("registry rejects missing metadata, unresolved handlers and colliding aliases", () => {
   assert.equal(validateRegistry(capabilities), capabilities);
@@ -89,5 +90,16 @@ test("safety switches accept common spellings and stop on anything else", () => 
   for (const value of ["true", "1", "YES", " True "]) assert.equal(policyFromEnvironment({ PURVIEW_READ_ONLY: value }).readOnly, true);
   for (const value of ["false", "0", "no"]) assert.equal(policyFromEnvironment({ PURVIEW_ALLOW_DESTRUCTIVE: value }).allowDestructive, false);
   assert.deepEqual([policyFromEnvironment({}).readOnly, policyFromEnvironment({}).allowDestructive], [false, true]);
-  assert.throws(() => policyFromEnvironment({ PURVIEW_READ_ONLY: "on" }), /PURVIEW_READ_ONLY must be true or false/);
+  assert.throws(() => policyFromEnvironment({ PURVIEW_READ_ONLY: "on" }), /PURVIEW_READ_ONLY must be one of/);
+});
+
+test("get_auth_status reports the credential that will actually be used", () => {
+  const status = (env) => authStatus({}, env).structuredContent;
+  assert.deepEqual(status({}).missing, ["AZURE_TENANT_ID", "AZURE_CLIENT_ID"]);
+  // Managed identity wins over a certificate path and needs no tenant or client ID.
+  const mi = status({ PURVIEW_AUTH_MODE: "ManagedIdentity", AZURE_CLIENT_CERTIFICATE_PATH: "/c.pem" });
+  assert.deepEqual([mi.mode, mi.missing, mi.graph_configured], ["managedidentity", [], true]);
+  assert.equal(status({ AZURE_CLIENT_CERTIFICATE_PATH: "/c.pem" }).mode, "certificate");
+  assert.equal(status({ PURVIEW_DLP_AUTH_MODE: "interactive" }).powershell_auth, "interactive");
+  assert.equal(status({ PURVIEW_APP_ID: "a", PURVIEW_ORGANIZATION: "o", PURVIEW_CERT_THUMBPRINT: "t" }).powershell_auth, "certificate");
 });

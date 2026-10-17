@@ -3,8 +3,8 @@
 
 import { graphGet, appOnly } from "./graph.js";
 import { powershell } from "./powershell.js";
-import { truncate, bulletFields, shortDate, identityKey } from "./format.js";
-import { asArray } from "./util.js";
+import { truncate, bulletFields, shortDate } from "./format.js";
+import { asArray, identityKey } from "./util.js";
 
 // App-only tokens have no /me/, so the Graph policy-settings read switches to
 // the tenant-wide informationProtection path in that mode.

@@ -46,7 +46,7 @@ export function createServer(factoryContext = {}) {
     ...serverPolicy,
     allowedIds: entries.filter((c) => permitted(c, serverPolicy) && permitted(c, callerPolicy)).map((c) => c.id),
   };
-  const mode = toolMode(factoryContext.toolMode ?? process.env.PURVIEW_TOOL_MODE ?? "full");
+  const mode = toolMode(factoryContext.toolMode);
   const authorize = factoryContext.authorizeCapability;
   const confirmDeletion = createDeletionConfirmation({
     principal: factoryContext.confirmationPrincipal ?? (factoryContext.transport === "stdio" ? "local-stdio" : undefined),

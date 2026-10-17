@@ -15,7 +15,6 @@ export function truncate(value, max = 100) {
 }
 
 /** Case- and whitespace-insensitive form of an identity, for comparisons. */
-export const identityKey = (value) => String(value ?? "").trim().toLowerCase();
 
 /** Format an ISO date-time down to just the date portion. */
 export function shortDate(value) {

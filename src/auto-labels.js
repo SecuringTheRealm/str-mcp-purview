@@ -1,9 +1,7 @@
 import { powershell } from "./powershell.js";
-import { CapabilityError } from "./dispatch/errors.js";
-import { asArray as array, digest, CONFIDENCE } from "./util.js";
-import { identityKey as key } from "./format.js";
+import { CapabilityError, invalid } from "./dispatch/errors.js";
+import { asArray as array, digest, CONFIDENCE, identityKey as key } from "./util.js";
 
-const invalid = message => { throw new CapabilityError("VALIDATION_ERROR", message); };
 const unavailable = message => { throw new CapabilityError("FEATURE_UNAVAILABLE", message); };
 const transient = /^(revision|Distribution|TestMode|Simulation|Progress|Execution|WhenChanged|WhenCreated|Last|Status)/i;
 export function revisionOf(value) {

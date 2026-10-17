@@ -1,4 +1,4 @@
-import { CapabilityError } from "./dispatch/errors.js";
+import { invalid as fail } from "./dispatch/errors.js";
 import { asArray as values } from "./util.js";
 
 // Detail reads (get_dlp_policy) and Exchange-only checks share this table:
@@ -13,7 +13,6 @@ export const POLICY_LOCATION_FIELDS = [
   ["PowerBIDlpLocation", "Power BI", null],
   ["ThirdPartyAppDlpLocation", "Third-party apps", null],
 ];
-const fail = (message) => { throw new CapabilityError("VALIDATION_ERROR", message); };
 const isAll = (xs) => xs.length === 1 && /^all$/i.test(String(xs[0]?.Name ?? xs[0]?.DisplayName ?? xs[0]));
 const users = (xs) => {
   for (const x of xs) if (typeof x !== "string" || !/^[^\s@/]+@[^\s@/]+$/.test(x)) fail("OneDrive user scopes require UPNs, not site URLs or unresolved objects.");

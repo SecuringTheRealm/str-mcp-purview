@@ -2,6 +2,9 @@ export class CapabilityError extends Error {
   constructor(code, message) { super(message); this.name = "CapabilityError"; this.code = code; }
 }
 
+/** The arguments are wrong and nothing was sent to Purview. */
+export const invalid = (message) => { throw new CapabilityError("VALIDATION_ERROR", message); };
+
 export function errorResult(error) {
   const detail = {
     code: error instanceof CapabilityError ? error.code : "INTERNAL_ERROR",
