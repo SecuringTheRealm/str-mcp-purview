@@ -1,0 +1,19 @@
+{
+  "run": "ZZZ_MCP_UAT_4628ac98",
+  "started": "2026-10-08T15:23:16.057Z",
+  "checks": [
+    {
+      "name": "authenticated_security_compliance_read",
+      "status": "failed",
+      "elapsed_ms": 300011,
+      "error": "Timed out after 300000ms acquiring a Security & Compliance access token. If PURVIEW_AUTH_MODE is interactive, a browser sign-in window is waiting for you — complete it and call the tool again, or switch to PURVIEW_AUTH_MODE=devicecode."
+    }
+  ],
+  "cleanup": [],
+  "limitations": [
+    "No deployed endpoint supplied; remote authentication and proxy behavior are not tested.",
+    "Auto-label activation is not tested without a dedicated synthetic content scope."
+  ],
+  "error": "Authentication failed; no objects created.",
+  "finished": "2026-10-08T15:28:16.079Z"
+}

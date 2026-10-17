@@ -116,6 +116,8 @@ test("PowerShellBridge.invoke", async (t) => {
     // The child never signs in itself: it has no console, so both WAM and the
     // -DisableWAM browser fallback would hang. It gets a Node-acquired token.
     assert.match(scripts, /Connect-IPPSSession -AccessToken/);
+    assert.match(scripts, /Import-Module ExchangeOnlineManagement -MinimumVersion 3\.8\.0/);
+    assert.match(scripts, /Parameters.ContainsKey\('AccessToken'\)/);
     assert.doesNotMatch(scripts, /-DisableWAM/);
     assert.match(scripts, /Get-DlpCompliancePolicy @__p \| Select-Object Name/);
   });
@@ -236,6 +238,48 @@ test("PowerShellBridge.invoke", async (t) => {
     }
   });
 
+  await t.test("reconnects immediately after a command timeout even when the old child exits later", async () => {
+    process.env.PURVIEW_EXEC_TIMEOUT_MS = "80";
+    try {
+      const bridge = await freshBridge("timeout-delayed-exit");
+      const procs = [];
+      spawnImpl = () => {
+        const child = new FakeChildProcess();
+        child.kill = () => { child.killed = true; }; // Real kill does not emit exit synchronously.
+        procs.push(child);
+        return child;
+      };
+      const first = bridge.invoke("Set-DlpComplianceRule", { Identity: "R1", Disabled: true });
+      const rejected = assert.rejects(first, /timed out .* session was reset/s);
+      await tick();
+      procs[0].respondOk("connected");
+      await rejected;
+      assert.equal(procs[0].killed, true);
+      assert.equal(bridge.proc, null);
+
+      const next = bridge.invoke("Get-DlpComplianceRule", { Identity: "R1" });
+      await tick();
+      assert.equal(procs.length, 2);
+      assert.match(procs[1].writes.join(""), /Connect-IPPSSession/);
+      procs[0].emit("exit");
+      procs[0].emit("error", new Error("late error from retired child"));
+      assert.equal(bridge.proc, procs[1], "Retired child events must not clear the new connection");
+      procs[1].respondOk("connected");
+      await tick();
+      procs[1].respondOk({ Name: "R1", Disabled: false });
+      assert.deepEqual(await next, { Name: "R1", Disabled: false });
+      const again = bridge.invoke("Get-DlpComplianceRule", { Identity: "R1" });
+      await tick();
+      procs[1].respondOk({ Name: "R1" });
+      await again;
+      assert.equal(procs.length, 2);
+      assert.equal(procs[1].writes.filter(s => s.includes("Connect-IPPSSession -")).length, 1);
+      assert.equal(procs[0].writes.length, 2, "Timed-out mutation must not be retried");
+    } finally {
+      delete process.env.PURVIEW_EXEC_TIMEOUT_MS;
+    }
+  });
+
   await t.test("rejects the in-flight request promptly when the pwsh process dies", async () => {
     const bridge = await freshBridge("proc-death");
     spawnImpl = () => {
@@ -267,7 +311,7 @@ test("PowerShellBridge.invoke", async (t) => {
     lastProc.respondOk([]);
     await Promise.all([a, b]);
 
-    const connects = lastProc.writes.join("").match(/Connect-IPPSSession/g);
+    const connects = lastProc.writes.join("").match(/^Connect-IPPSSession -/gm);
     assert.equal(connects.length, 1);
   });
 
@@ -311,6 +355,29 @@ test("PowerShellBridge.invoke", async (t) => {
       /PowerShell command timed out/
     );
   });
+});
+
+test("simulation connection is isolated and includes the search-only switch on the connect command", async () => {
+  const saved = process.env.PURVIEW_DLP_AUTH_MODE;
+  process.env.PURVIEW_DLP_AUTH_MODE = "token";
+  tokenImpl = async () => fakeJwt("admin@contoso.onmicrosoft.com");
+  try {
+    const bridge = await freshBridge("simulation-isolated");
+    const children = [];
+    spawnImpl = () => { const child = new FakeChildProcess(); children.push(child); lastProc = child; return child; };
+    const simulation = bridge.invokeSimulation("Set-AutoSensitivityLabelPolicy", { Identity: "policy", StartSimulation: true });
+    await new Promise(r => setImmediate(r)); await new Promise(r => setImmediate(r));
+    assert.match(children[0].writes[0], /Connect-IPPSSession -AccessToken[^\n]* -EnableSearchOnlySession/);
+    assert.match(children[0].writes[0], /Parameters.ContainsKey\('EnableSearchOnlySession'\)/);
+    children[0].respondOk("connected"); await new Promise(r => setImmediate(r));
+    children[0].respondOk(null); await simulation;
+    const regular = bridge.invoke("Get-Label", {});
+    await new Promise(r => setImmediate(r)); await new Promise(r => setImmediate(r));
+    assert.equal(children.length, 2);
+    assert.doesNotMatch(children[1].writes[0], /EnableSearchOnlySession/);
+    children[1].respondOk("connected"); await new Promise(r => setImmediate(r));
+    children[1].respondOk([]); await regular;
+  } finally { if (saved === undefined) delete process.env.PURVIEW_DLP_AUTH_MODE; else process.env.PURVIEW_DLP_AUTH_MODE = saved; }
 });
 
 test("PowerShellBridge token-injection connect", async (t) => {
@@ -394,7 +461,7 @@ test("PowerShellBridge auth-expiry retry", async (t) => {
     lastProc.respondOk([{ Name: "P1" }]);
 
     assert.deepEqual(await invokePromise, [{ Name: "P1" }]);
-    const connects = lastProc.writes.join("").match(/Connect-IPPSSession/g);
+    const connects = lastProc.writes.join("").match(/^Connect-IPPSSession -/gm);
     assert.equal(connects.length, 2);
   });
 
@@ -420,7 +487,7 @@ test("PowerShellBridge auth-expiry retry", async (t) => {
     lastProc.respondOk([{ Name: "P1" }]);
 
     assert.deepEqual(await invokePromise, [{ Name: "P1" }]);
-    assert.equal(lastProc.writes.join("").match(/Connect-IPPSSession/g).length, 2);
+    assert.equal(lastProc.writes.join("").match(/^Connect-IPPSSession -/gm).length, 2);
   });
 
   await t.test("does NOT retry a WRITE on that same opaque failure", async () => {
@@ -439,7 +506,7 @@ test("PowerShellBridge auth-expiry retry", async (t) => {
     lastProc.respondErr("Unexpected character encountered while parsing value: <. Path '', line 0, position 0.");
 
     await assert.rejects(invokePromise, /Unexpected character/);
-    assert.equal(lastProc.writes.join("").match(/Connect-IPPSSession/g).length, 1);
+    assert.equal(lastProc.writes.join("").match(/^Connect-IPPSSession -/gm).length, 1);
   });
 
   await t.test("does NOT retry a timed-out cmdlet, which may already have applied", async () => {

@@ -1,0 +1,37 @@
+{
+  "verified": true,
+  "issues_checked": 44,
+  "native_parent_edges": 38,
+  "native_blocking_edges": 3,
+  "native_graph_audit": {
+    "helper": ".agents/skills/product-owner/scripts/audit_github.py",
+    "exit_code": 0,
+    "verified": true,
+    "issues_checked": 44,
+    "mismatches": []
+  },
+  "content_readback": {
+    "verified": true,
+    "records_checked": 44,
+    "checks": [
+      "exact generated issue content",
+      "source key uniqueness across paginated repository",
+      "canonical labels",
+      "open state",
+      "unassigned ownership"
+    ],
+    "mismatches": []
+  },
+  "independent_checks": [
+    "44 unique source keys and canonical labels",
+    "issue 20 human body preserved verbatim as prefix",
+    "unrelated issue 6/19/3/4 bodies and states unchanged",
+    "original roadmap source text preserved",
+    "no tested tenant or object identifiers in public issue bodies"
+  ],
+  "limits": [
+    "No live tenant or deployed release validation performed by this migration",
+    "Migration document links remain local until committed and pushed",
+    "GitHub Issues are authoritative after migration; manifests describe initial intended state"
+  ]
+}

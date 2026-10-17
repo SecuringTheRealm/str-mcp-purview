@@ -1,0 +1,12 @@
+{
+  "verified": true,
+  "records_checked": 44,
+  "checks": [
+    "exact generated issue content",
+    "source key uniqueness across paginated repository",
+    "canonical labels",
+    "open state",
+    "unassigned ownership"
+  ],
+  "mismatches": []
+}

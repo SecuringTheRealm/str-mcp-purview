@@ -15,18 +15,18 @@ The modern Purview developer surface is split across planes, and no single one c
 
 | Plane | Used for | R/W here |
 | --- | --- | --- |
-| **Microsoft Graph** (`/beta/security/informationProtection`) | Sensitivity label discovery & policy settings | Read |
-| **Security & Compliance PowerShell** (`Connect-IPPSSession`) | DLP policy & rule CRUD — *not exposed through Graph* | Read + Write |
+| **Microsoft Graph** (`/beta/security/informationProtection`) | Per-user label policy settings | Read |
+| **Security & Compliance PowerShell** (`Connect-IPPSSession`) | Sensitivity-label and DLP configuration | Read + Write |
 
-So this server is a **hybrid**: raw Microsoft Graph calls for labels, and a persistent PowerShell bridge (`ExchangeOnlineManagement` → `Get/New/Set-DlpCompliance*`) for DLP. Both act as the **delegated signed-in admin**, so every action honours that admin's Purview RBAC.
+So this server is a **hybrid**: Security & Compliance PowerShell is authoritative for labels and DLP, while Graph supplies the per-user `labelPolicySettings` surface that has no equivalent cmdlet. Both act as the **delegated signed-in admin**, so every action honours that admin's Purview RBAC.
 
 > Current scope: **sensitivity labels (read/write)** and **DLP policies (read/write)**. Insider Risk Management, Communications Compliance, and DSPM are planned follow-ups.
 
 ## Platform support
 
-**The DLP tools and the label write/read-back tools work on Windows only.** They run through Security & Compliance PowerShell (`Connect-IPPSSession`), which Microsoft [does not support in PowerShell 7 on macOS or Linux](https://learn.microsoft.com/powershell/exchange/exchange-online-powershell-v2#supported-operating-systems-for-the-exchange-online-powershell-module). On macOS/Linux those tools fail fast with a clear error, and the **Graph-backed label read tools still work**. If a future `ExchangeOnlineManagement` release proves otherwise on your machine, `PURVIEW_ALLOW_UNSUPPORTED_OS=1` skips the gate.
+**The DLP and sensitivity-label configuration tools work on Windows only.** They run through Security & Compliance PowerShell (`Connect-IPPSSession`), which Microsoft [does not support in PowerShell 7 on macOS or Linux](https://learn.microsoft.com/powershell/exchange/exchange-online-powershell-v2#supported-operating-systems-for-the-exchange-online-powershell-module). On macOS/Linux those tools fail fast with a clear error; the Graph-backed `get_label_policy_settings` tool still works. If a future `ExchangeOnlineManagement` release proves otherwise on your machine, `PURVIEW_ALLOW_UNSUPPORTED_OS=1` skips the gate.
 
-| Platform | Label reads (Graph) | Label writes & read-back, all DLP (PowerShell) |
+| Platform | Label policy settings (Graph) | Label configuration and all DLP (PowerShell) |
 | --- | --- | --- |
 | Windows | ✅ | ✅ |
 | macOS / Linux | ✅ | ❌ (Microsoft-unsupported; gated) |
@@ -36,9 +36,9 @@ So this server is a **hybrid**: raw Microsoft Graph calls for labels, and a pers
 Before you start, have these ready:
 
 - **Node.js 20+**.
-- **Windows with PowerShell 7+** (`pwsh`) and the Exchange Online module — required for the DLP tools **and** the sensitivity-label *write/read-back* tools (see [Platform support](#platform-support)); not needed if you only use the label *read* tools:
+- **Windows with PowerShell 7+** (`pwsh`) and the Exchange Online module — required for the DLP and sensitivity-label configuration tools (see [Platform support](#platform-support)); not needed only for the Graph-backed label-policy-settings read:
   ```powershell
-  Install-Module ExchangeOnlineManagement -Scope CurrentUser
+  Install-Module ExchangeOnlineManagement -RequiredVersion 3.9.2 -Scope CurrentUser
   ```
 - A **Microsoft 365 tenant** in which you can register an app and grant admin consent (or an admin who can consent for you).
 - An **admin account** with the appropriate Microsoft Purview roles — see [step 2](#2-give-the-sign-in-account-its-purview-roles).
@@ -49,7 +49,7 @@ The server has two auth planes and this walkthrough wires up both: an **Entra ap
 
 ### 1. Register the Microsoft Entra app
 
-This app registration backs **both** planes: the sensitivity-label read tools (Microsoft Graph) and the DLP tools (Security & Compliance PowerShell). It is a **public client** — no client secret or certificate is ever created.
+This app registration backs **both** planes: label policy settings (Microsoft Graph) and label/DLP configuration (Security & Compliance PowerShell). It is a **public client** — no client secret or certificate is ever created.
 
 In the [Microsoft Entra admin center](https://entra.microsoft.com) → **Identity → Applications → App registrations → New registration**:
 
@@ -60,7 +60,7 @@ In the [Microsoft Entra admin center](https://entra.microsoft.com) → **Identit
 On the new registration:
 
 4. **Authentication** blade → **Advanced settings** → set **Allow public client flows** to **Yes** → **Save**. (Required for the optional `PURVIEW_AUTH_MODE=devicecode` sign-in; harmless otherwise.)
-5. **API permissions** blade → **Add a permission** → **Microsoft Graph** → **Delegated permissions** → search and add **`InformationProtectionPolicy.Read`**. *(Label tools.)*
+5. **API permissions** blade → **Add a permission** → **Microsoft Graph** → **Delegated permissions** → search and add **`InformationProtectionPolicy.Read`**. *(The `get_label_policy_settings` tool.)*
 6. **Add a permission** again → **APIs my organization uses** tab → search **Office 365 Exchange Online** → **Delegated permissions** → expand the **Exchange** group → add **`Exchange.ManageV2`**. *(DLP tools. The permissions are collapsed into groups, so it is not visible until you expand **Exchange**.)*
 7. Still on **API permissions**, click **Grant admin consent for \<tenant\>** and confirm **both** rows show a green **✔ Granted**. (Needs Global Administrator, Privileged Role Administrator, or Cloud Application Administrator.)
 8. Open the **Overview** blade and copy the **Application (client) ID** and **Directory (tenant) ID** — you need both in step 4.
@@ -71,8 +71,7 @@ The app grants only *API access*; every action still runs as the signed-in admin
 
 | Tools you want to use | Minimum role |
 |---|---|
-| Sensitivity-label **reads** (Graph) | *Information Protection Reader* (or higher) |
-| Sensitivity-label **writes** (`New-/Set-Label`, `*-LabelPolicy`) | *Information Protection Admin* or *Compliance Administrator* |
+| Sensitivity-label reads/writes (`Get-/New-/Set-Label`, `*-LabelPolicy`) | *Information Protection Admin* or *Compliance Administrator* |
 | **DLP** read/write | *Compliance Administrator* or *DLP Compliance Management* |
 | Everything (simplest) | *Compliance Administrator* |
 
@@ -146,8 +145,8 @@ Runs the unit and integration test suite with Node's built-in test runner (`node
 
 The two auth planes sign in independently:
 
-- **Labels (Graph):** the first label tool call triggers an interactive browser sign-in via `@azure/identity`, in this Node process. The token is cached in memory for the session.
-- **DLP (PowerShell):** the DLP tools run `Connect-IPPSSession` inside a background `pwsh` child. That child is spawned with piped stdio and **no interactive console**, and `Connect-IPPSSession`'s own interactive sign-in (browser *or* WAM) requires a console — so it hangs. The server therefore signs in **here in Node** (which can), acquires a Security & Compliance access token, and passes it to `Connect-IPPSSession -AccessToken`. This is **token-injection mode**, and it is the default.
+- **Graph:** `get_label_policy_settings` acquires a Microsoft Graph token via `@azure/identity` and caches it in memory.
+- **PowerShell:** label configuration and DLP tools run `Connect-IPPSSession` inside a background `pwsh` child. That child is spawned with piped stdio and **no interactive console**, and `Connect-IPPSSession`'s own interactive sign-in (browser *or* WAM) requires a console — so it hangs. The server therefore signs in **here in Node** (which can), acquires a Security & Compliance access token, and passes it to `Connect-IPPSSession -AccessToken`. This is **token-injection mode**, and it is the default.
 
 > **Why not just let `Connect-IPPSSession` sign in?** It can't from this server. A pwsh child launched by Node has no window station, so WAM fails with *"A window handle must be configured"* and the `-DisableWAM` browser fallback hangs forever. Interactive `Connect-IPPSSession` only works on a host that gives pwsh a real console — not this one.
 
@@ -170,12 +169,16 @@ The first DLP call does one interactive sign-in **in Node** (browser, or device 
 
 Both planes take their token from the same credential, so an unattended host only has to change *which credential* — the bridge still connects the same way.
 
-- **Managed identity** (`PURVIEW_AUTH_MODE=managedidentity`) — the platform mints the token. No certificate, no password, nothing at rest to rotate or leak. **Prefer this for any Azure-hosted deployment.**
+- **Managed identity** (`PURVIEW_AUTH_MODE=managedidentity`) — the platform mints the token without a stored secret. Supported by our Graph credential path; the compliance token-injection path remains deployment-specific and is not certified merely because Graph succeeds. Use the documented Windows certificate connection for a Microsoft-documented unattended compliance setup.
 - **Certificate app-only** — for a non-Azure unattended host. On the PowerShell plane, `Connect-IPPSSession` reads the certificate from the **Windows certificate store by thumbprint** (`PURVIEW_APP_ID` + `PURVIEW_ORGANIZATION` + `PURVIEW_CERT_THUMBPRINT`); on the Graph plane, point `AZURE_CLIENT_CERTIFICATE_PATH` at the certificate file.
 
-Either way, grant the app registration the **application** permissions `InformationProtectionPolicy.Read.All` (Graph) and **Office 365 Exchange Online → Exchange.ManageAsApp**, consent to them, and assign the service principal the **Compliance Administrator** Entra role. See [Microsoft's app-only auth guide](https://learn.microsoft.com/powershell/exchange/app-only-auth-powershell-v2).
+For Graph policy settings, grant the application permission `InformationProtectionPolicy.Read.All`. For Security & Compliance PowerShell, Microsoft's guide specifies **Microsoft Exchange Online Protection → Exchange.ManageAsApp** (resource app ID `00000007-0000-0ff1-ce00-000000000000`, role ID `455e5cd2-84e8-4751-8344-5672145dfa17`), with admin consent and an appropriate service-principal role assignment. **Office 365 Exchange Online** is a separate resource used by `Connect-ExchangeOnline`; granting that permission alone is not the documented compliance setup. Compliance Administrator is a documented role option; custom role groups can provide more targeted access. Endpoint restriction parameters specifically require Compliance Administrator or Compliance Data Administrator. See [Microsoft's app-only auth guide](https://learn.microsoft.com/powershell/exchange/app-only-auth-powershell-v2).
 
-> **App-only auth is a real privilege trade.** Every action runs as the app, not as a signed-in admin, so Conditional Access, MFA and sign-in risk **do not apply**, and `Exchange.ManageAsApp` cannot be scoped down below tenant-wide compliance administration. Use a delegated sign-in wherever a human is present, and prefer managed identity over a certificate when a human is not. The server deliberately does **not** support supplying a certificate password in an environment variable: per Microsoft, storing it in plain text ["defeats the purpose of a secure connection method"](https://learn.microsoft.com/powershell/exchange/app-only-auth-powershell-v2#connection-examples).
+> **App-only auth is a real privilege trade.** Actions use the application's permissions, not the MCP caller's user permissions. User MFA is not performed for app-only operations; workload-identity controls and tenant policy must be considered separately. API consent does not replace RBAC, and the shared application identity does not automatically enforce each HTTP caller's Purview permissions. The server deliberately does not accept certificate passwords through environment variables. See [Microsoft's connection guidance](https://learn.microsoft.com/powershell/exchange/app-only-auth-powershell-v2#connection-examples).
+
+Token injection checks for ExchangeOnlineManagement **3.8.0+** and the `AccessToken` parameter before connecting; native certificate/interactive connections require the REST-capable **3.2.0+** baseline. PowerShell 7.4 pairs with module 3.9.2; module 3.10+ requires PowerShell 7.6+. The experimental Linux container pins the compatible 7.4/3.9.2 pair, but this does **not** remove Microsoft's Linux restriction on `Connect-IPPSSession`. [Module/platform requirements](https://learn.microsoft.com/powershell/exchange/exchange-online-powershell-v2#supported-operating-systems-for-the-exchange-online-powershell-module), [token parameter](https://learn.microsoft.com/powershell/module/exchangepowershell/connect-ippssession#-accesstoken).
+
+The existing delegated token scope default is retained. For app-only token injection, the token audience, resource-specific consent and assigned roles must be verified together; `PURVIEW_EXO_SCOPE` is an override, not a permission grant. Do not infer an app-only audience from the delegated default or claim a successful HTTP/Graph test proves compliance access.
 
 ### Auth environment variables
 
@@ -183,7 +186,7 @@ Either way, grant the app registration the **application** permissions `Informat
 | --- | --- | --- | --- |
 | `PURVIEW_AUTH_MODE` | Both | `interactive` | `devicecode` signs in with a URL + code instead of a browser popup. `managedidentity` uses the host's managed identity (no secret at rest). Chooses the credential for **both** planes. |
 | `AZURE_REDIRECT_URI` | Both | `http://localhost` | Redirect URI for the interactive browser flow. |
-| `AZURE_CLIENT_CERTIFICATE_PATH` | Both | *(none)* | Switches the credential to **certificate app-only**. Graph label reads then use the tenant-wide path and need `InformationProtectionPolicy.Read.All`. |
+| `AZURE_CLIENT_CERTIFICATE_PATH` | Both | *(none)* | Switches the credential to **certificate app-only**. The Graph label-policy-settings read then uses the tenant-wide path and needs `InformationProtectionPolicy.Read.All`. |
 | `PURVIEW_ORGANIZATION` | DLP | *(from token)* | Your `<tenant>.onmicrosoft.com` domain for `-Organization`. Derived from the token's `upn` claim if unset. |
 | `PURVIEW_EXO_SCOPE` | DLP | `https://outlook.office365.com/.default` | Resource scope for the Security & Compliance access token. |
 | `PURVIEW_DLP_AUTH_MODE` | DLP | `token` | `token` injects a Node-acquired access token into `Connect-IPPSSession` — the only mode that works from this server. `interactive` lets pwsh sign in itself; see the warning above. |
@@ -218,23 +221,109 @@ All tools return compact, token-efficient output. List tools return one line per
 
 There are two data sources in use and it is worth understanding the difference:
 
-**Microsoft Graph (beta)** — queried by `list_sensitivity_labels`, `get_sensitivity_label`, and `get_label_policy_settings`. Each call is a targeted HTTPS request to `/beta/security/informationProtection`, authenticated as the signed-in admin with a token from `@azure/identity`. Read-only: the Graph label endpoints do not expose label creation or publishing.
+**Microsoft Graph (beta)** — queried by `get_label_policy_settings`. It makes a targeted request to `/beta/security/informationProtection/labelPolicySettings`, authenticated with a token from `@azure/identity`.
 
-**Security & Compliance PowerShell** — queried by all `*_dlp_*` tools. DLP policy and rule configuration is not available through Graph, so the server keeps one long-lived `pwsh` process, runs `Connect-IPPSSession` once, and streams the `Get/New/Set-DlpCompliance*` cmdlets into that session. This is the only plane that performs **writes**, and the only one that requires PowerShell 7+.
+**Security & Compliance PowerShell** — queried by sensitivity-label, label-policy, and all `*_dlp_*` configuration tools. The server keeps one long-lived `pwsh` process, runs `Connect-IPPSSession` once, and streams the relevant cmdlets into that session. It is authoritative for label reads and writes, avoiding Graph replication lag and preserving SCC names, GUIDs, and display names together.
 
 ## Tools
+
+### Tool exposure modes
+
+Set `PURVIEW_TOOL_MODE` to choose the MCP surface. All modes use the same capability handlers, authentication and argument validation.
+
+| Mode | Visible tools (unrestricted) | Intended use |
+| --- | ---: | --- |
+| `full` | 37 | Existing deployments, diagnostics and detailed schemas |
+| `compact` | 8 | Recommended for new agent configurations |
+| `dispatcher` | 3 | Minimal surface for a growing capability catalogue |
+
+The default remains **full** so existing clients retain their operation names. The catalogue includes ten service-side auto-label capabilities and `get_auth_status` for local configuration diagnostics. To migrate, set `PURVIEW_TOOL_MODE=compact`, restart the server and refresh the client's tool discovery. No authentication or startup-command changes are needed. The detailed tools documented below become internal operation IDs in compact/dispatcher mode, not individually advertised tools.
+
+Compact exposes `purview_search`, `purview_describe_capability`, `purview_labels`, `purview_manage_labels`, `purview_dlp`, `purview_manage_dlp`, `purview_classification` and `purview_auth`. Read and write operations are separate so hosts can apply meaningful approval policies. Each domain tool accepts an `operation` enum and an `arguments` object. Dispatcher exposes `purview_search_capabilities`, `purview_describe_capability` and `purview_execute_capability`. Its executor is conservatively annotated as potentially destructive; annotations are hints, not authorization.
+
+Generic stdio configuration (merge your existing authentication environment):
+
+```json
+{
+  "mcpServers": {
+    "purview": {
+      "command": "node",
+      "args": ["/absolute/path/to/str-mcp-purview/index.js"],
+      "env": {
+        "PURVIEW_TOOL_MODE": "compact",
+        "PURVIEW_TOOL_LIMIT": "8"
+      }
+    }
+  }
+}
+```
+
+For dispatcher mode, change only the mode value to `dispatcher`. The same environment settings apply to containers and the Functions host; `functions/local.settings.json.example` opts new deployments into compact mode. `PURVIEW_TOOL_LIMIT` caps search candidates (default 8, allowed 1–20); it does not limit the number of registered tools.
+
+Example compact workflow:
+
+```json
+{"name":"purview_search","arguments":{"query":"Find DLP policies that apply to SharePoint","domain":"dlp","action":"read","limit":1}}
+```
+
+Search returns lightweight ranked IDs, descriptions, scores, risk and an `invocation` mapping, with **no schemas by default**. It searches available **operations**, not tenant objects. Describe only the selected operation:
+
+```json
+{"name":"purview_describe_capability","arguments":{"capability_id":"list_dlp_policies"}}
+```
+
+Describe returns the exact `input_schema`, optional output schema, constraints, illustrative arguments, authorization requirements and invocation mapping. It does not execute the operation or guarantee backend access. Then query tenant data:
+
+```json
+{"name":"purview_dlp","arguments":{"operation":"list_dlp_policies","arguments":{"workload":"SharePoint","limit":25}}}
+```
+
+In dispatcher mode the equivalent call is `purview_execute_capability` with `capability_id: "list_dlp_policies"` and the same nested arguments. Subsequent pages use the returned `next_cursor` as `cursor`, keeping other filters unchanged. Deletes require user confirmation through form elicitation; `confirm: true` is accepted for compatibility but cannot bypass that interaction. `purview_auth` / `get_auth_status` only reports local configuration: it does not sign in, validate credentials or prove tenant access.
+
+Migration from the earlier compact/dispatcher surface: refresh tool discovery and use describe before execution. Clients needing the previous eager-schema search can set `include_schemas: true`. A caller that already knows the schema can execute directly; search/describe are discovery aids, not security tokens. Full-mode tool names and argument/result contracts are unchanged.
+
+### Compatibility corrections to DLP writes
+
+- `generate_alert` now takes a non-empty recipient array, for example `["security@contoso.com", "SiteAdmin"]`. The former boolean shape was not the cmdlet's contract. Refresh client schemas; no recipients are silently inferred. This does not add incident-report functionality. [GenerateAlert](https://learn.microsoft.com/powershell/module/exchangepowershell/new-dlpcompliancerule#-generatealert).
+- SIT confidence `Low`/`Medium`/`High` uses the documented grouped OR shape with minimum confidence 65/75/85 and maximum 100. Bare SIT strings remain supported. [Grouped syntax](https://learn.microsoft.com/powershell/module/exchangepowershell/new-dlpcompliancerule#examples), [confidence levels](https://learn.microsoft.com/purview/sit-sensitive-information-type-learn-about#more-on-confidence-levels).
+- OneDrive exclusions map to `ExceptIfOneDriveSharedBy`, not the obsolete `OneDriveLocationException` family. Create accepts user UPNs or `All`, not site URLs. Set reads the policy first, merges user additions/removals and preserves unrelated scope entries. Inclusion and exclusion scopes cannot coexist. Ambiguous edits, legacy site-based policies, unresolved identities and removal of the last inclusion are rejected rather than silently changing coverage. Use `remove_locations.onedrive:["All"]` to disable the location explicitly. Read/modify/write is not transactional against changes made by other administrators; avoid concurrent edits. [OneDrive scope contract](https://learn.microsoft.com/powershell/module/exchangepowershell/set-dlpcompliancepolicy#-onedrivesharedby).
+- SharePoint, Teams and Endpoint exclusions require an effective `All` location scope. Sender/recipient (`from`, `sent_to`) exceptions read the parent policy and require Exchange-only scope before mutation. Content-property exceptions require `Property:value1,value2` syntax. [Exception constraints](https://learn.microsoft.com/powershell/module/exchangepowershell/new-dlpcompliancerule#-exceptiffrom).
+
+### Capability policies and retrieval
+
+Retrieval runs entirely in-process: permission/domain/action/risk filtering, then deterministic BM25 with ID/alias, domain and verb boosts. There is no routing LLM, vector database, network search or new dependency. The client model chooses among the candidates and supplies arguments; the server resolves the exact ID and validates the original schema before calling Graph or PowerShell. Unknown fields, denied operations and mismatched compact domains are rejected.
+
+Optional server-side restrictions:
+
+| Environment variable | Meaning |
+| --- | --- |
+| `PURVIEW_ALLOWED_CAPABILITIES` | Comma-separated canonical IDs; unset allows all, empty denies all |
+| `PURVIEW_ALLOWED_DOMAINS` | Comma-separated `labels`, `dlp`, `classification`, `auth` |
+| `PURVIEW_READ_ONLY=true` | Deny all writes |
+| `PURVIEW_ALLOW_DESTRUCTIVE=false` | Deny capabilities marked destructive |
+| `PURVIEW_PERMISSIONS` | Trusted permission labels matched against capability metadata |
+| `PURVIEW_SCOPES` | Trusted Microsoft scope names matched against declared alternatives |
+| `PURVIEW_FEATURES` | Enabled feature flags for feature-gated capabilities |
+
+These restrictions apply to discovery, retrieval and execution; resources cannot bypass them. Unset permission/scope lists defer to backend authorization. Currently Graph policy settings declare delegated/application scope alternatives; PowerShell operations still rely on Microsoft's tenant RBAC, not an inferred role list. Configuration values do **not** grant Microsoft permissions, and the HTTP host does not automatically turn caller claims into capability scopes. A trusted embedding host can pass `capabilityPolicy` to `createServer`; it is intersected with server restrictions, never widened by tool arguments. Permission-sensitive discovery is privately cached with zero TTL.
+
+Catalogue resources return only the first 25 items with pagination information. Existing list capabilities remain bounded (default 25, maximum 100); backend calls may still fetch a full collection before local filtering/pagination. This reduces model context, not necessarily backend retrieval cost.
+
+An embedding host may also provide `authorizeCapability({capability, arguments})` to `createServer`. This trusted hook runs after schema validation and before the handler on **every execution**, including resource reads. It must return exactly `true`; false, missing results and exceptions deny the call. It can inspect resource identities/arguments (for example, forbid production-policy changes); it cannot widen capability permissions. Argument copies prevent hook mutations from changing the eventual operation. No new policy engine is required. This is an extension point, not a tenant policy admin interface or automatic mapping of HTTP identity claims.
+
+Tool errors retain `isError` and readable text, and now include `structuredContent.error` with `code`, `message`, and `retryable:false`. Codes distinguish `VALIDATION_ERROR`, `CAPABILITY_UNAVAILABLE` (unknown and unauthorized IDs deliberately share a response), `POLICY_DENIED`, `BACKEND_ERROR`, and unexpected `INTERNAL_ERROR`. Backend failures are conservatively non-retryable at this boundary: a failed write may already have taken effect. Existing integration-specific retry behaviour is unchanged; agents must not blindly retry mutations.
 
 Every tool below is documented two ways: **Business** — why an admin would reach
 for it and what they get back — and **Technical** — the exact Graph endpoint or
 PowerShell cmdlet it runs and how. Tools are grouped by data plane; writes are
 flagged and only exist on the PowerShell plane.
 
-### Sensitivity labels — Microsoft Graph (read-only)
+### Sensitivity labels — Security & Compliance PowerShell
 
 #### `list_sensitivity_labels`
 
 - **Business:** See every sensitivity label the signed-in admin can view — the *Public / Internal / Confidential*-style classifications your org uses to tag data. This is the starting point: it hands you the label ID you need to inspect any single label in detail.
-- **Technical:** `GET /beta/security/informationProtection/sensitivityLabels` via Microsoft Graph, as the delegated admin. Returns one compact line per label: label ID, sensitivity order, active/inactive state, name (and parent, if a sub-label), and a truncated description. Optional filters are applied client-side.
+- **Technical:** `Get-Label` via Security & Compliance PowerShell. Returns the full GUID, immutable SCC name, display name, priority, state, and parent identity without truncating addressable fields. Optional filters are applied client-side.
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
@@ -245,13 +334,13 @@ flagged and only exist on the PowerShell plane.
 
 #### `get_sensitivity_label`
 
-- **Business:** Drill into one label to understand exactly how it presents to users — its colour, the tooltip guidance shown at classification time, its position in the sensitivity hierarchy, and whether it's currently active. Optionally also read back the **protection** the label applies (encryption, markings, container/Teams settings) — the settings the write tools set.
-- **Technical:** `GET /beta/security/informationProtection/sensitivityLabels/{id}` via Microsoft Graph. With `include_protection_settings`, additionally runs `Get-Label` on the PowerShell plane and appends a protection-settings section (degrades to a note if that plane is unavailable).
+- **Business:** Drill into one label to see its SCC identity, display metadata, hierarchy, state, and the **protection** it applies (encryption, markings, container/Teams settings).
+- **Technical:** `Get-Label -Identity <name|GUID>`. Because reads and writes use the same plane, a successful `New-Label` or `Set-Label` is immediately readable without waiting for Graph replication.
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `label_id` | string | Sensitivity label GUID, from `list_sensitivity_labels` |
-| `include_protection_settings` | boolean | Optional — also return encryption/marking/container/Teams protection (needs the PowerShell plane) |
+| `label_id` | string | Sensitivity label SCC name or GUID, from `list_sensitivity_labels` |
+| `include_protection_settings` | boolean | Deprecated compatibility flag; protection settings are always returned |
 
 ---
 
@@ -284,23 +373,25 @@ flagged and only exist on the PowerShell plane.
 
 ### Sensitivity labels — write & publish (Security & Compliance PowerShell)
 
-Labels are a **hybrid** domain: read through Graph (above), but **written** through PowerShell — Graph exposes no label create/publish surface. These four tools cover the full label lifecycle.
+Label configuration is read and written through PowerShell, while the separate `get_label_policy_settings` tool remains Graph-backed. These tools cover the full label lifecycle without cross-plane replication gaps.
 
-> **Prerequisite:** unlike the label *read* tools (Graph only), these **writes require PowerShell 7+ and an IPPSSession sign-in** (same bridge as the DLP tools). A Graph read may briefly lag a PowerShell write (replication).
+> **Prerequisite:** label reads and writes require PowerShell 7+ and an IPPSSession sign-in (the same bridge as the DLP tools).
 
 The two label tools share a category-grouped settings surface — `encryption`, `content_marking` (header/footer/watermark), `site_and_group_protection` (Groups/Teams/SharePoint containers), and `teams_protection` (meetings) — passed as nested objects and flattened to the underlying `New-/Set-Label` parameters.
 
 #### `create_sensitivity_label`
 
 - **Business:** Define a new classification — its name, tooltip, and optionally the protection it applies (encryption, visual markings, container/Teams controls). A created label is invisible to users until published (see `create_label_policy`).
-- **Technical:** **Write.** `New-Label`. Required: `name`, `display_name`, `tooltip`. Optional `parent_id` (sub-label) + the shared settings groups.
+- **Technical:** **Write.** `New-Label`. Required: `name`, `display_name`, and `tooltip` for ordinary labels. Set `is_label_group:true` to create an organisational parent for modern-scheme sub-labels; a group's tooltip is optional. Groups accept display name, descriptions and colour, and reject parent/protection settings. Reads expose group status. Classic tenants can still use an ordinary parent label.
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `name` | string | Unique internal label name |
 | `display_name` | string | Name shown to users |
 | `tooltip` | string | Guidance shown at classification time |
-| `parent_id` | string | Optional — parent label to make this a sub-label |
+| `is_label_group` | boolean | Create an organisational group with `New-Label -IsLabelGroup`; default is an ordinary label |
+| `parent_id` | string | Optional — parent name/GUID; modern-scheme tenants require an existing label group |
+| `color` | string | Six-digit RGB hex code, e.g. `#123ABC`; mapped to `AdvancedSettings.color` |
 | `encryption` | object | `enabled`, `protection_type`, `do_not_forward`, `encrypt_only`, `offline_access_days`, `rights_definitions[]` |
 | `content_marking` | object | `header` / `footer` / `watermark`, each with `enabled`, `text`, `font_color`, `font_size`, `alignment`/`layout` |
 | `site_and_group_protection` | object | `enabled`, `privacy`, `allow_guest_access`, `external_sharing_control`, `access_level` |
@@ -316,6 +407,8 @@ The two label tools share a category-grouped settings surface — `encryption`, 
 
 - **Business:** **Publish** labels so users can actually apply them, and set behaviour like mandatory labelling or a default label. Creation *is* publishing — there's no separate step; changes replicate to clients automatically (can take up to ~24h).
 - **Technical:** **Write.** `New-LabelPolicy`. Targets Exchange mailboxes and/or Microsoft 365 Groups; behaviour goes in `advanced_settings`.
+
+At least one nonempty `exchange_location` or `modern_group_location` target is required. Missing targets fail validation before PowerShell; the server never defaults publishing to everyone. For example: `{"name":"Finance publishing","labels":["Finance"],"exchange_location":["finance.admin@contoso.com"]}`. Policy details render object locations as readable names and identities.
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
@@ -415,8 +508,9 @@ The two label tools share a category-grouped settings surface — `encryption`, 
 | `comment` | string | Optional description/comment |
 | `exchange_location` | string[] | Exchange locations, e.g. `["All"]` |
 | `sharepoint_location` | string[] | SharePoint locations, e.g. `["All"]` |
-| `onedrive_location` | string[] | OneDrive locations, e.g. `["All"]` |
+| `onedrive_location` | string[] | `["All"]` or user UPNs, never site URLs; UPNs map to `OneDriveSharedBy` |
 | `teams_location` | string[] | Teams chat/channel locations, e.g. `["All"]` |
+| `location_exceptions` | object | Exclusions for `sharepoint`, `onedrive`, or `teams` (each a string array) |
 
 ---
 
@@ -432,22 +526,30 @@ The two label tools share a category-grouped settings surface — `encryption`, 
 | `comment` | string | Optional — replace the policy's description/comment |
 | `add_locations` | object | Locations to add, per workload: `exchange`, `sharepoint`, `onedrive`, `teams`, `endpoint` (each a string array, or `["All"]`) |
 | `remove_locations` | object | Locations to remove, same shape as `add_locations` |
+| `add_location_exceptions` | object | Add exclusions for `sharepoint`, `onedrive`, `teams`, or `endpoint` |
+| `remove_location_exceptions` | object | Remove exclusions, using the same shape |
 
 ---
 
 #### `create_dlp_rule`
 
 - **Business:** Add the actual detection logic to a policy — "if content contains *these* sensitive information types, then block / alert / notify." A policy does nothing until it has at least one rule.
-- **Technical:** **Write.** `New-DlpComplianceRule` inside the named policy. Maps the supplied sensitive information types into the `ContentContainsSensitiveInformation` condition and the block/notify/alert/priority actions.
+- **Technical:** **Write.** `New-DlpComplianceRule` inside the named policy. Supports tuned SIT conditions, access scope, severity, customised notifications, common exceptions, and the existing block/notify/alert actions.
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `name` | string | Unique rule name |
 | `policy` | string | Parent DLP policy name or GUID |
-| `sensitive_information_types` | string[] | Condition — sensitive information types to detect, e.g. `["Credit Card Number"]` |
+| `sensitive_information_types` | (string\|object)[] | SIT name strings, or `{name, min_count?, max_count?, confidence_level?}`; existing strings remain valid |
 | `block_access` | boolean | Action — block access to matching content |
 | `notify_user` | string[] | Action — notify these users (emails, or `["Owner","LastModifier"]`) |
-| `generate_alert` | boolean | Action — raise an alert on match |
+| `generate_alert` | string[] | Alert-recipient email addresses or `SiteAdmin`; booleans are rejected |
+| `access_scope` | string | `InOrganization`, `NotInOrganization`, or `None` |
+| `report_severity_level` | string | `None`, `Low`, `Medium`, or `High`; reporting metadata, not enforcement |
+| `notification_email_subject` | string | Custom subject for user notification emails |
+| `notification_email_body` | string | Custom email body (max 5,000 characters; supports Purview tokens/limited HTML) |
+| `policy_tip_text` | string | Plain-text policy tip shown to users (max 256 characters) |
+| `exceptions` | object | Common `ExceptIf*` conditions: SITs, document/property words or patterns, extensions, senders, recipients, groups, and domains |
 | `priority` | integer | Rule priority (lower runs first) |
 
 ---
@@ -460,10 +562,16 @@ The two label tools share a category-grouped settings surface — `encryption`, 
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `identity` | string | Rule name or GUID to modify |
-| `sensitive_information_types` | string[] | Replace the detected sensitive information types |
+| `sensitive_information_types` | (string\|object)[] | Replace SIT conditions; accepts the same tuned form as `create_dlp_rule` |
 | `block_access` | boolean | Set the block-access action |
 | `notify_user` | string[] | Replace the notify-user list |
-| `generate_alert` | boolean | Set alert generation |
+| `generate_alert` | string[] | Set alert recipients (email addresses or `SiteAdmin`); omission leaves existing settings unchanged |
+| `access_scope` | string | Set or clear the inside/outside-organisation condition |
+| `report_severity_level` | string | Set detection/reporting severity |
+| `notification_email_subject` | string | Set the custom notification subject |
+| `notification_email_body` | string | Set the custom notification body |
+| `policy_tip_text` | string | Set the custom policy-tip text |
+| `exceptions` | object | Set common rule exceptions using the create shape |
 | `priority` | integer | Set rule priority |
 | `disabled` | boolean | Enable (`false`) or disable (`true`) the rule |
 | `endpoint_restrictions` | object[] | Endpoint rules only — replace the activity restrictions (same shape as `create_endpoint_dlp_rule`; Block/Warn require `notify_user`) |
@@ -507,6 +615,7 @@ These two tools are kept **separate** from the traditional DLP tools above so th
 |-----------|------|-------------|
 | `name` | string | Unique policy name |
 | `endpoint_location` | string[] | Users whose onboarded devices are in scope — email/name/GUID, or `["All"]` (default) |
+| `endpoint_location_exception` | string[] | Users whose onboarded devices are excluded from the policy |
 | `mode` | string | `Enable`, `TestWithNotifications`, `TestWithoutNotifications`, `Disable` (default `Enable`) |
 | `comment` | string | Optional description/comment |
 
@@ -524,7 +633,7 @@ These two tools are kept **separate** from the traditional DLP tools above so th
 | `sensitive_information_types` | string[] | Condition — sensitive information types to detect |
 | `endpoint_restrictions` | object[] | **Required.** Each entry: `{ "activity": <activity>, "action": <action> }` |
 | `notify_user` | string[] | Notify these users — **required when any action is `Block` or `Warn`** |
-| `generate_alert` | boolean | Action — raise an alert on match |
+| `generate_alert` | string[] | Alert-recipient email addresses or `SiteAdmin`; booleans are rejected |
 | `priority` | integer | Rule priority (lower runs first) |
 
 **`activity` values** (the [documented](https://learn.microsoft.com/powershell/module/exchangepowershell/new-dlpcompliancerule) `EndpointDlpRestrictions` settings): `Print`, `CopyPaste`, `ScreenCapture`, `RemovableMedia`, `NetworkShare`.
@@ -644,18 +753,29 @@ Resources here deliberately mirror **classification vocabulary** — the labels 
 
 ## Hosting on Azure Functions
 
-The same server deploys as a **remote MCP server** on Azure Functions using the [self-hosted MCP servers pattern](https://learn.microsoft.com/azure/azure-functions/scenario-host-mcp-server-sdks) (public preview): a custom handler (`host.json`) launches `functions/server.js`, which serves the MCP protocol over **stateless streamable HTTP** at `POST /mcp` — a fresh server + transport per request, mirroring [Azure-Samples/mcp-sdk-functions-hosting-node](https://github.com/Azure-Samples/mcp-sdk-functions-hosting-node).
+> **Status: In UAT.** The HTTP host supports the same tool modes, two prompts, and three resources as stdio (37 tools in unrestricted full mode). Local transport/protocol tests pass. Azure Functions is not production-validated until every Graph- and PowerShell-backed operation passes the deployed disposable-object UAT suite.
+
+The custom handler (`host.json`) launches `functions/server.js` and serves stateless MCP at `POST /mcp`. One canonical factory in `src/server.js` backs both transports.
+
+| Transport | Legacy 2025 clients | MCP `2026-07-28` |
+| --- | --- | --- |
+| stdio | Tested locally | Tested locally (`server/discover`, no modern `initialize`) |
+| HTTP / Functions custom handler | Tested locally | Tested locally through the Node adapter; deployed Azure proxy validation remains In UAT |
 
 Two deployment shapes:
 
 | Shape | Plan | Tool surface |
 | --- | --- | --- |
-| **Code-only** (`func azd`/zip deploy of this repo) | Flex Consumption | Graph label reads only — the plan cannot carry `pwsh` |
-| **Container** ([`Containerfile`](Containerfile)) | Elastic Premium / Dedicated / Azure Container Apps | Full surface, subject to the Linux IPPS caveat in [Platform support](#platform-support) |
+| **Code-only** (`func`/zip deploy of this repo) | Flex Consumption | Advertises the canonical full surface; PowerShell execution remains UAT-dependent |
+| **Container** ([`Containerfile`](Containerfile)) | Elastic Premium / Dedicated / Azure Container Apps | Advertises the canonical full surface; tenant connectivity and all-tool execution remain In UAT |
 
-Remote hosting is headless, so **app-only auth is required** — set the app-only variables from [Auth environment variables](#auth-environment-variables) as app settings. Note `Connect-IPPSSession` does **not** support managed identity; the certificate path is the only unattended option for the PowerShell plane.
+Remote hosting is headless, so use a renewable app identity and configure the Graph and PowerShell planes independently. Managed identity and certificate combinations are deployment candidates, not claimed as fully supported until the UAT authentication matrix proves every backend operation, including the separate auto-label simulation session.
 
-**Secure the endpoint.** `host.json` sets the authorization level to `function` (callers need a function key). These are tenant-admin tools running as an app identity: for anything beyond a demo, add [built-in auth (Easy Auth)](https://learn.microsoft.com/azure/app-service/overview-authentication-authorization) in front, and scope the app's compliance role tightly. Local smoke test: `node functions/server.js`, then POST MCP JSON-RPC to `http://localhost:3000/mcp` (see `test/functions.test.js`).
+**Secure the endpoint.** A function key is not sufficient production caller authentication. Put Entra/Easy Auth in front, validate its token audience and allowed client applications, and scope backend permissions tightly. Set `MCP_ALLOWED_HOSTS` to the comma-separated public hostnames accepted through the Azure proxy, `MCP_ALLOWED_ORIGINS` to a comma-separated browser-origin allowlist, `MCP_CURSOR_SECRET` to a shared secret for multi-instance pagination, and optionally `MCP_MAX_CONCURRENT_REQUESTS` (default `8`). Localhost hosts are always accepted; missing `Origin` remains valid for non-browser clients, while a present unlisted origin receives 403. Local smoke test: `node functions/server.js`, then POST MCP JSON-RPC to `http://127.0.0.1:3000/mcp`.
+
+Every delete tool requires form elicitation confirmation (see below). The five catalog list tools and policy-scoped `get_dlp_rule` default to 25 items (maximum 100), return signed opaque keyset cursors, and include schema-backed `structuredContent` with page count, total count, `has_more`, and `next_cursor` alongside concise text. The same pagination contract is served over local stdio and Azure Functions HTTP. Set a shared `MCP_CURSOR_SECRET` on every scaled HTTP instance so a cursor issued by one instance works on another.
+
+Each MCP request emits one redacted structured completion record to stderr (captured by Azure application logging), including transport, protocol era/version, method or tool name, client identity metadata, trace context, duration, and outcome. Arguments, results, tokens, backend error messages, and tenant objects are not logged. Set `MCP_REQUEST_LOGGING=false` only when platform-level observability fully replaces these records.
 
 ## Architecture
 
@@ -663,7 +783,11 @@ Remote hosting is headless, so **app-only auth is required** — set the app-onl
 index.js            stdio entry point (local MCP server)
 functions/server.js Azure Functions custom-handler entry (stateless streamable HTTP)
 host.json           Functions custom-handler wiring
-src/server.js       Tool/prompt/resource definitions + dispatch + createServer() factory
+src/server.js       MCP transport registration + createServer() factory
+src/capabilities/   Capability registry, schemas and domain handlers
+src/mcp/            Full/compact/dispatcher projections and shared prompts
+src/retrieval/      Permission/metadata filters and deterministic BM25 ranking
+src/dispatch/      Shared argument validation and authorized execution
 src/graph.js        Graph token (@azure/identity, delegated or app-only cert) + raw beta fetch
 src/powershell.js   Persistent pwsh IPPSSession bridge (request-scoped frames, base64 params)
 src/labels.js       Sensitivity-label data access + formatters
@@ -671,19 +795,113 @@ src/dlp.js          DLP data access (read/write) + formatters
 src/format.js       Shared token-efficient formatting helpers
 ```
 
-The PowerShell bridge passes model-supplied parameters as a base64-encoded JSON blob rebuilt with `ConvertFrom-Json -AsHashtable`, keeping arguments out of the executable script text (no command injection). Requests are serialised, and every request's output is framed with **request-scoped unique markers** — a timed-out command's late output can never be mis-attributed to a later call, and marker-lookalike text in tenant data cannot spoof a frame. On a command timeout the pwsh child is killed and the next call reconnects cleanly. All 26 tools declare MCP annotations (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`) so hosts can gate destructive calls.
+The PowerShell bridge passes model-supplied parameters as a base64-encoded JSON blob rebuilt with `ConvertFrom-Json -AsHashtable`, keeping arguments out of the executable script text (no command injection). Requests are serialised, and every request's output is framed with **request-scoped unique markers** — a timed-out command's late output can never be mis-attributed to a later call, and marker-lookalike text in tenant data cannot spoof a frame. On a command timeout the pwsh child is killed and the next call reconnects cleanly. All exposed tools declare MCP annotations (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`) so hosts can gate destructive calls.
+
+### Extending and evaluating the capability catalogue
+
+1. Implement the handler in a capability/domain module, delegating to the integration layer. It must not register an MCP tool.
+2. Define it with `defineCapability` from `src/capabilities/contract.js`: explicit ID, domain, operation type, read/write action, risk, destructive/idempotent/open-world flags, description, keywords, closed input schema, handler, constraints and examples. Permissions, scope alternatives, feature gates and aliases are optional. Operation types are extensible strings: `validate`, `publish` and `export` are no different from CRUD. Safety comes from explicit metadata, never a new operation's name.
+3. Compose that definition into the exported catalogue in `src/capabilities/registry.js`. All modes discover it from that array. Existing operations use a compatibility adapter over `definitions.js`, domain handler maps and `examples.js`; new operations need not follow that legacy layout. No registration or dispatch switch needs editing.
+4. Add handler, schema, permission and representative retrieval tests. Registry validation rejects duplicate IDs/aliases, invalid schemas/examples and inconsistent safety metadata before serving requests.
+
+Existing-domain capabilities join compact operation enums automatically. New domains receive read/manage groups automatically, so tool count grows with domain/action groups, not individual operations. Dispatcher always has three tools. Compact schema size still grows with operation enums; choose dispatcher if constant initial disclosure is more important than domain-level approval boundaries. Reserved/generated tool-name collisions fail startup rather than silently shadowing a tool.
+
+New handlers can use `capabilityResult(data, summary)` from `src/capabilities/results.js` to return structured data with concise text. Lists should reuse `createListPaginator` and its `{items,count,total_count,has_more,next_cursor}` contract. Declare output schemas where practical. Legacy detail/write text results are intentionally preserved. `executionKind` currently accepts only `immediate`: future jobs need a separately designed start/status/cancel contract, not a hidden polling loop or a fabricated completed result.
+
+Run `npm test` and `npm run benchmark:retrieval`. The benchmark emits JSON containing each prompt, expected capability, ranked top-N IDs, hit, rank and elapsed milliseconds, plus tool counts and schema byte sizes for each mode. It exits nonzero on a missed expected capability. The initial ten-query set is a regression fixture, not evidence of general routing accuracy: expand it with real prompts and near-miss cases as the catalogue grows. No LLM is used for evaluation.
+
+The ranking function accepts only the already-filtered catalogue. `searchCapabilities` accepts an injectable ranker, providing a seam for a future non-generative reranker without changing projections or bypassing filtering. BM25 is deliberately the initial implementation: local, inspectable, deterministic and without extra deployment or model costs.
+
+Run `npm run benchmark:simulation` for a deterministic scripted-agent evaluation against **160 synthetic capabilities** across four domains and eight operation types. It selects the top candidate without consulting the expected answer, describes its schema, validates supplied task arguments, and executes against fake state. JSON output includes candidate rankings, actual invocations/results, byte counts, latency and denial checks; failures return a nonzero exit code. Tests also compare a 32-entry catalogue to 160 entries, exercise new-domain routing, confirmation, aliases, policy failures and pagination. See [the reviewed simulation findings](benchmarks/SIMULATION_REVIEW.md).
+
+This simulation proves contracts and routing behaviour for the fixture, not real-model task success, Microsoft API availability or live Azure authorization. The synthetic definitions are only imported by benchmarks/tests, never registered in the production catalogue. Production stdio and Functions HTTP tests separately exercise search → describe → execute and denied disclosure. No new real Purview operation or external dependency is introduced.
+
+## Elicitation for deletion confirmation
+
+All six delete capabilities use a shared execution guard in full, compact and dispatcher modes. Call the tool with `identity`; the four original delete tools retain the optional compatibility argument `confirm: true`, which has no authority to skip review. Auto-label delete tools do not accept that argument. A form identifies the configured tenant, resolved object name/GUID and deletion consequence. Confirmation defaults to false. Decline, cancel, malformed answers and clients without form support never invoke a removal cmdlet.
+
+On MCP `2026-07-28`, the server returns `resultType: "input_required"` with an embedded `elicitation/create`. The client retries the same tool and arguments with the returned `requestState` and `inputResponses.confirm_deletion`. On legacy stdio, the server uses the SDK's in-call form request. See the [MRTR specification](https://modelcontextprotocol.io/specification/2026-07-28/basic/patterns/mrtr) and [elicitation specification](https://modelcontextprotocol.io/specification/2026-07-28/client/elicitation).
+
+The guard resolves the backend GUID, binds a five-minute review to the caller, client, tenant, capability and arguments, and checks the selected backend configuration again before deleting by GUID. DLP policy review also includes its rule count and selected rule configuration. Changed targets require a new review. Modern reviews use random opaque handles referencing server-owned records and are consumed before execution; simultaneous retries cannot execute the same review twice. Authorization is checked before review and again on the resolved identity. The check and removal are separate backend operations, not an atomic transaction.
+
+Local stdio uses its process/connection boundary as the caller identity. HTTP integrations must supply `confirmationPrincipal` and a verified client identity (`confirmationClientId` or validated `authInfo.clientId`) to `createServer` from trusted authentication middleware. Never derive these from tool arguments, unverified headers or client-provided profile information. **The supplied Functions host does not currently provide a verified caller identity, so deletion fails closed there**, even with a Functions key. A Functions key alone does not identify the end user. Legacy stateless HTTP cannot perform the in-call interaction.
+
+Pending reviews are bounded to 1,000 records per process. They survive fresh HTTP Server instances in that process, but not process restart or routing to another worker. Multi-worker deployment needs a shared store with atomic consumption before enabling deletion; retries on another worker currently fail safely. `MCP_CURSOR_SECRET` does not provide a shared deletion-review store. Failed/uncertain mutations are not automatically retried. Elicitation relies on the client to present a real user interaction; it is not independent evidence of human approval against a malicious client.
+
+## Service-side automatic sensitivity labeling
+
+Ten capabilities are registered in the `labels` domain: `list/get/create/set/remove_auto_label_policy` (lists use the plural `policies`) and the equivalent rule operations (plural `rules`). In compact mode use `purview_labels` for reads and `purview_manage_labels` for writes; describe the chosen capability for its closed schema and examples. The full catalogue has 37 capabilities; compact and dispatcher retain eight and three tools respectively.
+
+Documented mappings implemented: policy/rule reads, list filters and cursor pagination, explicitly disabled apply-policy creation, published leaf-label validation, static SharePoint/OneDrive/Exchange targeting, selected scope replacement and location deltas, comments, policy priority, administrative-unit references, Exchange manual-label overwrite and external-mail RMS owner, supported simple SIT conditions/exceptions, rule reporting/error settings, disabling, simulation submission, distribution retry, optional diagnostics, configuration revisions, and elicited deletion. Omitted update fields remain unchanged. Condition arrays replace their field; empty condition-list clearing is unavailable until its backend semantics are verified. Disabling/deleting a policy does not reverse labels already applied.
+
+Example sequence (substitute your tenant's eligible published label and site):
+
+```json
+{"name":"Finance auto-label","behaviour":"apply","label_identity":"Confidential","locations":{"sharepoint":{"selection":"selected","include_sites":["https://contoso.sharepoint.com/sites/Finance"]}}}
+```
+
+Pass that object to `create_auto_label_policy`. Create a rule with `create_auto_label_rule`:
+
+```json
+{"name":"Financial identifiers","policy_identity":"Finance auto-label","workload":"SharePoint","conditions":{"sensitive_information":{"operator":"any","groups":[{"name":"Financial","operator":"any","detectors":[{"kind":"sit","identity":"Credit Card Number","min_count":1,"confidence_level":"High"}]}]}}}
+```
+
+Then call `set_auto_label_policy` with `{"identity":"Finance auto-label","mode":"TestWithoutNotifications","restart_simulation":true}`. Simulation is submitted through an isolated SCC process using `Connect-IPPSSession -EnableSearchOnlySession`, with a module capability check. It returns submission/readback rather than waiting for a scan. Verify the authentication/module path and simulation status on a licensed disposable tenant before deployment. [Microsoft's simulation connection guidance](https://learn.microsoft.com/en-us/purview/apply-sensitivity-label-automatically#use-powershell-for-auto-labeling-policies).
+
+Use `get_auto_label_policy` with `include_simulation_status`, `include_progress`, `include_distribution_detail`, or `include_administrative_unit_details`. Individual simulation samples are not exposed; review them in the Purview portal. Raw backend diagnostics are returned only when available; missing fields are not fabricated. The adapter conservatively recognizes completed status from `TestModeStatus`, `SimulationStatus`, or `TestModeResults.Status`; actual tenant response shapes must be verified, otherwise enabling fails closed. [Policy getter reference](https://learn.microsoft.com/en-us/powershell/module/exchangepowershell/get-autosensitivitylabelpolicy?view=exchange-ps).
+
+Enable through `set_auto_label_policy` using `mode:"Enable"` and `expected_revision` from a fresh read. The guard requires a completed simulation initiated through this process, unchanged policy/rule/label fingerprints, and an active rule. Simulation records are process-local: restart or another worker requires re-simulation; production multi-worker support needs a shared trusted store. This is eligibility checking, not independent evidence of human approval. Host authorization and Microsoft RBAC still apply. Effective configuration/rule changes require disabling first; changes clear scheduled activation and require new simulation. There is no atomic backend lock between validation and mutation. An accepted mutation with failed readback returns `READBACK_FAILED` and must be inspected before retrying.
+
+Reserved schema options return `FEATURE_UNAVAILABLE`, without mutation: removal/library-default behavior, adaptive scopes, OneDrive group targeting, cross-workload overwrite, scheduled auto-enable, the separate `enabled` flag, advanced expressions, EDM/trainable classifiers, document-creator/header encodings, and condition-list clearing. Simple detector matching currently supports one OR group. Rule priority and other internal-only cmdlet parameters are not exposed. See [policy update](https://learn.microsoft.com/en-us/powershell/module/exchangepowershell/set-autosensitivitylabelpolicy?view=exchange-ps) and [rule reference](https://learn.microsoft.com/en-us/powershell/module/exchangepowershell/new-autosensitivitylabelrule?view=exchange-ps). These limitations are explicit adapter gates, not additional tool families. Live label compatibility, licensing, publication targets, permissions, workload conditions, and service response shapes remain UAT gates; mocked tests do not prove live enforcement.
+
+## Exploring elicitation of business requirements
+
+This section is a proposed workflow, not a registered tool or automatic policy compiler. The existing `data-security-posture` prompt already accepts free-text `business_context`; elicitation could turn that into reviewed, structured control intent. Microsoft's [DLP design guidance](https://learn.microsoft.com/en-us/purview/dlp-policy-design) starts with business needs and a policy intent statement, then maps that intent to configuration.
+
+The proposed flow is: **source policies/SOPs → candidate business rules → targeted questions → approved control intent → capability assessment → proposed configuration and tests → separately authorized deployment**. Requirement approval authorizes the interpretation, not a tenant write.
+
+Use a few short form rounds, skipping information already established and asking only about material gaps or contradictions:
+
+| Round | Decisions to elicit | Example question |
+| --- | --- | --- |
+| Business context | Process, business owner, outcome, source authority/version, affected teams | Which process does this rule protect, and who owns the policy? |
+| Data and activities | Data categories, sensitivity, recognisable evidence, workloads and recipients | Does “customer information” mean contact details, payment details, or both? |
+| Business rules | Allowed/prohibited activity, destinations, scope, exceptions and approval conditions | Is external sharing prohibited everywhere, or permitted through an approved service? |
+| Operational behaviour | Block/warn/audit, permitted overrides, alert owner, pilot scope and rollback | Who receives an alert, and can users continue with a justification? |
+| Review | Restated intent, unresolved assumptions, source conflicts, representative examples | Does this interpretation correctly capture the policy, including its exceptions? |
+
+For each question, explain which proposed control it changes. Include “unknown” or “needs policy-owner review” where appropriate; do not make a missing answer silently select broad scope or enforcement. Treat decline/cancel as an incomplete assessment. Offer corrections and a resumable draft rather than repeating mandatory questions indefinitely. Forms can collect scalar decisions and enumerated selections; complex SOPs and nested rule structures need document access or an editor rather than one large elicitation form. Do not request credentials or real sensitive customer records as examples.
+
+The output should be a versioned **control-intent record**, distinct from tool arguments:
+
+- Intent ID/version; business process, owner and objective.
+- Source document identifier/version, section and evidence for each rule; distinguish quoted requirements from inferred interpretations and user decisions.
+- Actor, data category/detection evidence, activity, destination, workload/scope and desired outcome.
+- Exception conditions, approval owner, expiry/review date and whether overrides are allowed.
+- Proposed action, notification/alert owner, rollout mode, success criteria and rollback trigger.
+- Unresolved questions/conflicts and per-rule status: supported by this server, requires an extension, requires another control/system, or not technically enforceable.
+- Links to the eventual backend policy/rule GUIDs and read-back evidence after a separately authorized deployment.
+
+Example: an SOP says “Payroll files must use the approved provider transfer process; emergency exports need manager approval.” Elicitation should establish how payroll content is recognised, which users/workloads are in scope, the approved destination/process, and whether an emergency exception is per-transfer and time-limited. Only then propose matching DLP and classification controls. A broad recipient-domain exclusion is not automatically equivalent to an approved transfer workflow. Manager approval requires a verifiable approval signal or external process; a user-entered justification does not establish that approval.
+
+Before generating configuration, describe the permitted capabilities and validate each mapping against its actual schema and workload semantics. Current tools expose label configuration/publication and traditional, Endpoint and Copilot DLP; richer detectors, arbitrary conditions and many governance controls remain outside this server's implemented surface. Label creation alone does not classify existing content. Unsupported requirements must remain explicit gaps, not be approximated silently. Tenant discovery should verify existing labels/SITs, resource identities, overlapping controls and deployment prerequisites.
+
+Build positive, negative and exception examples for each requirement: forbidden transfer blocked, legitimate transfer allowed, approved exception handled, ambiguous classification flagged. These are proposed acceptance criteria, not evidence of live enforcement. Begin a candidate rollout in an explicitly selected simulation mode and require an evidence-based decision before enforcement; Microsoft documents using [DLP simulation](https://learn.microsoft.com/en-us/purview/dlp-simulation-mode-get-started) to evaluate impact. Simulation evidence and read-back do not prove every SOP requirement is enforceable.
+
+A future `purview_elicit_requirements` tool could implement the interview using MRTR while returning only draft intent. Its continuation must bind to the verified caller/client, tenant, source/intent version and question set. Longer assessments need an explicit draft ID and protected storage to resume across separate calls; do not assume protocol session state persists. Business documents are evidence, not instructions to execute tools. An approved interpretation should not disappear into an opaque prompt: retain its provenance, revisions and unresolved gaps so policy owners can review changes when the SOP changes.
 
 ## Roadmap
 
-Planned work is tracked in **[ROADMAP.md](ROADMAP.md)**, organised by feasibility
-tier — whether a documented API surface actually exists to build on. In brief:
+[GitHub Issues](https://github.com/SecuringTheRealm/str-mcp-purview/issues) are the
+source of truth for planned work, acceptance, priority and dependencies.
+[ROADMAP.md](ROADMAP.md) links the six outcome epics and explains feasibility
+decisions; the original roadmap and its source coverage are preserved in
+[migration records](docs/backlog/README.md).
 
-- 🟢 **Ready next:** auto-labeling (`*-AutoSensitivityLabelPolicy`), keyword dictionaries, richer DLP rule conditions, and migrating label reads to the GA Graph `dataSecurityAndGovernance` surface. *(Label write/publish/read-back, DLP delete, policy-location editing, and endpoint-rule tuning have all shipped.)*
-- 🟡 **Feasible but complex:** custom SIT write (requires hand-built rule-package XML), retention labels.
-- 🔴 **Blocked:** trainable classifier catalog — no confirmed cmdlet or Graph API; portal-only today, needs live-tenant discovery first.
-- 🔭 **New planes:** Insider Risk Management, Communications Compliance, DSPM / DSPM for AI.
-
-See [ROADMAP.md](ROADMAP.md) for the full breakdown, the surface each item rests on, and the contribution rules.
+Release validation remains separate from implemented capabilities. Advanced
+auto-label mappings, classification authoring, richer DLP controls and new
+planes remain scoped backlog or discovery work until their APIs and constraints
+are verified.
 
 ## Credits
 

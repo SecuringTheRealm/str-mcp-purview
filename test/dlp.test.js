@@ -65,6 +65,14 @@ test("listRules", async (t) => {
     await dlp.listRules("MyPolicy");
     assert.deepEqual(invokeCalls.at(-1).params, { Policy: "MyPolicy" });
   });
+
+  await t.test("selects full rule properties for a paginated policy detail read", async () => {
+    invokeImpl = async () => [];
+    await dlp.listRules("MyPolicy", { detail: true });
+    assert.deepEqual(invokeCalls.at(-1).params, { Policy: "MyPolicy" });
+    assert.ok(invokeCalls.at(-1).selectProps.includes("StopPolicyProcessing"));
+    assert.ok(invokeCalls.at(-1).selectProps.includes("ExceptIfSenderDomainIs"));
+  });
 });
 
 test("getRule", async (t) => {
@@ -133,19 +141,25 @@ test("formatRuleDetail", async (t) => {
     assert.match(out, /Detected sensitive info:.*Credit Card Number/);
   });
 
-  await t.test("surfaces exceptions, restrict-access, stop-processing, and policy tip when present", () => {
+  await t.test("surfaces scope, severity, exceptions, restrictions, and customised notifications", () => {
     const out = dlp.formatRuleDetail({
       Name: "R1",
       Priority: 0,
       StopPolicyProcessing: true,
       RestrictAccess: [{ setting: "ExcludeContentProcessing", value: "Block" }],
+      AccessScope: "NotInOrganization",
+      ReportSeverityLevel: "High",
       ExceptIfSenderDomainIs: ["contoso.com"],
       ExceptIfDocumentNameMatchesWords: ["template"],
+      NotifyEmailCustomSubject: "Sensitive content",
       NotifyPolicyTipCustomText: "Careful!",
     });
     assert.match(out, /- \*\*Stops later rules:\*\* true/);
     assert.match(out, /- \*\*Restrict access:\*\* ExcludeContentProcessing=Block/);
+    assert.match(out, /- \*\*Access scope:\*\* NotInOrganization/);
+    assert.match(out, /- \*\*Severity:\*\* High/);
     assert.match(out, /- \*\*Exceptions:\*\* doc-name, sender-domain/);
+    assert.match(out, /- \*\*Notification email:\*\* customised/);
     assert.match(out, /- \*\*Policy tip:\*\* configured/);
   });
 
@@ -190,11 +204,11 @@ test("createPolicy / setPolicy / createRule / setRule", async (t) => {
     assert.equal(invokeCalls.at(-1).cmdlet, "New-DlpComplianceRule");
   });
 
-  await t.test("setRule invokes Set-DlpComplianceRule with the given params", async () => {
+  await t.test("setRule suppresses the built-in confirmation pause and preserves update params", async () => {
     invokeImpl = async () => ({ Name: "Rule1" });
     await dlp.setRule({ Identity: "Rule1", Disabled: true });
     assert.equal(invokeCalls.at(-1).cmdlet, "Set-DlpComplianceRule");
-    assert.deepEqual(invokeCalls.at(-1).params, { Identity: "Rule1", Disabled: true });
+    assert.deepEqual(invokeCalls.at(-1).params, { Identity: "Rule1", Disabled: true, Confirm: false });
   });
 
   await t.test("removePolicy invokes Remove-DlpCompliancePolicy with Confirm:false", async () => {
@@ -232,9 +246,9 @@ test("copilotCondition", async (t) => {
     assert.deepEqual(dlp.copilotCondition({ sits: ["Credit Card Number"] }), [{ Name: "Credit Card Number" }]);
   });
 
-  await t.test("maps labels to a groups/labels condition", () => {
-    const cond = dlp.copilotCondition({ labels: ["guid-1"] });
-    assert.deepEqual(cond, [{ groups: [{ operator: "Or", labels: [{ name: "guid-1", type: "Sensitivity" }] }] }]);
+  await t.test("maps labels to the documented condition with an outer operator and named group", () => {
+    const cond = dlp.copilotCondition({ labels: ["guid-1", "guid-2"] });
+    assert.deepEqual(cond, [{ operator: "And", groups: [{ operator: "Or", name: "Default", labels: [{ name: "guid-1", type: "Sensitivity" }, { name: "guid-2", type: "Sensitivity" }] }] }]);
   });
 
   await t.test("throws when both SITs and labels are supplied", () => {
@@ -244,6 +258,91 @@ test("copilotCondition", async (t) => {
   await t.test("throws when no condition is supplied", () => {
     assert.throws(() => dlp.copilotCondition({}), /needs a condition/);
   });
+});
+
+test("sensitiveInformationTypeConditions", async (t) => {
+  await t.test("keeps the existing string form backwards compatible", () => {
+    assert.deepEqual(dlp.sensitiveInformationTypeConditions(["Credit Card Number"]), [
+      { Name: "Credit Card Number" },
+    ]);
+  });
+
+  await t.test("maps per-SIT count and confidence tuning", () => {
+    assert.deepEqual(
+      dlp.sensitiveInformationTypeConditions([
+        { name: "Credit Card Number", min_count: 2, max_count: 9, confidence_level: "High" },
+      ]),
+      [{ operator: "And", groups: [{ operator: "Or", name: "Default", sensitivetypes: [{ Name: "Credit Card Number", minCount: 2, maxCount: 9, minConfidence: 85, maxConfidence: 100 }] }] }]
+    );
+  });
+
+  await t.test("rejects a finite maximum below the minimum", () => {
+    assert.throws(
+      () => dlp.sensitiveInformationTypeConditions([{ name: "Credit Card Number", min_count: 5, max_count: 2 }]),
+      /max_count must be -1.*at least min_count/
+    );
+  });
+});
+
+test("ruleWriteParams", () => {
+  const result = dlp.ruleWriteParams({
+    sensitive_information_types: ["Credit Card Number"],
+    block_access: true,
+    notify_user: ["LastModifier"],
+    generate_alert: ["security@contoso.com"],
+    priority: 3,
+    disabled: false,
+    access_scope: "NotInOrganization",
+    report_severity_level: "High",
+    notification_email_subject: "Sensitive content detected",
+    notification_email_body: "Review %%MatchedConditions%%",
+    policy_tip_text: "Do not share this externally.",
+    exceptions: {
+      sensitive_information_types: [{ name: "Employee ID", min_count: 1 }],
+      sender_domain_is: ["trusted.example"],
+      document_name_matches_words: ["approved-template"],
+    },
+  });
+
+  assert.deepEqual(result, {
+    ContentContainsSensitiveInformation: [{ Name: "Credit Card Number" }],
+    BlockAccess: true,
+    NotifyUser: ["LastModifier"],
+    GenerateAlert: ["security@contoso.com"],
+    Priority: 3,
+    Disabled: false,
+    AccessScope: "NotInOrganization",
+    ReportSeverityLevel: "High",
+    NotifyEmailCustomSubject: "Sensitive content detected",
+    NotifyEmailCustomText: "Review %%MatchedConditions%%",
+    NotifyPolicyTipCustomText: "Do not share this externally.",
+    ExceptIfContentContainsSensitiveInformation: [{ Name: "Employee ID", minCount: 1 }],
+    ExceptIfDocumentNameMatchesWords: ["approved-template"],
+    ExceptIfSenderDomainIs: ["trusted.example"],
+  });
+});
+
+test("policy location exception parameter mapping", () => {
+  assert.deepEqual(
+    dlp.createPolicyLocationExceptionParams({
+      sharepoint: ["https://contoso.sharepoint.com/sites/allowed"],
+      endpoint: ["excluded@contoso.com"],
+    }),
+    {
+      SharePointLocationException: ["https://contoso.sharepoint.com/sites/allowed"],
+      EndpointDlpLocationException: ["excluded@contoso.com"],
+    }
+  );
+  assert.deepEqual(
+    dlp.updatePolicyLocationExceptionParams(
+      { teams: ["add@contoso.com"] },
+      { teams: ["remove@contoso.com"] }
+    ),
+    {
+      AddTeamsLocationException: ["add@contoso.com"],
+      RemoveTeamsLocationException: ["remove@contoso.com"],
+    }
+  );
 });
 
 test("formatPolicyList", async (t) => {
@@ -266,6 +365,14 @@ test("formatPolicyList", async (t) => {
     assert.match(out, /TestWithNotifications/);
     const out2 = dlp.formatPolicyList([{ Name: "P2" }]);
     assert.match(out2, /enabled/);
+  });
+
+  await t.test("includes the GUID and never truncates an addressable policy name", () => {
+    const name = "A deliberately long DLP policy name that must remain usable as an identity";
+    const out = dlp.formatPolicyList([{ Name: name, Guid: "policy-guid" }]);
+    assert.match(out, /policy-guid/);
+    assert.match(out, new RegExp(name));
+    assert.doesNotMatch(out, /\.\.\./);
   });
 });
 
@@ -333,6 +440,16 @@ test("formatRuleList", async (t) => {
     const out = dlp.formatRuleList([{ Name: "R1" }]);
     assert.match(out, /p\?/);
   });
+
+  await t.test("includes the GUID and never truncates rule or parent-policy identities", () => {
+    const rule = "Items containing 1-9 credit card numbers shared externally";
+    const policy = "A deliberately long parent policy identity that must remain complete";
+    const out = dlp.formatRuleList([{ Name: rule, Guid: "rule-guid", ParentPolicyName: policy }]);
+    assert.match(out, /rule-guid/);
+    assert.match(out, new RegExp(rule));
+    assert.match(out, new RegExp(policy));
+    assert.doesNotMatch(out, /\.\.\./);
+  });
 });
 
 test("listSensitiveInformationTypes", async (t) => {
@@ -399,6 +516,14 @@ test("formatSitList", async (t) => {
     assert.match(out, /2 sensitive information type\(s\):/);
     assert.match(out, /Credit Card Number.*built-in/);
     assert.match(out, /Employee ID.*custom/);
+  });
+
+  await t.test("includes the ID and never truncates an addressable SIT name", () => {
+    const name = "A deliberately long sensitive information type name used by a rule";
+    const out = dlp.formatSitList([{ Id: "sit-id", Name: name, Publisher: "Contoso" }]);
+    assert.match(out, /sit-id/);
+    assert.match(out, new RegExp(name));
+    assert.doesNotMatch(out, /\.\.\./);
   });
 });
 

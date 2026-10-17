@@ -1,6 +1,6 @@
 // Shared Entra credential for both data planes.
 //
-// The Graph label tools and the Security & Compliance PowerShell bridge both
+// The Graph label-policy-settings tool and Security & Compliance PowerShell bridge both
 // need a bearer token, so the credential lives here and both planes import it.
 // That means one sign-in, one token cache, and a single place that honours
 // PURVIEW_AUTH_MODE.
@@ -22,7 +22,7 @@ const MODE = (process.env.PURVIEW_AUTH_MODE || "interactive").toLowerCase();
 const CERT_PATH = process.env.AZURE_CLIENT_CERTIFICATE_PATH;
 
 // App-only tokens carry no user context, so Graph's /me/ paths do not exist and
-// label reads must use the tenant-wide path instead (see labels.js).
+// the label-policy-settings read uses the tenant-wide path instead (see labels.js).
 export const appOnly = MODE === "managedidentity" || Boolean(CERT_PATH);
 
 let credential = null;

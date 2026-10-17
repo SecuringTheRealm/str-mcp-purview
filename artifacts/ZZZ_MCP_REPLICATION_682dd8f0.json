@@ -1,0 +1,15 @@
+{
+  "run": "ZZZ_MCP_REPLICATION_682dd8f0",
+  "started": "2026-10-07T13:05:45.418Z",
+  "checks": [
+    {
+      "name": "authenticated_read",
+      "status": "error",
+      "elapsed_ms": 300010,
+      "error": "Timed out after 300000ms acquiring a Security & Compliance access token. If PURVIEW_AUTH_MODE is interactive, a browser sign-in window is waiting for you — complete it and call the tool again, or switch to PURVIEW_AUTH_MODE=devicecode."
+    }
+  ],
+  "cleanup": [],
+  "error": "Purview authentication/read access was not established; no test objects created.",
+  "finished": "2026-10-07T13:10:45.430Z"
+}

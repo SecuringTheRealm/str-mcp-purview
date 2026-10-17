@@ -116,10 +116,10 @@ function withTimeout(promise, ms, message) {
 }
 
 const PLATFORM_ERROR =
-  "The DLP and label write/read-back tools need Security & Compliance PowerShell " +
+  "The DLP and sensitivity-label configuration tools need Security & Compliance PowerShell " +
   "(Connect-IPPSSession), which Microsoft only supports on Windows — it is not " +
-  "available in PowerShell 7 on macOS or Linux. The sensitivity-label read tools " +
-  "(Microsoft Graph) still work on this platform. See README → 'Platform support'. " +
+  "available in PowerShell 7 on macOS or Linux. The Graph-backed label-policy-settings " +
+  "tool still works on this platform. See README → 'Platform support'. " +
   "Set PURVIEW_ALLOW_UNSUPPORTED_OS=1 to attempt the connection anyway.";
 
 // Derive the tenant org domain (Connect-IPPSSession -Organization) from the
@@ -135,7 +135,8 @@ function orgFromToken(token) {
 }
 
 class PowerShellBridge {
-  constructor() {
+  constructor({ searchOnly = false } = {}) {
+    this.searchOnly = searchOnly;
     this.proc = null;
     this.queue = Promise.resolve();
     this.connecting = null;
@@ -158,14 +159,19 @@ class PowerShellBridge {
       // stderr; they must never reach the MCP stdio channel on stdout.
       process.stderr.write(`[pwsh] ${d}`);
     });
-    this.proc.on("exit", () => {
-      this.proc = null;
-      this.connecting = null;
+    const child = this.proc;
+    child.on("exit", () => {
+      if (this.proc === child) {
+        this.proc = null;
+        this.connecting = null;
+      }
     });
     this.proc.on("error", (err) => {
       process.stderr.write(`[pwsh] failed to start '${exe}': ${err.message}\n`);
-      this.proc = null;
-      this.connecting = null;
+      if (this.proc === child) {
+        this.proc = null;
+        this.connecting = null;
+      }
     });
   }
 
@@ -207,6 +213,12 @@ class PowerShellBridge {
         fn(value);
       };
       const timer = setTimeout(() => {
+        // Detach synchronously: kill() can return before the old child exits.
+        // The next request must reconnect instead of using the dying session.
+        if (this.proc === proc) {
+          this.proc = null;
+          this.connecting = null;
+        }
         // Settle before killing: kill() triggers the 'exit' listener, which
         // must not win the race and mask the timeout message.
         settle(reject, bridgeError(
@@ -343,12 +355,16 @@ class PowerShellBridge {
    * mocked child process will happily accept.
    */
   async connectScript() {
+    const connect = (await this.#connectCommand()) + (this.searchOnly ? " -EnableSearchOnlySession" : "");
+    const tokenMode = connect.includes("Connect-IPPSSession -AccessToken");
     return [
       "if (-not (Get-Module -ListAvailable -Name ExchangeOnlineManagement)) {",
       "  throw 'The ExchangeOnlineManagement module is not installed. Run: Install-Module ExchangeOnlineManagement -Scope CurrentUser'",
       "}",
-      "Import-Module ExchangeOnlineManagement -ErrorAction Stop",
-      await this.#connectCommand(),
+      `Import-Module ExchangeOnlineManagement -MinimumVersion ${tokenMode ? "3.8.0" : "3.2.0"} -ErrorAction Stop`,
+      ...(tokenMode ? ["if (-not (Get-Command Connect-IPPSSession -ErrorAction Stop).Parameters.ContainsKey('AccessToken')) { throw 'ExchangeOnlineManagement 3.8.0 or later with Connect-IPPSSession -AccessToken is required.' }"] : []),
+      ...(this.searchOnly ? ["if (-not (Get-Command Connect-IPPSSession -ErrorAction Stop).Parameters.ContainsKey('EnableSearchOnlySession')) { throw 'Auto-label simulation requires an ExchangeOnlineManagement version supporting EnableSearchOnlySession.' }"] : []),
+      connect,
       "'connected'",
     ].join("\n");
   }
@@ -444,3 +460,7 @@ function isAuthExpiry(err, cmdlet = "") {
 }
 
 export const powershell = new PowerShellBridge();
+// Simulation uses a separate process/session, preserving the ordinary SCC
+// connection and queue for label and DLP management.
+const simulationBridge = new PowerShellBridge({ searchOnly: true });
+powershell.invokeSimulation = (cmdlet, params, selectProps) => simulationBridge.invoke(cmdlet, params, selectProps);
