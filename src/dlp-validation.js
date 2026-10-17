@@ -1,6 +1,5 @@
 import { CapabilityError } from "./dispatch/errors.js";
-
-const values = (v) => v == null ? [] : Array.isArray(v) ? v : [v];
+import { asArray as values } from "./util.js";
 const fail = (message) => { throw new CapabilityError("VALIDATION_ERROR", message); };
 const isAll = (xs) => xs.length === 1 && /^all$/i.test(String(xs[0]?.Name ?? xs[0]?.DisplayName ?? xs[0]));
 const users = (xs) => {

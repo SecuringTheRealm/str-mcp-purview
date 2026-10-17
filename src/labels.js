@@ -3,7 +3,8 @@
 
 import { graphGet, appOnly } from "./graph.js";
 import { powershell } from "./powershell.js";
-import { truncate, bulletFields, shortDate, asArray, formatWriteResult } from "./format.js";
+import { truncate, bulletFields, shortDate, formatWriteResult } from "./format.js";
+import { asArray } from "./util.js";
 
 // Re-exported so index.js can call labels.formatWriteResult for the label
 // write tools (shared implementation lives in format.js).
@@ -126,30 +127,14 @@ export function filterLabels(labels, f = {}) {
 
 // ---- data access (write: Security & Compliance PowerShell) -----------------
 
-export async function createLabel(params) {
-  return powershell.invoke("New-Label", params, LABEL_WRITE_PROPS);
-}
-
-export async function setLabel(params) {
-  return powershell.invoke("Set-Label", params, LABEL_WRITE_PROPS);
-}
-
-export async function createLabelPolicy(params) {
-  return powershell.invoke("New-LabelPolicy", params, LABELPOLICY_WRITE_PROPS);
-}
-
-export async function setLabelPolicy(params) {
-  return powershell.invoke("Set-LabelPolicy", params, LABELPOLICY_WRITE_PROPS);
-}
-
+const cmdlet = (name, props) => (params) => powershell.invoke(name, params, props);
+export const createLabel = cmdlet("New-Label", LABEL_WRITE_PROPS);
+export const setLabel = cmdlet("Set-Label", LABEL_WRITE_PROPS);
+export const createLabelPolicy = cmdlet("New-LabelPolicy", LABELPOLICY_WRITE_PROPS);
+export const setLabelPolicy = cmdlet("Set-LabelPolicy", LABELPOLICY_WRITE_PROPS);
 // Deletes: pass { Identity, Confirm: false } to avoid the interactive prompt.
-export async function removeLabel(params) {
-  return powershell.invoke("Remove-Label", params);
-}
-
-export async function removeLabelPolicy(params) {
-  return powershell.invoke("Remove-LabelPolicy", params);
-}
+export const removeLabel = cmdlet("Remove-Label");
+export const removeLabelPolicy = cmdlet("Remove-LabelPolicy");
 
 // ---- data access (read-back: Security & Compliance PowerShell) -------------
 

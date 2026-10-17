@@ -1,7 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { truncate, cell, shortDate, bulletFields, asArray } from "../src/format.js";
+import { truncate, cell, shortDate, bulletFields } from "../src/format.js";
+import { asArray } from "../src/util.js";
 
 test("truncate", async (t) => {
   await t.test("returns empty string for null/undefined", () => {

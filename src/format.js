@@ -5,6 +5,8 @@
 // model's context window. List tools return one compact line per record;
 // detail tools return structured markdown. We never dump raw JSON.
 
+import { asArray } from "./util.js";
+
 /** Truncate a string to `max` characters, appending an ellipsis if cut. */
 export function truncate(value, max = 100) {
   if (value == null) return "";
@@ -33,16 +35,6 @@ export function bulletFields(obj, fields) {
     lines.push(`- **${label}:** ${Array.isArray(v) ? v.join(", ") : v}`);
   }
   return lines.join("\n");
-}
-
-/**
- * PowerShell's ConvertTo-Json returns a single object when a cmdlet emits one
- * result and an array when it emits several. Normalise to an array so callers
- * can always iterate.
- */
-export function asArray(value) {
-  if (value == null) return [];
-  return Array.isArray(value) ? value : [value];
 }
 
 /**

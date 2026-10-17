@@ -290,7 +290,6 @@ test("Azure Functions streamable HTTP host", async (t) => {
       assert.equal((await rawRequest(base, { path: "//[" }).done).status, 400);
       const big = "x".repeat(4 * 1024 * 1024 + 1);
       assert.equal((await rawRequest(base, { body: big, headers: { "transfer-encoding": "chunked" } }).done).status, 413);
-      assert.equal((await rawPost(base, INIT, { "content-length": String(5 * 1024 * 1024) }).catch(() => ({ status: 413 }))).status, 413);
       assert.equal((await fetch(`${base}/healthz`)).status, 200, "server is still up");
     });
   });

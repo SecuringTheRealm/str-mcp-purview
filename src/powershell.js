@@ -425,7 +425,9 @@ class PowerShellBridge {
       // (which mints a fresh token) before giving up.
       // A command refused because the session was reset never ran: same retry.
       if (!retried && (err.notStarted || isAuthExpiry(err, cmdlet))) {
-        this.connecting = null;
+        // After a reset the timeout already cleared `connecting`; clearing it
+        // again would discard a reconnect another queued caller just started.
+        if (!err.notStarted) this.connecting = null;
         return this.invoke(cmdlet, params, selectProps, true);
       }
       throw err;

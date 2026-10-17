@@ -1,16 +1,14 @@
-import { createHash } from "node:crypto";
 import { powershell } from "./powershell.js";
 import { CapabilityError } from "./dispatch/errors.js";
+import { asArray as array, digest, CONFIDENCE } from "./util.js";
 
-const array = v => v == null ? [] : Array.isArray(v) ? v : [v];
 const key = v => String(v ?? "").trim().toLowerCase();
 const invalid = message => { throw new CapabilityError("VALIDATION_ERROR", message); };
 const unavailable = message => { throw new CapabilityError("FEATURE_UNAVAILABLE", message); };
-const stable = v => Array.isArray(v) ? v.map(stable) : v && typeof v === "object" ? Object.fromEntries(Object.keys(v).sort().map(k => [k, stable(v[k])])) : v;
 const transient = /^(revision|Distribution|TestMode|Simulation|Progress|Execution|WhenChanged|WhenCreated|Last|Status)/i;
 export function revisionOf(value) {
   const configuration = Object.fromEntries(Object.entries(value).filter(([k]) => !transient.test(k)));
-  return createHash("sha256").update(JSON.stringify(stable(configuration))).digest("hex");
+  return digest(configuration);
 }
 function exact(value, identity) {
   if (typeof identity !== "string" || !identity.trim()) invalid("Identity must be a non-empty name or GUID.");
@@ -232,7 +230,7 @@ function sensitiveParams(value) {
     const p = { Name: d.identity };
     if (d.min_count !== undefined) p.minCount = d.min_count;
     if (d.max_count !== undefined) p.maxCount = d.max_count;
-    if (d.confidence_level) p.minConfidence = { Low: 65, Medium: 75, High: 85 }[d.confidence_level];
+    if (d.confidence_level) p.minConfidence = CONFIDENCE[d.confidence_level];
     if (d.min_confidence !== undefined) p.minConfidence = d.min_confidence;
     if (d.max_confidence !== undefined) p.maxConfidence = d.max_confidence;
     if (p.minConfidence > p.maxConfidence) invalid("Minimum confidence cannot exceed maximum confidence.");

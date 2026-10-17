@@ -156,7 +156,9 @@ async function handle(req, res) {
   }
 }
 
-const http = createHttpServer((req, res) => {
+// A client gets 30 seconds to send its whole request (Node's default is 5
+// minutes); headersTimeout must not exceed it or it wins. Responses are not bound.
+const http = createHttpServer({ requestTimeout: 30_000, headersTimeout: 15_000 }, (req, res) => {
   // Any failure ends this request with a 500; none can take the process down.
   handle(req, res).catch((err) => {
     console.error("MCP request failed:", err);
@@ -167,8 +169,6 @@ const http = createHttpServer((req, res) => {
     }
   });
 });
-// A client gets 30 seconds to send its whole request (Node's default is 5 minutes).
-http.requestTimeout = 30_000;
 
 http.listen(PORT, HOST, () => {
   console.log(`str-mcp-purview streamable HTTP listening on http://${HOST}:${PORT}/mcp`);

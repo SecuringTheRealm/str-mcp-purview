@@ -101,6 +101,8 @@ async function freshBridge(tag) {
   return mod.powershell;
 }
 
+const b64 = (params) => Buffer.from(JSON.stringify(params), "utf8").toString("base64");
+
 function tick() {
   return new Promise((r) => setImmediate(r));
 }
@@ -313,15 +315,21 @@ test("PowerShellBridge.invoke", async (t) => {
       // A hangs and times out; B is already past the connect check, queued behind it.
       const a = bridge.invoke("Set-DlpComplianceRule", { Identity: "R1" });
       const b = bridge.invoke("Get-DlpComplianceRule", { Identity: "R1" });
+      const c = bridge.invoke("Get-DlpComplianceRule", { Identity: "R2" });
       await assert.rejects(a, /timed out/);
       await tick();
       assert.equal(procs.length, 2);
       assert.match(procs[1].writes[0], /Connect-IPPSSession/, "B must reconnect before it runs");
       procs[1].respondOk("connected");
       await tick();
-      assert.match(procs[1].writes[1], /Get-DlpComplianceRule/);
+      assert.ok(procs[1].writes[1].includes(b64({ Identity: "R1" })));
       procs[1].respondOk({ Name: "R1" });
+      await tick();
+      assert.ok(procs[1].writes[2].includes(b64({ Identity: "R2" })));
+      procs[1].respondOk({ Name: "R2" });
       assert.deepEqual(await b, { Name: "R1" });
+      assert.deepEqual(await c, { Name: "R2" });
+      assert.equal(procs[1].writes.filter((w) => w.includes("Connect-IPPSSession -")).length, 1, "queued callers share one reconnect");
       assert.equal(procs[0].writes.filter((w) => w.includes("Set-DlpComplianceRule")).length, 1, "A is not retried");
     } finally {
       delete process.env.PURVIEW_EXEC_TIMEOUT_MS;

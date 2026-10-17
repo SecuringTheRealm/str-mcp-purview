@@ -2,7 +2,8 @@
 // Reads use Get-DlpCompliance*, writes use New-/Set-DlpCompliance*.
 
 import { powershell } from "./powershell.js";
-import { truncate, shortDate, asArray, bulletFields, formatWriteResult } from "./format.js";
+import { truncate, shortDate, bulletFields, formatWriteResult } from "./format.js";
+import { asArray, CONFIDENCE } from "./util.js";
 import { CapabilityError } from "./dispatch/errors.js";
 
 // Re-exported so index.js can keep calling dlp.formatWriteResult; the shared
@@ -114,28 +115,14 @@ export function filterRules(rules, f = {}) {
   });
 }
 
-export async function createPolicy(params) {
-  // params: { Name, Mode?, Locations?, EnforcementPlanes?, Comment?, ExchangeLocation?, ... }
-  return powershell.invoke("New-DlpCompliancePolicy", params, POLICY_PROPS);
-}
-
-export async function setPolicy(params) {
-  // params: { Identity, Mode?, Comment?, ... } — used to flip a policy between
-  // a Test mode and Enable (enforce), or back. Only supplied fields change.
-  return powershell.invoke("Set-DlpCompliancePolicy", params, POLICY_PROPS);
-}
-
-export async function createRule(params) {
-  // params: { Name, Policy, ContentContainsSensitiveInformation?, BlockAccess?, NotifyUser?, ... }
-  return powershell.invoke("New-DlpComplianceRule", params, RULE_PROPS);
-}
-
-export async function setRule(params) {
-  // params: { Identity, ...properties to change }
-  // This cmdlet has a built-in confirmation pause; the piped bridge cannot
-  // answer it. Host authorization still happens before reaching this layer.
-  return powershell.invoke("Set-DlpComplianceRule", { ...params, Confirm: false }, RULE_PROPS);
-}
+// Writes take cmdlet-shaped params; only supplied fields change on a Set-.
+const cmdlet = (name, props) => (params) => powershell.invoke(name, params, props);
+export const createPolicy = cmdlet("New-DlpCompliancePolicy", POLICY_PROPS);
+export const setPolicy = cmdlet("Set-DlpCompliancePolicy", POLICY_PROPS);
+export const createRule = cmdlet("New-DlpComplianceRule", RULE_PROPS);
+// Set-DlpComplianceRule pauses for confirmation, which the piped bridge cannot
+// answer. Host authorization has already happened before this layer.
+export const setRule = (params) => powershell.invoke("Set-DlpComplianceRule", { ...params, Confirm: false }, RULE_PROPS);
 
 /** Map string and tuned per-SIT inputs to the PswsHashtable[] cmdlet shape. */
 export function sensitiveInformationTypeConditions(items = []) {
@@ -156,7 +143,7 @@ export function sensitiveInformationTypeConditions(items = []) {
     if (item.min_count !== undefined) condition.minCount = item.min_count;
     if (item.max_count !== undefined) condition.maxCount = item.max_count;
     if (item.confidence_level !== undefined) {
-      condition.minConfidence = { Low: 65, Medium: 75, High: 85 }[item.confidence_level];
+      condition.minConfidence = CONFIDENCE[item.confidence_level];
       if (!condition.minConfidence) throw new CapabilityError("VALIDATION_ERROR", "Unknown SIT confidence level.");
       condition.maxConfidence = 100;
     }
@@ -242,13 +229,8 @@ export function updatePolicyLocationExceptionParams(add = {}, remove = {}) {
 
 // Deletes: pass { Identity, Confirm: false } so the cmdlet's built-in
 // confirmation prompt does not hang the non-interactive pwsh session.
-export async function removePolicy(params) {
-  return powershell.invoke("Remove-DlpCompliancePolicy", params);
-}
-
-export async function removeRule(params) {
-  return powershell.invoke("Remove-DlpComplianceRule", params);
-}
+export const removePolicy = cmdlet("Remove-DlpCompliancePolicy");
+export const removeRule = cmdlet("Remove-DlpComplianceRule");
 
 // ---- Copilot DLP helpers ---------------------------------------------------
 // Microsoft 365 Copilot DLP rides the same New-DlpCompliancePolicy/Rule cmdlets;

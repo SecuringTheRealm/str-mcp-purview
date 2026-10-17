@@ -30,6 +30,7 @@ const bearer = () => getToken(appOnly ? APP_SCOPES : LABEL_SCOPES);
  */
 export async function graphGet(path, params = {}) {
   // Relative paths only, so the bearer token can only ever go to Graph.
+  if (!path.startsWith("/")) throw new Error(`Graph path must start with "/": ${path}`);
   const url = new URL(`${GRAPH_BETA}${path}`);
   for (const [k, v] of Object.entries(params)) {
     if (v != null) url.searchParams.set(k, String(v));

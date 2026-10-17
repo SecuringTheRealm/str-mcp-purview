@@ -1,4 +1,5 @@
-import { createHash, randomBytes } from "node:crypto";
+import { randomBytes } from "node:crypto";
+import { digest } from "../util.js";
 import { inputRequired } from "@modelcontextprotocol/server";
 import * as labels from "../labels.js";
 import * as dlp from "../dlp.js";
@@ -9,12 +10,6 @@ const KEY = "confirm_deletion";
 const pending = new Map();
 const TTL_MS = 5 * 60_000;
 
-function stable(value) {
-  if (Array.isArray(value)) return value.map(stable);
-  if (value && typeof value === "object") return Object.fromEntries(Object.keys(value).sort().map((key) => [key, stable(value[key])]));
-  return value;
-}
-const digest = (value) => createHash("sha256").update(JSON.stringify(stable(value))).digest("hex");
 const fail = (message) => { throw new CapabilityError("CONFIRMATION_REQUIRED", message); };
 
 async function resolveTarget(capability, args) {
