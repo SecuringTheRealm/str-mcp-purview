@@ -18,8 +18,13 @@ import {
   ManagedIdentityCredential,
 } from "@azure/identity";
 
-const MODE = (process.env.PURVIEW_AUTH_MODE || "interactive").toLowerCase();
+import { envChoice } from "./util.js";
+
+const MODE = envChoice("PURVIEW_AUTH_MODE", ["interactive", "devicecode", "managedidentity"], "interactive");
 const CERT_PATH = process.env.AZURE_CLIENT_CERTIFICATE_PATH;
+
+/** The resolved credential choice, for diagnostics. A certificate path overrides the mode. */
+export const authMode = CERT_PATH ? "certificate" : MODE;
 
 // App-only tokens carry no user context, so Graph's /me/ paths do not exist and
 // the label-policy-settings read uses the tenant-wide path instead (see labels.js).
@@ -61,7 +66,8 @@ function getCredential() {
       userPromptCallback: (info) => {
         // Device-code prompts must reach the operator without corrupting the
         // stdio JSON-RPC channel, so they go to stderr.
-        process.stderr.write(`\n[purview] ${info.message}\n`);
+        const prompt = info.message || `Open ${info.verificationUri} and enter code ${info.userCode}`;
+        process.stderr.write(`\n[purview] ${prompt}\n`);
       },
     });
   } else {

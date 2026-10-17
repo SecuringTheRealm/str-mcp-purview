@@ -5,11 +5,11 @@ import { randomUUID } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { powershell } from "../src/powershell.js";
 import { executeCapability } from "../src/dispatch/execute.js";
+import { asArray } from "../src/util.js";
 
 const tag = `ZZZ_MCP_REPLICATION_${randomUUID().slice(0, 8)}`;
 const results = { run: tag, started: new Date().toISOString(), checks: [], cleanup: [] };
 const policies = [], rules = [];
-const asArray = x => x == null ? [] : Array.isArray(x) ? x : [x];
 const names = { policy: `${tag}_DLP`, rule: `${tag}_Rule`, copilot: `${tag}_Copilot`, old: `${tag}_OriginalLabels`, revised: `${tag}_RevisedLabels` };
 async function check(name, fn) {
   const start = Date.now();

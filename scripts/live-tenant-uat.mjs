@@ -6,13 +6,13 @@ import assert from 'node:assert/strict';
 import { powershell } from '../src/powershell.js';
 import { executeCapability } from '../src/dispatch/execute.js';
 import * as auto from '../src/auto-labels.js';
+import { asArray as arr } from '../src/util.js';
 import { createDeletionConfirmation } from '../src/mcp/deletion-confirmation.js';
 
 const tag = `ZZZ_MCP_UAT_${randomUUID().slice(0,8)}`;
 const report = { run: tag, started: new Date().toISOString(), checks: [], cleanup: [], limitations: ['No deployed endpoint supplied; remote authentication and proxy behavior are not tested.', 'Auto-label activation is not tested without a dedicated synthetic content scope.'] };
 const owned = [];
 const autoOnly = process.env.PURVIEW_UAT_AUTO_ONLY === '1';
-const arr = v => v == null ? [] : Array.isArray(v) ? v : [v];
 async function check(name, fn) {
   const start = Date.now();
   try { const evidence = await fn(); report.checks.push({name,status:'passed',elapsed_ms:Date.now()-start,evidence}); console.log(JSON.stringify({name,status:'passed',elapsed_ms:Date.now()-start})); return evidence; }

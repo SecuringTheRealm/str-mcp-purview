@@ -138,3 +138,12 @@ test("DLP rule input is rejected before PowerShell runs", async () => {
   await assert.rejects(executeCapability("create_endpoint_dlp_rule", blockWithoutNotify), /require notify_user/);
   await assert.rejects(executeCapability("create_dlp_rule", { name: "r1", policy: "p1", access_scope: "External" }), (e) => e.code === "VALIDATION_ERROR" || /Invalid arguments/.test(e.message));
 });
+
+test("write handlers never overlap, so read-modify-write updates cannot interleave", async () => {
+  const base = syntheticCatalogue(1).entries.find((c) => c.action === "write" && !c.destructive);
+  let active = 0, peak = 0;
+  const slow = defineCapability({ ...base, handler: async () => { peak = Math.max(peak, ++active); await new Promise((r) => setTimeout(r, 20)); active--; return { content: [] }; } });
+  const index = indexCapabilities([slow]);
+  await Promise.all([1, 2, 3].map(() => executeCapability(slow.id, { identity: "sandbox" }, {}, index)));
+  assert.equal(peak, 1);
+});

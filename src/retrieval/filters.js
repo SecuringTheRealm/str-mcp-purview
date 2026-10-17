@@ -1,3 +1,5 @@
+import { envFlag } from "../util.js";
+
 const csv = (value) => value === undefined ? undefined : value.split(",").map((s) => s.trim()).filter(Boolean);
 
 // Only server configuration or a trusted host may supply policy; never tool arguments.
@@ -5,8 +7,8 @@ export function policyFromEnvironment(env = process.env) {
   return {
     allowedIds: csv(env.PURVIEW_ALLOWED_CAPABILITIES),
     domains: csv(env.PURVIEW_ALLOWED_DOMAINS),
-    readOnly: env.PURVIEW_READ_ONLY === "true",
-    allowDestructive: env.PURVIEW_ALLOW_DESTRUCTIVE !== "false",
+    readOnly: envFlag("PURVIEW_READ_ONLY", false, env),
+    allowDestructive: envFlag("PURVIEW_ALLOW_DESTRUCTIVE", true, env),
     permissions: csv(env.PURVIEW_PERMISSIONS),
     scopes: csv(env.PURVIEW_SCOPES),
     features: csv(env.PURVIEW_FEATURES),

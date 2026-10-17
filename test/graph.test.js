@@ -93,6 +93,13 @@ test("graphGet", async (t) => {
     });
   });
 
+  await t.test("refuses an absolute URL, so the token never leaves Graph", async () => {
+    let called = false;
+    globalThis.fetch = async () => { called = true; };
+    await assert.rejects(() => graphGet("https://evil.example/x"), /must start with/);
+    assert.equal(called, false);
+  });
+
   await t.test("falls back to a truncated raw body when the error is not JSON", async () => {
     await withEnv({ AZURE_TENANT_ID: "tenant-1", AZURE_CLIENT_ID: "client-1" }, async () => {
       globalThis.fetch = async () => ({

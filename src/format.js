@@ -14,11 +14,8 @@ export function truncate(value, max = 100) {
   return s.length > max ? s.slice(0, max - 3) + "..." : s;
 }
 
-/** Coerce a possibly-missing value to a printable cell, padded to `width`. */
-export function cell(value, width) {
-  const s = value == null || value === "" ? "-" : String(value);
-  return width ? s.padEnd(width) : s;
-}
+/** Case- and whitespace-insensitive form of an identity, for comparisons. */
+export const identityKey = (value) => String(value ?? "").trim().toLowerCase();
 
 /** Format an ISO date-time down to just the date portion. */
 export function shortDate(value) {

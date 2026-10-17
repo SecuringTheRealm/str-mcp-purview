@@ -109,17 +109,17 @@ test("policy pagination preserves filters and missing identity never returns an 
 });
 test("unknown identities, stale revisions, unsupported features and workload mismatches never mutate", async () => {
   const attempts = [
-    () => auto.setPolicy({ identity: "Missing", mode: "Disable" }),
-    () => auto.setPolicy({ identity: "Finance", expected_revision: "stale", mode: "Disable" }),
-    () => auto.setPolicy({ identity: "Finance", retry_distribution: true, description: "changed" }),
-    () => auto.setPolicy({ identity: "Finance", mode: "Enable", restart_simulation: true }),
-    () => auto.setPolicy({ identity: "Finance", enabled: true }),
-    () => auto.setPolicy({ identity: "Finance", mode: "TestWithoutNotifications", restart_simulation: true, auto_enable_after: "1.00:00:00" }),
-    () => auto.createRule({ name: "Other", policy_identity: "Finance", workload: "Exchange", conditions }),
-    () => auto.setRule({ identity: "Identifiers", expression: { all: [] } }),
-    () => auto.setRule({ identity: "Identifiers", conditions: { subject_matches_patterns: ["x"] } }),
+    ["TARGET_NOT_FOUND", () => auto.setPolicy({ identity: "Missing", mode: "Disable" })],
+    ["REVISION_CONFLICT", () => auto.setPolicy({ identity: "Finance", expected_revision: "stale", mode: "Disable" })],
+    ["VALIDATION_ERROR", () => auto.setPolicy({ identity: "Finance", retry_distribution: true, description: "changed" })],
+    ["VALIDATION_ERROR", () => auto.setPolicy({ identity: "Finance", mode: "Enable", restart_simulation: true })],
+    ["FEATURE_UNAVAILABLE", () => auto.setPolicy({ identity: "Finance", enabled: true })],
+    ["FEATURE_UNAVAILABLE", () => auto.setPolicy({ identity: "Finance", mode: "TestWithoutNotifications", restart_simulation: true, auto_enable_after: "1.00:00:00" })],
+    ["VALIDATION_ERROR", () => auto.createRule({ name: "Other", policy_identity: "Finance", workload: "Exchange", conditions })],
+    ["FEATURE_UNAVAILABLE", () => auto.setRule({ identity: "Identifiers", expression: { all: [] } })],
+    ["VALIDATION_ERROR", () => auto.setRule({ identity: "Identifiers", conditions: { subject_matches_patterns: ["x"] } })],
   ];
-  for (const attempt of attempts) { reset(); await assert.rejects(attempt); assert.equal(writeCalls().length, 0); }
+  for (const [code, attempt] of attempts) { reset(); await assert.rejects(attempt, { code }); assert.equal(writeCalls().length, 0); }
   reset(); calls.length = 0;
   await assert.rejects(auto.getPolicy(""), /Identity/);
 });

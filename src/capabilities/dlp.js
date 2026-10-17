@@ -1,5 +1,6 @@
 import * as dlp from "../dlp.js";
-import { text, pageResult, assertEndpointNotify } from "./shared.js";
+import { formatWriteResult } from "../format.js";
+import { text, pageResult, assertEndpointNotify, assertChanges } from "./shared.js";
 import { oneDriveCreate, oneDriveUpdate, needsOneDriveRead, assertExchangeOnly, assertLocationExceptions } from "../dlp-validation.js";
 import { CapabilityError } from "../dispatch/errors.js";
 
@@ -52,7 +53,7 @@ export const handlers = {
         (item) => item
       );
     }
-    throw new Error("get_dlp_rule requires either 'identity' (one rule) or 'policy' (all rules in a policy).");
+    throw new CapabilityError("VALIDATION_ERROR", "get_dlp_rule requires either 'identity' (one rule) or 'policy' (all rules in a policy).");
   },
   create_dlp_policy: async (args) => {
     const params = { Name: args.name };
@@ -64,12 +65,12 @@ export const handlers = {
     Object.assign(params, dlp.createPolicyLocationExceptionParams(args.location_exceptions));
     Object.assign(params, oneDriveCreate(args));
     assertLocationExceptions(params);
-    return text(dlp.formatWriteResult("Create DLP policy", await dlp.createPolicy(params)));
+    return text(formatWriteResult("Create DLP policy", await dlp.createPolicy(params)));
   },
   set_dlp_policy: async (args) => {
     const params = { Identity: args.identity };
     if (args.mode) params.Mode = args.mode;
-    if (args.comment) params.Comment = args.comment;
+    if (args.comment != null) params.Comment = args.comment;
     const LOCATION_PARAMS = {
       exchange: "ExchangeLocation",
       sharepoint: "SharePointLocation",
@@ -80,29 +81,25 @@ export const handlers = {
       if (args.add_locations?.[key]?.length) params[`Add${psName}`] = args.add_locations[key];
       if (args.remove_locations?.[key]?.length) params[`Remove${psName}`] = args.remove_locations[key];
     }
-    Object.assign(
-      params,
-      dlp.updatePolicyLocationExceptionParams(
-        { ...args.add_location_exceptions, onedrive: undefined },
-        { ...args.remove_location_exceptions, onedrive: undefined }
-      )
-    );
+    Object.assign(params, dlp.updatePolicyLocationExceptionParams(args.add_location_exceptions, args.remove_location_exceptions));
     const needsScope = needsOneDriveRead(args) || Object.values(args.add_location_exceptions ?? {}).some((v) => v?.length);
     const current = needsScope ? await dlp.getPolicy(args.identity) : undefined;
     Object.assign(params, oneDriveUpdate(args, current));
     assertLocationExceptions(params, current);
-    return text(dlp.formatWriteResult("Set DLP policy", await dlp.setPolicy(params)));
+    assertChanges(params);
+    return text(formatWriteResult("Set DLP policy", await dlp.setPolicy(params)));
   },
   create_dlp_rule: async (args) => {
     await validateRulePolicy(args);
     const params = { Name: args.name, Policy: args.policy, ...dlp.ruleWriteParams(args) };
-    return text(dlp.formatWriteResult("Create DLP rule", await dlp.createRule(params)));
+    return text(formatWriteResult("Create DLP rule", await dlp.createRule(params)));
   },
   set_dlp_rule: async (args) => {
     assertEndpointNotify(args);
     const params = { Identity: args.identity, ...dlp.ruleWriteParams(args) };
+    assertChanges(params);
     await validateRulePolicy(args, true);
-    return text(dlp.formatWriteResult("Set DLP rule", await dlp.setRule(params)));
+    return text(formatWriteResult("Set DLP rule", await dlp.setRule(params)));
   },
   remove_dlp_policy: async (args) => {
     await dlp.removePolicy({ Identity: args.identity, Confirm: false });
@@ -124,12 +121,12 @@ export const handlers = {
     if (args.mode) params.Mode = args.mode;
     if (args.comment) params.Comment = args.comment;
     assertLocationExceptions(params);
-    return text(dlp.formatWriteResult("Create endpoint DLP policy", await dlp.createPolicy(params)));
+    return text(formatWriteResult("Create endpoint DLP policy", await dlp.createPolicy(params)));
   },
   create_endpoint_dlp_rule: async (args) => {
     assertEndpointNotify(args);
     const params = { Name: args.name, Policy: args.policy, ...dlp.ruleWriteParams(args) };
-    return text(dlp.formatWriteResult("Create endpoint DLP rule", await dlp.createRule(params)));
+    return text(formatWriteResult("Create endpoint DLP rule", await dlp.createRule(params)));
   },
   create_copilot_dlp_policy: async (args) => {
     const params = {
@@ -139,9 +136,12 @@ export const handlers = {
     };
     if (args.mode) params.Mode = args.mode;
     if (args.comment) params.Comment = args.comment;
-    return text(dlp.formatWriteResult("Create Copilot DLP policy", await dlp.createPolicy(params)));
+    return text(formatWriteResult("Create Copilot DLP policy", await dlp.createPolicy(params)));
   },
   create_copilot_dlp_rule: async (args) => {
+    if (args.action === "block_web_search" && args.sensitivity_labels) {
+      throw new CapabilityError("VALIDATION_ERROR", "block_web_search supports only a sensitive_information_types condition, not sensitivity_labels.");
+    }
     const params = {
       Name: args.name,
       Policy: args.policy,
@@ -154,7 +154,7 @@ export const handlers = {
     else params.RestrictAccess = [{ setting: "ExcludeContentProcessing", value: "Block" }];
     if (args.notify_user?.length) params.NotifyUser = args.notify_user;
     if (args.priority != null) params.Priority = args.priority;
-    return text(dlp.formatWriteResult("Create Copilot DLP rule", await dlp.createRule(params)));
+    return text(formatWriteResult("Create Copilot DLP rule", await dlp.createRule(params)));
   },
   list_sensitive_information_types: async (args) => {
     const name = "list_sensitive_information_types";

@@ -19,9 +19,10 @@ const groups = [
   ["purview_auth", "auth", "read", "Check authentication configuration; does not initiate sign-in or verify access."],
 ];
 
-export function toolMode(value = process.env.PURVIEW_TOOL_MODE ?? "full") {
-  if (!["full", "compact", "dispatcher"].includes(value)) throw new Error(`Invalid PURVIEW_TOOL_MODE: ${value}`);
-  return value;
+export function toolMode(value = process.env.PURVIEW_TOOL_MODE || "full") {
+  const mode = String(value).trim().toLowerCase();
+  if (!["full", "compact", "dispatcher"].includes(mode)) throw new Error(`PURVIEW_TOOL_MODE must be full, compact or dispatcher (got "${value}").`);
+  return mode;
 }
 
 export function searchLimit(value = process.env.PURVIEW_TOOL_LIMIT ?? "8") {
@@ -93,7 +94,8 @@ export function createProjection({ mode = toolMode(), policy = {}, limit = searc
       const c = registry.get(capability_id);
       if (!c || !permitted(c, policy)) throw new CapabilityError("CAPABILITY_UNAVAILABLE", "Capability unavailable or not permitted.");
       const result = {
-        capability_id: c.id, description: c.description, domain: c.domain, operation: c.operation,
+        // Search shows one sentence; describe gives the full text, which carries the constraints.
+        capability_id: c.id, description: c.tool?.description ?? c.description, domain: c.domain, operation: c.operation,
         action: c.action, risk: c.risk, destructive: c.destructive, execution_kind: c.executionKind,
         input_schema: c.inputSchema, ...(c.outputSchema ? { output_schema: c.outputSchema } : {}),
         constraints: c.constraints, examples: c.examples, invocation: routeFor(c, mode),
@@ -140,7 +142,7 @@ export function createProjection({ mode = toolMode(), policy = {}, limit = searc
       validateArguments(entry.tool.inputSchema, input, name);
       return entry.call(input, context);
     },
-    instructions: mode === "full" ? "Use list filters and pagination, then fetch individual details. Deletion requires user confirmation through form elicitation; confirm:true alone does not authorize deletion."
+    instructions: mode === "full" ? "Use list filters and pagination, then fetch individual details. Deletion requires user confirmation through form elicitation; confirm:true alone does not authorize deletion. Do not automatically retry errors, especially writes with uncertain outcomes."
       : `Use ${mode === "compact" ? "purview_search" : "purview_search_capabilities"} to find candidate operations, then purview_describe_capability for the selected input_schema, constraints and examples. Search include_schemas:true is an optional shortcut. Follow the returned invocation mapping. Capability names mentioned in prompts are internal operation IDs. Keep filters unchanged when following next_cursor; pass cursor and limit inside arguments. Only execute writes the user requested; deletion requires user confirmation through form elicitation. Discovery is not authorization; execution rechecks policy. Do not automatically retry errors, especially writes with uncertain outcomes.`,
   };
 }

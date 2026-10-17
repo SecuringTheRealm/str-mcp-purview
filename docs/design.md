@@ -1,7 +1,5 @@
 # Design notes
 
-> Moved from the README. Setup lives in [README.md](../README.md).
-
 ## Architecture
 
 ```

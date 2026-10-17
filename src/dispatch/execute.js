@@ -13,6 +13,16 @@ export function validateArguments(schema, args, name) {
   }
 }
 
+// Writes run one at a time. Several read the current object and then set it,
+// so two interleaved writes could silently drop one change. The lock covers
+// only the handler, so a pending deletion form does not hold up other writes.
+let writeQueue = Promise.resolve();
+function serialised(fn) {
+  const run = writeQueue.then(fn);
+  writeQueue = run.catch(() => {});
+  return run;
+}
+
 export async function executeCapability(id, args = {}, policy = {}, registry = capabilityById, authorize, interaction = {}) {
   const capability = registry.get(id);
   if (!capability || !permitted(capability, policy)) throw new CapabilityError("CAPABILITY_UNAVAILABLE", "Capability unavailable or not permitted.");
@@ -35,7 +45,7 @@ export async function executeCapability(id, args = {}, policy = {}, registry = c
     validateArguments(capability.inputSchema, input, capability.id);
     await checkAuthorization();
   }
-  try { return await capability.handler(input); }
+  try { return await (capability.action === "write" ? serialised(() => capability.handler(input)) : capability.handler(input)); }
   catch (error) {
     if (error instanceof CapabilityError) throw error;
     throw new CapabilityError("BACKEND_ERROR", error.message);

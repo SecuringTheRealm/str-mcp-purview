@@ -26,7 +26,7 @@ Insider Risk, Communications Compliance and DSPM are not covered yet; see [ROADM
 
 ## Platform support
 
-**Windows-first.** 36 of the 37 tools run through Security & Compliance PowerShell, which Microsoft [does not support in PowerShell 7 on macOS or Linux](https://learn.microsoft.com/powershell/exchange/exchange-online-powershell-v2#supported-operating-systems-for-the-exchange-online-powershell-module). On macOS/Linux those tools fail fast with a clear error, and only the Graph-backed `get_label_policy_settings` works. `PURVIEW_ALLOW_UNSUPPORTED_OS=1` skips the gate if a future module release changes that.
+**Windows-first.** 35 of the 37 tools run through Security & Compliance PowerShell, which Microsoft [does not support in PowerShell 7 on macOS or Linux](https://learn.microsoft.com/powershell/exchange/exchange-online-powershell-v2#supported-operating-systems-for-the-exchange-online-powershell-module). On macOS/Linux those tools fail fast with a clear error. The other two work everywhere: `get_label_policy_settings` (Graph) and `get_auth_status` (a local configuration check, so it works on every platform). `PURVIEW_ALLOW_UNSUPPORTED_OS=1` skips the gate if a future module release changes that.
 
 | Platform | Label policy settings (Graph) | Labels, auto-labelling and DLP (PowerShell) |
 | --- | --- | --- |
@@ -36,10 +36,11 @@ Insider Risk, Communications Compliance and DSPM are not covered yet; see [ROADM
 ## Prerequisites
 
 - **Node.js 20+**.
-- **Windows with PowerShell 7+** and the Exchange Online module:
+- **Windows with PowerShell 7+** and the Exchange Online module. Run this inside `pwsh` (PowerShell 7), not Windows PowerShell 5.1, which would install the module where `pwsh` cannot see it:
   ```powershell
   Install-Module ExchangeOnlineManagement -RequiredVersion 3.9.2 -Scope CurrentUser
   ```
+  The server needs 3.8.0 or later. 3.9.2 is pinned because module 3.10+ requires PowerShell 7.6 (the `Containerfile` pins the 7.4 / 3.9.2 pair).
 - A **Microsoft 365 tenant** where you (or an admin) can register an app and grant consent.
 - An **admin account** with the Purview role for the tools you'll use (step 2).
 
@@ -66,6 +67,7 @@ In the [Entra admin center](https://entra.microsoft.com) → **Identity → Appl
 |---|---|
 | Labels and label policies | *Information Protection Admin* or *Compliance Administrator* |
 | DLP | *DLP Compliance Management* or *Compliance Administrator* |
+| Endpoint DLP restrictions (`create_endpoint_dlp_rule`) | *Compliance Administrator* or *Compliance Data Administrator* ([docs/auth.md](docs/auth.md#unattended-and-hosted-setup)) |
 | Everything | *Compliance Administrator* |
 
 Assign roles in the **Purview portal → Settings → Roles & scopes → Role groups**.
@@ -143,7 +145,8 @@ Both prompts are read-only. Details: [docs/tools.md](docs/tools.md#prompts).
 
 - Every action runs as the signed-in admin and is limited by that account's Purview RBAC.
 - **Deletes** always show a confirmation form naming the tenant and the resolved object. Declining, cancelling, or a client without form support means nothing is deleted. `confirm: true` cannot skip it ([how it works](docs/design.md#elicitation-for-deletion-confirmation)).
-- `PURVIEW_READ_ONLY`, `PURVIEW_ALLOWED_CAPABILITIES` and related settings restrict what the server will run ([capability policies](docs/tools.md#capability-policies-and-retrieval)).
+- **Deletes are refused on the shipped HTTP host.** It supplies no trusted caller identity, so the confirmation cannot be bound to a person. Deletion works over stdio ([why](docs/design.md#elicitation-for-deletion-confirmation)).
+- `PURVIEW_READ_ONLY` and `PURVIEW_ALLOW_DESTRUCTIVE` take `true`/`false` (also `1`/`0`, `yes`/`no`, case-insensitive); any other value stops the server at startup. `PURVIEW_ALLOWED_CAPABILITIES` and related settings narrow it further ([environment variables](docs/tools.md#environment-variables)).
 - Creates and sets apply immediately. Create DLP policies in `TestWithNotifications` first and promote them once you've checked their impact.
 - Tenant data in results is untrusted input to the model. Review changes an agent proposes before approving them.
 
@@ -151,7 +154,7 @@ Both prompts are read-only. Details: [docs/tools.md](docs/tools.md#prompts).
 
 | Symptom | Fix |
 | --- | --- |
-| "need Security & Compliance PowerShell ... only supports Windows" | Expected on macOS/Linux; see [Platform support](#platform-support). |
+| "need Security & Compliance PowerShell (Connect-IPPSSession), which Microsoft only supports on Windows" | Expected on macOS/Linux; see [Platform support](#platform-support). |
 | DLP call hangs | A sign-in window is waiting unseen. Finish it, or set `PURVIEW_AUTH_MODE=devicecode` and read the code from stderr. |
 | Browser opens the wrong profile | Set your admin profile as the default for external links, or use device code. |
 | `AADSTS650057: Invalid resource` | The app lacks `Exchange.ManageV2`; redo step 1.4 and grant consent. |
@@ -172,9 +175,9 @@ Uses Node's built-in `node:test` (no framework dependency), including real stdio
 
 | Doc | Contents |
 | --- | --- |
-| [docs/auth.md](docs/auth.md) | Sign-in flow, unattended and app-only auth, every auth variable, troubleshooting |
-| [docs/tools.md](docs/tools.md) | All 37 tools, tool modes, DLP write corrections, capability policies, prompts, resources, workflows |
-| [docs/hosting.md](docs/hosting.md) | Azure Functions and container hosting (in UAT), endpoint security, pagination, logging |
+| [docs/auth.md](docs/auth.md) | Sign-in flow, unattended and app-only auth, [auth variables](docs/auth.md#auth-environment-variables), troubleshooting |
+| [docs/tools.md](docs/tools.md) | All 37 tools, tool modes, DLP write corrections, capability policies, [policy variables](docs/tools.md#environment-variables), prompts, resources, workflows |
+| [docs/hosting.md](docs/hosting.md) | Azure Functions and container hosting (in UAT), endpoint security, [HTTP host variables](docs/hosting.md#http-host-environment-variables), pagination, logging |
 | [docs/design.md](docs/design.md) | Architecture, extending the catalogue, deletion confirmation, auto-labelling, requirement-elicitation proposal |
 | [SECURITY.md](SECURITY.md) / [ROADMAP.md](ROADMAP.md) | Reporting and remote-hosting guidance / delivery outcomes and status |
 

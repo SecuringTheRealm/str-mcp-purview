@@ -2,13 +2,10 @@
 // Reads use Get-DlpCompliance*, writes use New-/Set-DlpCompliance*.
 
 import { powershell } from "./powershell.js";
-import { truncate, shortDate, bulletFields, formatWriteResult } from "./format.js";
+import { truncate, shortDate, bulletFields } from "./format.js";
+import { POLICY_LOCATION_FIELDS } from "./dlp-validation.js";
 import { asArray, CONFIDENCE } from "./util.js";
 import { CapabilityError } from "./dispatch/errors.js";
-
-// Re-exported so index.js can keep calling dlp.formatWriteResult; the shared
-// implementation lives in format.js (also used by the label write tools).
-export { formatWriteResult };
 
 // Trimmed property sets keep ConvertTo-Json output small and free of the deep,
 // occasionally self-referential graph that Exchange policy objects carry.
@@ -23,33 +20,24 @@ const RULE_PROPS = [
 ];
 const SIT_PROPS = ["Name", "Id", "Publisher", "Description"];
 
+// Exception names for rules: [tool argument, cmdlet parameter, summary label].
+const RULE_EXCEPTIONS = [
+  ["sensitive_information_types", "ExceptIfContentContainsSensitiveInformation", "sensitive-info"],
+  ["content_property_contains_words", "ExceptIfContentPropertyContainsWords", "content-property"],
+  ["document_name_matches_words", "ExceptIfDocumentNameMatchesWords", "doc-name"],
+  ["document_name_matches_patterns", "ExceptIfDocumentNameMatchesPatterns", "doc-name-pattern"],
+  ["document_matches_patterns", "ExceptIfDocumentMatchesPatterns", "doc-content-pattern"],
+  ["content_extension_matches_words", "ExceptIfContentExtensionMatchesWords", "file-extension"],
+  ["from", "ExceptIfFrom", "sender"],
+  ["from_member_of", "ExceptIfFromMemberOf", "sender-group"],
+  ["sent_to", "ExceptIfSentTo", "recipient"],
+  ["recipient_domain_is", "ExceptIfRecipientDomainIs", "recipient-domain"],
+  ["sender_domain_is", "ExceptIfSenderDomainIs", "sender-domain"],
+];
+
 // Detail reads (get_dlp_policy / get_dlp_rule) select a wider set than the lean
 // list reads, so scope/exception hygiene can be analysed on demand without
 // bloating list output. Formatters summarise these rather than dumping them.
-const POLICY_LOCATION_FIELDS = [
-  ["ExchangeLocation", "Exchange", "ExchangeLocationException"],
-  ["SharePointLocation", "SharePoint", "SharePointLocationException"],
-  ["OneDriveLocation", "OneDrive", "OneDriveLocationException"],
-  ["TeamsLocation", "Teams", "TeamsLocationException"],
-  ["EndpointDlpLocation", "Endpoint", "EndpointDlpLocationException"],
-  ["OnPremisesScannerDlpLocation", "On-prem scanner", null],
-  ["PowerBIDlpLocation", "Power BI", null],
-  ["ThirdPartyAppDlpLocation", "Third-party apps", null],
-];
-const RULE_EXCEPTION_FIELDS = [
-  ["ExceptIfContentContainsSensitiveInformation", "sensitive-info"],
-  ["ExceptIfContentPropertyContainsWords", "content-property"],
-  ["ExceptIfDocumentNameMatchesWords", "doc-name"],
-  ["ExceptIfDocumentNameMatchesPatterns", "doc-name-pattern"],
-  ["ExceptIfDocumentMatchesPatterns", "doc-content-pattern"],
-  ["ExceptIfContentExtensionMatchesWords", "file-extension"],
-  ["ExceptIfFrom", "sender"],
-  ["ExceptIfFromMemberOf", "sender-group"],
-  ["ExceptIfSentTo", "recipient"],
-  ["ExceptIfRecipientDomainIs", "recipient-domain"],
-  ["ExceptIfSenderDomainIs", "sender-domain"],
-];
-
 const POLICY_DETAIL_PROPS = [...POLICY_PROPS, ...POLICY_LOCATION_FIELDS.flatMap(([f, , e]) => (e ? [f, e] : [f])),
   "OneDriveSharedBy", "OneDriveSharedByMemberOf", "ExceptIfOneDriveSharedBy", "ExceptIfOneDriveSharedByMemberOf"];
 const RULE_DETAIL_PROPS = [
@@ -57,7 +45,7 @@ const RULE_DETAIL_PROPS = [
   "StopPolicyProcessing", "RestrictAccess", "EncryptRMSTemplate", "Quarantine",
   "GenerateIncidentReport", "IncidentReportContent", "NotifyEmailCustomSubject",
   "NotifyEmailCustomText", "NotifyPolicyTipCustomText",
-  ...RULE_EXCEPTION_FIELDS.map(([f]) => f),
+  ...RULE_EXCEPTIONS.map(([, f]) => f),
 ];
 
 // Per Microsoft docs, custom SITs always report a Publisher other than this
@@ -135,7 +123,7 @@ export function sensitiveInformationTypeConditions(items = []) {
       item.min_count !== undefined &&
       item.max_count < item.min_count
     ) {
-      throw new Error(
+      throw new CapabilityError("VALIDATION_ERROR",
         `max_count must be -1 (unlimited) or at least min_count for sensitive information type "${item.name}".`
       );
     }
@@ -144,7 +132,6 @@ export function sensitiveInformationTypeConditions(items = []) {
     if (item.max_count !== undefined) condition.maxCount = item.max_count;
     if (item.confidence_level !== undefined) {
       condition.minConfidence = CONFIDENCE[item.confidence_level];
-      if (!condition.minConfidence) throw new CapabilityError("VALIDATION_ERROR", "Unknown SIT confidence level.");
       condition.maxConfidence = 100;
     }
     return condition;
@@ -154,20 +141,6 @@ export function sensitiveInformationTypeConditions(items = []) {
   return tuned ? [{ operator: "And", groups: [{ operator: "Or", name: "Default", sensitivetypes: conditions }] }] : conditions;
 }
 
-const RULE_EXCEPTION_PARAMS = {
-  sensitive_information_types: "ExceptIfContentContainsSensitiveInformation",
-  content_property_contains_words: "ExceptIfContentPropertyContainsWords",
-  document_name_matches_words: "ExceptIfDocumentNameMatchesWords",
-  document_name_matches_patterns: "ExceptIfDocumentNameMatchesPatterns",
-  document_matches_patterns: "ExceptIfDocumentMatchesPatterns",
-  content_extension_matches_words: "ExceptIfContentExtensionMatchesWords",
-  from: "ExceptIfFrom",
-  from_member_of: "ExceptIfFromMemberOf",
-  sent_to: "ExceptIfSentTo",
-  recipient_domain_is: "ExceptIfRecipientDomainIs",
-  sender_domain_is: "ExceptIfSenderDomainIs",
-};
-
 /** Build optional parameters shared by create_dlp_rule and set_dlp_rule. */
 export function ruleWriteParams(args = {}) {
   const params = {};
@@ -176,12 +149,7 @@ export function ruleWriteParams(args = {}) {
   }
   if (args.block_access != null) params.BlockAccess = args.block_access;
   if (args.notify_user?.length) params.NotifyUser = args.notify_user;
-  if (args.generate_alert != null) {
-    if (!Array.isArray(args.generate_alert) || !args.generate_alert.length || args.generate_alert.some((v) => typeof v !== "string" || !/^(SiteAdmin|[^\s@]+@[^\s@]+)$/.test(v))) {
-      throw new CapabilityError("VALIDATION_ERROR", "generate_alert must contain recipient email addresses or SiteAdmin, not a boolean.");
-    }
-    params.GenerateAlert = args.generate_alert;
-  }
+  if (args.generate_alert != null) params.GenerateAlert = args.generate_alert;
   if (args.priority != null) params.Priority = args.priority;
   if (args.disabled != null) params.Disabled = args.disabled;
   if (args.access_scope) params.AccessScope = args.access_scope;
@@ -192,7 +160,7 @@ export function ruleWriteParams(args = {}) {
   if (args.endpoint_restrictions?.length) {
     params.EndpointDlpRestrictions = args.endpoint_restrictions.map((r) => ({ Setting: r.activity, Value: r.action }));
   }
-  for (const [key, psName] of Object.entries(RULE_EXCEPTION_PARAMS)) {
+  for (const [key, psName] of RULE_EXCEPTIONS) {
     const values = args.exceptions?.[key];
     if (!values?.length) continue;
     params[psName] = key === "sensitive_information_types"
@@ -218,7 +186,6 @@ export function createPolicyLocationExceptionParams(exceptions = {}) {
 }
 
 export function updatePolicyLocationExceptionParams(add = {}, remove = {}) {
-  if (add.onedrive?.length || remove.onedrive?.length) throw new CapabilityError("VALIDATION_ERROR", "OneDrive exceptions require current-policy reconciliation.");
   const params = {};
   for (const [key, psName] of Object.entries(POLICY_EXCEPTION_PARAMS)) {
     if (add[key]?.length) params[`Add${psName}`] = add[key];
@@ -255,18 +222,15 @@ export function copilotLocations(userScope = ["All"]) {
 /**
  * Build the ContentContainsSensitiveInformation condition (a PswsHashtable[]) for a
  * Copilot rule from either SITs or sensitivity-label GUIDs. Microsoft disallows both
- * conditions in one rule, so exactly one must be supplied.
+ * conditions in one rule; the tool schema's oneOf enforces exactly one.
  * @param {{ sits?: string[], labels?: string[] }} input
  */
 export function copilotCondition({ sits, labels } = {}) {
-  if (sits?.length && labels?.length) {
-    throw new Error("A Copilot rule cannot combine sensitive information types and sensitivity labels — use one condition per rule.");
-  }
   if (sits?.length) return sits.map((n) => ({ Name: n }));
   // Use the complete sensitivity-label condition documented for
   // New-DlpComplianceRule's ContentContainsSensitiveInformation parameter.
   if (labels?.length) return [{ operator: "And", groups: [{ operator: "Or", name: "Default", labels: labels.map((g) => ({ name: g, type: "Sensitivity" })) }] }];
-  throw new Error("A Copilot rule needs a condition: sensitive_information_types or sensitivity_labels.");
+  throw new CapabilityError("VALIDATION_ERROR", "A Copilot rule needs a condition: sensitive_information_types or sensitivity_labels.");
 }
 
 /**
@@ -338,7 +302,7 @@ function locationSummary(p) {
 }
 
 function exceptionSummary(r) {
-  return RULE_EXCEPTION_FIELDS.filter(([f]) => asArray(r?.[f]).length).map(([, label]) => label).join(", ");
+  return RULE_EXCEPTIONS.filter(([, f]) => asArray(r?.[f]).length).map(([, , label]) => label).join(", ");
 }
 
 export function formatPolicyDetail(p) {

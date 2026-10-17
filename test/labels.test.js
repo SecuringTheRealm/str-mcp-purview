@@ -21,6 +21,7 @@ mock.module("../src/powershell.js", {
 });
 
 const labels = await import("../src/labels.js");
+const { createProjection } = await import("../src/mcp/projection.js");
 
 test("listLabels returns stable SCC, GUID and display identities with the parent resolved", async () => {
   invokeImpl = async () => [
@@ -91,4 +92,18 @@ test("label policy detail renders object and string locations without [object Ob
   assert.match(out, /Exchange locations:\*\* All, Finance \(finance@contoso.com\), admin@contoso.com, Unknown location/);
   assert.match(out, /Microsoft 365 Groups:\*\* Engineering \(engineering@contoso.com\)/);
   assert.doesNotMatch(out, /\[object Object\]/);
+});
+
+test("set tools reject arguments that map to no change, but an empty comment is a change", async () => {
+  const p = createProjection({ mode: "full" });
+  invokeCalls.length = 0;
+  for (const [id, args] of [
+    ["set_label_policy", { identity: "Pol", add_labels: [], remove_labels: [] }],
+    ["set_sensitivity_label", { identity: "Lab", encryption: {} }],
+  ]) {
+    await assert.rejects(p.call(id, args), { code: "VALIDATION_ERROR", message: /No changes supplied/ });
+  }
+  assert.equal(invokeCalls.length, 0);
+  await p.call("set_label_policy", { identity: "Pol", comment: "" });
+  assert.deepEqual(invokeCalls.at(-1).params, { Identity: "Pol", Comment: "" });
 });

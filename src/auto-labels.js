@@ -1,8 +1,8 @@
 import { powershell } from "./powershell.js";
 import { CapabilityError } from "./dispatch/errors.js";
 import { asArray as array, digest, CONFIDENCE } from "./util.js";
+import { identityKey as key } from "./format.js";
 
-const key = v => String(v ?? "").trim().toLowerCase();
 const invalid = message => { throw new CapabilityError("VALIDATION_ERROR", message); };
 const unavailable = message => { throw new CapabilityError("FEATURE_UNAVAILABLE", message); };
 const transient = /^(revision|Distribution|TestMode|Simulation|Progress|Execution|WhenChanged|WhenCreated|Last|Status)/i;
@@ -151,14 +151,7 @@ export async function setPolicy(args) {
   if (args.enabled !== undefined) unavailable("The interaction of Enabled and Mode is not verified; use mode to change the policy state.");
   if (args.restart_simulation && args.mode !== "TestWithoutNotifications") invalid("Restart simulation requires mode:TestWithoutNotifications.");
   if (args.retry_distribution && Object.keys(args).some(k => !["identity", "retry_distribution", "expected_revision"].includes(k))) invalid("Distribution retry must be requested separately from configuration and lifecycle changes.");
-  let duration;
-  if (args.auto_enable_after != null) {
-    const match = /^(?:(\d+)\.)?(\d{1,2}):(\d{2}):(\d{2})$/.exec(args.auto_enable_after);
-    if (!match || +match[2] > 23 || +match[3] > 59 || +match[4] > 59) invalid("Use duration dd.hh:mm:ss.");
-    duration = (+match[1] || 0) * 86400 + +match[2] * 3600 + +match[3] * 60 + +match[4];
-    if (duration < 3600 || duration > 25 * 86400 || !args.restart_simulation) invalid("Scheduled enablement requires a simulation restart and a duration between 1 hour and 25 days.");
-    unavailable("Scheduled automatic enablement is reserved until its authorization and simulation eligibility can be verified at activation time.");
-  }
+  if (args.auto_enable_after != null) unavailable("Scheduled automatic enablement is reserved until its authorization and simulation eligibility can be verified at activation time.");
   const current = await getPolicy(args.identity);
   let replacementLocations = args.locations;
   if (args.location_changes) {
@@ -176,7 +169,7 @@ export async function setPolicy(args) {
       const locationsNow = scope.include_sites ?? scope.include_site_urls ?? [];
       const included = Object.entries(scope).some(([k, v]) => k.startsWith("include_") && Array.isArray(v) && v.length);
       scope.selection = array(current[locationName[workload]]).some(v => key(v) === "all") && !included ? "all" : "selected";
-      if (!locationsNow.length && !Object.entries(scope).some(([k, v]) => k.startsWith("include_") && Array.isArray(v) && v.length) && scope.selection !== "all") scope.selection = "none";
+      if (!locationsNow.length && !included && scope.selection !== "all") scope.selection = "none";
       replacementLocations[workload] = scope;
     }
   }

@@ -1,5 +1,18 @@
 import { CapabilityError } from "./dispatch/errors.js";
 import { asArray as values } from "./util.js";
+
+// Detail reads (get_dlp_policy) and Exchange-only checks share this table:
+// [policy field, display label, exception field or null].
+export const POLICY_LOCATION_FIELDS = [
+  ["ExchangeLocation", "Exchange", "ExchangeLocationException"],
+  ["SharePointLocation", "SharePoint", "SharePointLocationException"],
+  ["OneDriveLocation", "OneDrive", "OneDriveLocationException"],
+  ["TeamsLocation", "Teams", "TeamsLocationException"],
+  ["EndpointDlpLocation", "Endpoint", "EndpointDlpLocationException"],
+  ["OnPremisesScannerDlpLocation", "On-prem scanner", null],
+  ["PowerBIDlpLocation", "Power BI", null],
+  ["ThirdPartyAppDlpLocation", "Third-party apps", null],
+];
 const fail = (message) => { throw new CapabilityError("VALIDATION_ERROR", message); };
 const isAll = (xs) => xs.length === 1 && /^all$/i.test(String(xs[0]?.Name ?? xs[0]?.DisplayName ?? xs[0]));
 const users = (xs) => {
@@ -64,8 +77,8 @@ export function oneDriveUpdate(args, current) {
 export function assertExchangeOnly(policy) {
   const workloads = values(policy?.Workload).flatMap((v) => String(v).split(/[,;\s]+/)).filter(Boolean);
   if (!workloads.length || workloads.some((v) => v.toLowerCase() !== "exchange")) fail("Sender/recipient exceptions require a verified Exchange-only parent policy.");
-  for (const name of ["SharePointLocation", "OneDriveLocation", "TeamsLocation", "EndpointDlpLocation", "OnPremisesScannerDlpLocation", "PowerBIDlpLocation", "ThirdPartyAppDlpLocation"]) {
-    if (values(policy[name]).length) fail("Sender/recipient exceptions require an Exchange-only parent policy.");
+  for (const [name] of POLICY_LOCATION_FIELDS) {
+    if (name !== "ExchangeLocation" && values(policy[name]).length) fail("Sender/recipient exceptions require an Exchange-only parent policy.");
   }
 }
 

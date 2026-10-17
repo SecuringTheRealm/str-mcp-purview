@@ -49,12 +49,17 @@ its tools change or delete labels, policies, and DLP configuration. Treat that
 as a trust boundary:
 
 - Grant the least-privileged Entra app registration or account that works for
-  your use case, and prefer read-only scopes unless you need writes.
-- Keep credentials in your local `.env` or MCP client configuration. Never
-  commit them. `.env` and `.mcp.json` are gitignored for this reason.
+  your use case. If you only need reads, set `PURVIEW_READ_ONLY=true`. The
+  `Exchange.ManageV2` permission is always required, so the app registration
+  itself cannot be narrowed to read-only scopes.
+- Put tenant and client IDs in your MCP client configuration or the process
+  environment (a `.env` file is not loaded), and never commit secrets or
+  certificates. `.env` and `.mcp.json` are gitignored for this reason.
 - Review what an agent proposes before approving a destructive tool call.
-- Keep the MCP-level `confirm: true` requirement on delete tools; backend
-  non-interactive confirmation is permitted only after that check succeeds.
+- Deletes always require form elicitation confirmation; `confirm: true` does
+  not skip it, and the shipped HTTP host refuses deletes because it supplies
+  no trusted caller identity (see
+  [design notes](docs/design.md#elicitation-for-deletion-confirmation)).
 - For remote hosting, require Entra/Easy Auth and audience validation. A
   function key alone is not production caller authentication.
 - Configure explicit host and browser-origin allowlists, edge rate limits, and

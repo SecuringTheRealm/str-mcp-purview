@@ -14,7 +14,7 @@ mock.module("../src/graph.js", { namedExports: { appOnly: false, graphGet: async
 const { capabilities, validateRegistry } = await import("../src/capabilities/registry.js");
 const { createProjection, searchCapabilities, toolMode } = await import("../src/mcp/projection.js");
 const { executeCapability } = await import("../src/dispatch/execute.js");
-const { filterCapabilities } = await import("../src/retrieval/filters.js");
+const { filterCapabilities, policyFromEnvironment } = await import("../src/retrieval/filters.js");
 
 test("registry rejects missing metadata, unresolved handlers and colliding aliases", () => {
   assert.equal(validateRegistry(capabilities), capabilities);
@@ -45,7 +45,8 @@ test("domain, action and destructive filters run before ranking", () => {
 test("mode projections carry conservative annotations and honour read-only policy", () => {
   assert.equal(createProjection({ mode: "compact" }).tools.find((t) => t.name === "purview_manage_dlp").annotations.destructiveHint, true);
   assert.equal(createProjection({ mode: "compact", policy: { readOnly: true } }).tools.some((t) => t.name.includes("manage")), false);
-  assert.throws(() => toolMode("typo"), /Invalid/);
+  assert.throws(() => toolMode("typo"), /PURVIEW_TOOL_MODE must be/);
+  assert.equal(toolMode(" Compact "), "compact");
 });
 
 test("all projections preserve PowerShell parameters, Graph reads and pagination", async () => {
@@ -82,4 +83,11 @@ test("execution cannot bypass policy, closed schemas or delete confirmation", as
   const compact = createProjection({ mode: "compact" });
   await assert.rejects(() => compact.call("purview_dlp", { operation: "remove_dlp_rule", arguments: { identity: "x", confirm: true } }), /Invalid arguments/);
   assert.equal(calls.length, before);
+});
+
+test("safety switches accept common spellings and stop on anything else", () => {
+  for (const value of ["true", "1", "YES", " True "]) assert.equal(policyFromEnvironment({ PURVIEW_READ_ONLY: value }).readOnly, true);
+  for (const value of ["false", "0", "no"]) assert.equal(policyFromEnvironment({ PURVIEW_ALLOW_DESTRUCTIVE: value }).allowDestructive, false);
+  assert.deepEqual([policyFromEnvironment({}).readOnly, policyFromEnvironment({}).allowDestructive], [false, true]);
+  assert.throws(() => policyFromEnvironment({ PURVIEW_READ_ONLY: "on" }), /PURVIEW_READ_ONLY must be true or false/);
 });

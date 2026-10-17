@@ -1,7 +1,5 @@
 # Tools, prompts and resources
 
-> Moved from the README. Setup lives in [README.md](../README.md).
-
 ## How the tools work
 
 All tools return compact, token-efficient output. List tools return one line per result; detail tools return structured markdown. This is intentional — the server is designed to be lean so tool responses do not consume large portions of your context window.
@@ -22,8 +20,8 @@ Set `PURVIEW_TOOL_MODE` to choose the MCP surface. All modes use the same capabi
 
 | Mode | Visible tools (unrestricted) | Intended use |
 | --- | ---: | --- |
-| `full` | 37 | Existing deployments, diagnostics and detailed schemas |
-| `compact` | 8 | Recommended for new agent configurations |
+| `full` (default) | 37 | Existing deployments, diagnostics and detailed schemas |
+| `compact` | 8 | **Recommended** for new agent configurations |
 | `dispatcher` | 3 | Minimal surface for a growing capability catalogue |
 
 The default remains **full** so existing clients retain their operation names. The catalogue includes ten service-side auto-label capabilities and `get_auth_status` for local configuration diagnostics. To migrate, set `PURVIEW_TOOL_MODE=compact`, restart the server and refresh the client's tool discovery. No authentication or startup-command changes are needed. The detailed tools documented below become internal operation IDs in compact/dispatcher mode, not individually advertised tools.
@@ -47,7 +45,7 @@ Generic stdio configuration (merge your existing authentication environment):
 }
 ```
 
-For dispatcher mode, change only the mode value to `dispatcher`. The same environment settings apply to containers and the Functions host; `functions/local.settings.json.example` opts new deployments into compact mode. `PURVIEW_TOOL_LIMIT` caps search candidates (default 8, allowed 1–20); it does not limit the number of registered tools.
+For dispatcher mode, change only the mode value to `dispatcher`. The same environment settings apply to containers and the Functions host; `functions/local.settings.json.example` opts new deployments into compact mode. `PURVIEW_TOOL_LIMIT` caps search candidates; it does not limit the number of registered tools. Both variables are listed under [Environment variables](#environment-variables).
 
 Example compact workflow:
 
@@ -78,21 +76,29 @@ Migration from the earlier compact/dispatcher surface: refresh tool discovery an
 - OneDrive exclusions map to `ExceptIfOneDriveSharedBy`, not the obsolete `OneDriveLocationException` family. Create accepts user UPNs or `All`, not site URLs. Set reads the policy first, merges user additions/removals and preserves unrelated scope entries. Inclusion and exclusion scopes cannot coexist. Ambiguous edits, legacy site-based policies, unresolved identities and removal of the last inclusion are rejected rather than silently changing coverage. Use `remove_locations.onedrive:["All"]` to disable the location explicitly. Read/modify/write is not transactional against changes made by other administrators; avoid concurrent edits. [OneDrive scope contract](https://learn.microsoft.com/powershell/module/exchangepowershell/set-dlpcompliancepolicy#-onedrivesharedby).
 - SharePoint, Teams and Endpoint exclusions require an effective `All` location scope. Sender/recipient (`from`, `sent_to`) exceptions read the parent policy and require Exchange-only scope before mutation. Content-property exceptions require `Property:value1,value2` syntax. [Exception constraints](https://learn.microsoft.com/powershell/module/exchangepowershell/new-dlpcompliancerule#-exceptiffrom).
 
+### Environment variables
+
+Read once from the server's process environment, on stdio and HTTP alike. Auth variables are in [auth.md](auth.md#auth-environment-variables); HTTP host variables are in [hosting.md](hosting.md#http-host-environment-variables).
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `PURVIEW_TOOL_MODE` | `full` | `full`, `compact` or `dispatcher`. Any other value is an error. |
+| `PURVIEW_TOOL_LIMIT` | `8` | Search candidates returned by `purview_search` / `purview_search_capabilities`; integer 1-20. |
+| `PURVIEW_READ_ONLY` | `false` | `true` denies every write capability. |
+| `PURVIEW_ALLOW_DESTRUCTIVE` | `true` | `false` denies capabilities marked destructive (deletes and `set_*` updates). |
+| `PURVIEW_ALLOWED_CAPABILITIES` | unset (all allowed) | Comma-separated canonical IDs. Set but empty denies all. |
+| `PURVIEW_ALLOWED_DOMAINS` | unset (all allowed) | Comma-separated `labels`, `dlp`, `classification`, `auth`. Set but empty denies all. |
+| `PURVIEW_PERMISSIONS` | unset (not checked) | Trusted permission labels matched against capability metadata. |
+| `PURVIEW_SCOPES` | unset (not checked) | Trusted Microsoft scope names matched against declared alternatives. |
+| `PURVIEW_FEATURES` | unset (none enabled) | Enabled feature flags for feature-gated capabilities. |
+
+`PURVIEW_READ_ONLY` and `PURVIEW_ALLOW_DESTRUCTIVE` accept `true`/`false` (also `1`/`0`, `yes`/`no`, case-insensitive); any other value stops the server at startup.
+
 ### Capability policies and retrieval
 
 Retrieval runs entirely in-process: permission/domain/action/risk filtering, then deterministic BM25 with ID/alias, domain and verb boosts. There is no routing LLM, vector database, network search or new dependency. The client model chooses among the candidates and supplies arguments; the server resolves the exact ID and validates the original schema before calling Graph or PowerShell. Unknown fields, denied operations and mismatched compact domains are rejected.
 
-Optional server-side restrictions:
-
-| Environment variable | Meaning |
-| --- | --- |
-| `PURVIEW_ALLOWED_CAPABILITIES` | Comma-separated canonical IDs; unset allows all, empty denies all |
-| `PURVIEW_ALLOWED_DOMAINS` | Comma-separated `labels`, `dlp`, `classification`, `auth` |
-| `PURVIEW_READ_ONLY=true` | Deny all writes |
-| `PURVIEW_ALLOW_DESTRUCTIVE=false` | Deny capabilities marked destructive |
-| `PURVIEW_PERMISSIONS` | Trusted permission labels matched against capability metadata |
-| `PURVIEW_SCOPES` | Trusted Microsoft scope names matched against declared alternatives |
-| `PURVIEW_FEATURES` | Enabled feature flags for feature-gated capabilities |
+Server-side restrictions are set through the environment variables [listed above](#environment-variables).
 
 These restrictions apply to discovery, retrieval and execution; resources cannot bypass them. Unset permission/scope lists defer to backend authorization. Currently Graph policy settings declare delegated/application scope alternatives; PowerShell operations still rely on Microsoft's tenant RBAC, not an inferred role list. Configuration values do **not** grant Microsoft permissions, and the HTTP host does not automatically turn caller claims into capability scopes. A trusted embedding host can pass `capabilityPolicy` to `createServer`; it is intersected with server restrictions, never widened by tool arguments. Permission-sensitive discovery is privately cached with zero TTL.
 

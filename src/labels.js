@@ -3,12 +3,8 @@
 
 import { graphGet, appOnly } from "./graph.js";
 import { powershell } from "./powershell.js";
-import { truncate, bulletFields, shortDate, formatWriteResult } from "./format.js";
+import { truncate, bulletFields, shortDate, identityKey } from "./format.js";
 import { asArray } from "./util.js";
-
-// Re-exported so index.js can call labels.formatWriteResult for the label
-// write tools (shared implementation lives in format.js).
-export { formatWriteResult };
 
 // App-only tokens have no /me/, so the Graph policy-settings read switches to
 // the tenant-wide informationProtection path in that mode.
@@ -40,10 +36,6 @@ const LABEL_READ_PROPS = [
 ];
 
 // ---- data access -----------------------------------------------------------
-
-function identityKey(value) {
-  return String(value ?? "").trim().toLowerCase();
-}
 
 /** Normalise Get-Label output into a stable cross-plane public model. */
 export function normalizeLabel(raw, knownLabels = []) {
@@ -356,6 +348,3 @@ export function formatLabelProtectionSettings(label) {
   }
   return lines.join("\n");
 }
-
-// Re-exported so index.js can reference the shared helper without another import.
-export { shortDate };

@@ -235,7 +235,7 @@ test("Azure Functions streamable HTTP host", async (t) => {
 
       const malformed = await fetch(`${base}/mcp`, {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: { "content-type": "application/json", accept: "application/json, text/event-stream" },
         body: "{",
       });
       assert.equal(malformed.status, 400);
@@ -277,6 +277,8 @@ test("Azure Functions streamable HTTP host", async (t) => {
       withHttpServer(async () => {}, "full", { MCP_HTTP_HOST: "0.0.0.0", MCP_ALLOWED_HOSTS: "" }),
       /exited early/
     );
+    // A mistyped setting fails at startup, not as a 500 on every request.
+    await assert.rejects(withHttpServer(async () => {}, "compct"), /exited early/);
   });
 
   await t.test("on a non-loopback bind, loopback Host values need an explicit allowlist", async () => {

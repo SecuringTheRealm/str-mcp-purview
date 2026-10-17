@@ -80,11 +80,10 @@ test("copilotLocations maps tenant-wide and per-user inclusions", () => {
   ]);
 });
 
-test("copilotCondition maps SITs and labels and rejects missing or mixed conditions", () => {
+test("copilotCondition maps SITs and labels and rejects a missing condition", () => {
   assert.deepEqual(dlp.copilotCondition({ sits: ["Credit Card Number"] }), [{ Name: "Credit Card Number" }]);
   assert.deepEqual(dlp.copilotCondition({ labels: ["guid-1", "guid-2"] }), [{ operator: "And", groups: [{ operator: "Or", name: "Default", labels: [{ name: "guid-1", type: "Sensitivity" }, { name: "guid-2", type: "Sensitivity" }] }] }]);
-  assert.throws(() => dlp.copilotCondition({ sits: ["x"], labels: ["y"] }), /cannot combine/);
-  assert.throws(() => dlp.copilotCondition({}), /needs a condition/);
+  assert.throws(() => dlp.copilotCondition({}), { code: "VALIDATION_ERROR", message: /needs a condition/ });
 });
 
 test("SIT conditions keep the string form and map confidence to numeric bounds in a grouped OR", () => {
@@ -217,4 +216,45 @@ test("scope validation fails closed on missing workloads and requires All for ex
   assert.throws(() => assertExchangeOnly(undefined), /verified Exchange-only/);
   assert.throws(() => assertLocationExceptions({ TeamsLocationException: ["a@contoso.com"] }), /All scope/);
   assert.doesNotThrow(() => assertLocationExceptions({ AddTeamsLocationException: ["a@contoso.com"] }, { TeamsLocation: ["All"] }));
+});
+
+test("set tools reject arguments that map to no change instead of reporting success", async () => {
+  const p = createProjection({ mode: "full" });
+  for (const [id, args] of [
+    ["set_dlp_rule", { identity: "R1", notify_user: [], endpoint_restrictions: [], exceptions: { from: [] } }],
+    ["set_dlp_policy", { identity: "P1", add_locations: { teams: [] } }],
+  ]) {
+    calls.length = 0;
+    await assert.rejects(p.call(id, args), { code: "VALIDATION_ERROR", message: /No changes supplied/ });
+    assert.equal(calls.length, 0);
+  }
+});
+
+test("an empty comment clears the policy comment rather than being dropped", async () => {
+  await createProjection({ mode: "full" }).call("set_dlp_policy", { identity: "P1", comment: "" });
+  assert.deepEqual(calls.at(-1).params, { Identity: "P1", Comment: "" });
+});
+
+test("Copilot block_web_search rejects a sensitivity-label condition", async () => {
+  const p = createProjection({ mode: "full" });
+  await assert.rejects(p.call("create_copilot_dlp_rule", { name: "R", policy: "P", sensitivity_labels: ["guid-1"], action: "block_web_search" }), { code: "VALIDATION_ERROR", message: /block_web_search/ });
+  assert.equal(calls.length, 0);
+  await p.call("create_copilot_dlp_rule", { name: "R", policy: "P", sensitivity_labels: ["guid-1"] });
+  await p.call("create_copilot_dlp_rule", { name: "R", policy: "P", sensitive_information_types: ["Credit Card Number"], action: "block_web_search" });
+  assert.equal(calls.at(-1).params.RestrictWebGrounding, true);
+});
+
+test("handler validation failures carry VALIDATION_ERROR, not BACKEND_ERROR", async () => {
+  const p = createProjection({ mode: "full" });
+  for (const [id, args] of [
+    ["create_endpoint_dlp_rule", { name: "R", policy: "P", endpoint_restrictions: [{ activity: "Print", action: "Block" }] }],
+    ["set_dlp_rule", { identity: "R1", sensitive_information_types: [{ name: "Credit Card Number", min_count: 5, max_count: 2 }] }],
+    ["get_dlp_rule", { identity: "" }],
+    ["create_copilot_dlp_rule", { name: "R", policy: "P", sensitive_information_types: [] }],
+    ["create_copilot_dlp_rule", { name: "R", policy: "P", sensitive_information_types: ["x"], sensitivity_labels: ["y"] }],
+  ]) {
+    calls.length = 0;
+    await assert.rejects(p.call(id, args), { code: "VALIDATION_ERROR" }, id);
+    assert.ok(calls.every((c) => c.cmdlet.startsWith("Get-")), id);
+  }
 });

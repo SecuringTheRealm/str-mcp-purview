@@ -1,6 +1,6 @@
 import * as auto from "../auto-labels.js";
 import { pageResult } from "./shared.js";
-const result = value => ({ content: [{ type: "text", text: JSON.stringify(value) }], structuredContent: value });
+import { capabilityResult as result } from "./results.js";
 const wanted = (values, identity) => values.some(v => String(v?.Guid ?? v?.Name ?? v ?? "").toLowerCase() === identity.toLowerCase());
 export const handlers = {
   list_auto_label_policies: async args => {

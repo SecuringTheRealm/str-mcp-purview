@@ -1,7 +1,5 @@
 # Authentication
 
-> Moved from the README. Setup lives in [README.md](../README.md).
-
 ## Authentication flow
 
 The two auth planes sign in independently:
@@ -13,16 +11,7 @@ The two auth planes sign in independently:
 
 ### Local setup (default)
 
-1. **App registration:** add the **delegated** permission **Office 365 Exchange Online → Exchange → `Exchange.ManageV2`** and grant admin consent. Without it, token acquisition fails with `AADSTS650057: Invalid resource`. This is a *different* permission from the app-only `Exchange.ManageAsApp` used by the [unattended paths](#unattended-and-hosted-setup) below — delegated and app-only are not interchangeable here.
-2. **Configure the server** with your tenant and app registration:
-
-```jsonc
-"env": {
-  "AZURE_TENANT_ID": "<tenant-id>",
-  "AZURE_CLIENT_ID": "<client-id>",
-  "PURVIEW_ORGANIZATION": "<tenant>.onmicrosoft.com"
-}
-```
+Follow the README: [register the app (step 1)](../README.md#1-register-the-microsoft-entra-app) and [provide the tenant and client IDs (step 4)](../README.md#4-provide-the-tenant-and-client-ids). The delegated `Exchange.ManageV2` permission (README step 1.4) is required: without it token acquisition fails with `AADSTS650057: Invalid resource`. It is a *different* permission from the app-only `Exchange.ManageAsApp` used by the [unattended paths](#unattended-and-hosted-setup) below; delegated and app-only are not interchangeable here.
 
 The first DLP call does one interactive sign-in **in Node** (browser, or device code via `PURVIEW_AUTH_MODE=devicecode`) to acquire the token; the pwsh child connects silently with it, and the token refreshes automatically as it expires. Conditional Access, MFA and device compliance all still apply, because the token belongs to *you*.
 
@@ -68,7 +57,7 @@ The existing delegated token scope default is retained. For app-only token injec
 
 **DLP calls hang or time out.** Two causes, in order of likelihood. First, an interactive sign-in is waiting on a browser window you never saw open — complete it, or switch to `PURVIEW_AUTH_MODE=devicecode` and read the code from the server's stderr. Second, you are in interactive DLP mode on a console-less host — unset `PURVIEW_DLP_AUTH_MODE` to return to the default token mode.
 
-**`AADSTS650057: Invalid resource`.** The app registration lacks the Office 365 Exchange Online permission — add it and grant consent (step 1 above).
+**`AADSTS650057: Invalid resource`.** The app registration lacks the Office 365 Exchange Online permission; add it and grant consent ([README step 1.4](../README.md#1-register-the-microsoft-entra-app)).
 
 **`Unexpected character encountered while parsing value: <`.** The Security & Compliance endpoint answered with an HTML error page instead of JSON, which is what a rejected or lapsed access token usually looks like from inside the module. The bridge reconnects and retries this automatically for read tools; for writes it surfaces the error rather than risk applying a change twice.
 

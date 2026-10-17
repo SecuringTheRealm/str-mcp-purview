@@ -365,11 +365,9 @@ test("PowerShellBridge.invoke", async (t) => {
     if (savedConnectTimeout == null) delete process.env.PURVIEW_CONNECT_TIMEOUT_MS;
     else process.env.PURVIEW_CONNECT_TIMEOUT_MS = savedConnectTimeout;
 
-    // spawn() itself always returns a ChildProcess synchronously (even for a
-    // missing executable) and reports failure asynchronously via the 'error'
-    // event handled in #ensureProc. The 'error' handler clears this.proc; the
-    // in-flight request then hits its execution timeout since no frame ever
-    // arrives.
+    // spawn() returns a ChildProcess even for a missing executable and reports
+    // the failure later via 'error'. The in-flight request must fail on that
+    // event with a clear message, not wait out its timeout.
     spawnImpl = () => {
       lastProc = new FakeChildProcess();
       setImmediate(() => lastProc.emit("error", new Error("spawn pwsh ENOENT")));
@@ -378,7 +376,7 @@ test("PowerShellBridge.invoke", async (t) => {
 
     await assert.rejects(
       () => bridge.invoke("Get-DlpCompliancePolicy", {}),
-      /PowerShell command timed out/
+      /could not be started \(spawn pwsh ENOENT\)/
     );
   });
 });
@@ -462,6 +460,25 @@ test("PowerShellBridge auth-expiry retry", async (t) => {
     assert.equal(connects.length, 2);
   });
 
+  await t.test("two callers that both hit an expired token share one reconnect", async () => {
+    const bridge = await freshBridge("auth-retry-shared");
+    useFakes();
+    const a = bridge.invoke("Get-DlpCompliancePolicy", { Identity: "A" });
+    const b = bridge.invoke("Get-DlpCompliancePolicy", { Identity: "B" });
+    await connected();
+    lastProc.respondErr("The access token has expired."); // A
+    await tick();
+    lastProc.respondErr("The access token has expired."); // B
+    await tick();
+    lastProc.respondOk("connected");
+    await tick();
+    lastProc.respondOk({ Name: "A" });
+    await tick();
+    lastProc.respondOk({ Name: "B" });
+    assert.deepEqual([await a, await b], [{ Name: "A" }, { Name: "B" }]);
+    assert.equal(lastProc.writes.join("").match(/^Connect-IPPSSession -/gm).length, 2, "initial connect plus one shared reconnect");
+  });
+
   await t.test("retries a READ when the module chokes on a non-JSON error page", async () => {
     // What a rejected token actually looks like in practice: the endpoint
     // answers with HTML and the module's JSON reader fails on it. Observed
@@ -505,8 +522,8 @@ test("PowerShellBridge auth-expiry retry", async (t) => {
 
       const invokePromise = bridge.invoke("New-DlpComplianceRule", { Name: "R1" });
       await connected(procs[0]);
-      // Never respond to the cmdlet: it times out.
-      await assert.rejects(() => invokePromise, /timed out/);
+      // Never respond to the cmdlet: it times out, and the agent is told it may have applied.
+      await assert.rejects(() => invokePromise, /timed out.*may already have applied/s);
 
       // Exactly one New-DlpComplianceRule was ever written — no silent re-run.
       const writes = procs.map((p) => p.writes.join("")).join("");

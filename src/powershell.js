@@ -135,7 +135,7 @@ const PLATFORM_ERROR =
   "The DLP and sensitivity-label configuration tools need Security & Compliance PowerShell " +
   "(Connect-IPPSSession), which Microsoft only supports on Windows — it is not " +
   "available in PowerShell 7 on macOS or Linux. The Graph-backed label-policy-settings " +
-  "tool still works on this platform. See README → 'Platform support'. " +
+  "tool and get_auth_status still work on this platform. " +
   "Set PURVIEW_ALLOW_UNSUPPORTED_OS=1 to attempt the connection anyway.";
 
 // Derive the tenant org domain (Connect-IPPSSession -Organization) from the
@@ -238,6 +238,7 @@ class PowerShellBridge {
         clearTimeout(timer);
         proc.stdout.off("data", onData);
         proc.off("exit", onExit);
+        proc.off("error", onError);
         fn(value);
       };
       const timer = setTimeout(() => {
@@ -259,6 +260,9 @@ class PowerShellBridge {
       }, timeoutMs);
       const onExit = () => {
         settle(reject, bridgeError("The PowerShell process exited before responding. The next call will start a fresh session."));
+      };
+      const onError = (err) => {
+        settle(reject, bridgeError(`PowerShell could not be started (${err.message}). Install PowerShell 7 or set PURVIEW_PWSH to its path.`));
       };
       const onData = (chunk) => {
         buffer += chunk.toString();
@@ -285,6 +289,7 @@ class PowerShellBridge {
       };
       proc.stdout.on("data", onData);
       proc.on("exit", onExit);
+      proc.on("error", onError);
 
       try {
         proc.stdin.write(wrapScript(script, START, END));
@@ -425,7 +430,8 @@ class PowerShellBridge {
    * @param {string[]} [selectProps]  If given, pipe through Select-Object to trim output.
    */
   async invoke(cmdlet, params = {}, selectProps = null, retried = false) {
-    await this.#ensureConnected();
+    const connection = this.#ensureConnected();
+    await connection;
     try {
       return await this.#enqueue(cmdletScript(cmdlet, params, selectProps));
     } catch (err) {
@@ -434,10 +440,14 @@ class PowerShellBridge {
       // (which mints a fresh token) before giving up.
       // A command refused because the session was reset never ran: same retry.
       if (!retried && (err.notStarted || isAuthExpiry(err, cmdlet))) {
-        // After a reset the timeout already cleared `connecting`; clearing it
-        // again would discard a reconnect another queued caller just started.
-        if (!err.notStarted) this.connecting = null;
+        // Only drop the session this call used: another caller may already
+        // have started a reconnect, and clearing that would run a second one.
+        if (this.connecting === connection) this.connecting = null;
         return this.invoke(cmdlet, params, selectProps, true);
+      }
+      // A write that timed out or lost its process may still have applied.
+      if (err.bridge && !/^get-/i.test(cmdlet)) {
+        err.message += " The change may already have applied: read the object before retrying.";
       }
       throw err;
     }

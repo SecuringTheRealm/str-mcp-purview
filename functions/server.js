@@ -8,7 +8,7 @@
 // Auth in this hosting mode must be app-only (no human to sign in):
 //   Graph — AZURE_CLIENT_CERTIFICATE_PATH (+ AZURE_TENANT_ID/AZURE_CLIENT_ID).
 //   DLP/label-write — PURVIEW_APP_ID + PURVIEW_ORGANIZATION + PURVIEW_CERT_*.
-// See README → "Hosting on Azure Functions". Endpoint access itself is gated
+// See docs/hosting.md. Endpoint access itself is gated
 // by the Functions key (host.json DefaultAuthorizationLevel "function"); use
 // built-in auth (Easy Auth) as well for anything beyond a demo.
 
@@ -54,33 +54,17 @@ const allowedOrigins = new Set(
     .map((origin) => origin.trim())
     .filter(Boolean)
 );
+// Build one server now, so a bad setting such as PURVIEW_TOOL_MODE fails at
+// startup rather than as an opaque 500 on every request.
+createServer({ transport: "http" });
 const mcpHandler = createMcpHandler(
   (context) => createServer({ ...context, transport: "http" }),
   { responseMode: "json" }
 );
-const handleMcp = toNodeHandler(mcpHandler);
+const handleMcp = toNodeHandler(mcpHandler, { maxRequestBodySize: MAX_BODY_BYTES });
 
 function rpcError(code, message) {
   return JSON.stringify({ jsonrpc: "2.0", error: { code, message }, id: null });
-}
-
-function readBody(req) {
-  return new Promise((resolve, reject) => {
-    let size = 0;
-    const chunks = [];
-    req.on("data", (chunk) => {
-      size += chunk.length;
-      if (size > MAX_BODY_BYTES) {
-        // Stop reading but keep the socket, so the caller gets a 413 back.
-        req.pause();
-        reject(Object.assign(new Error("Request body too large."), { status: 413 }));
-        return;
-      }
-      chunks.push(chunk);
-    });
-    req.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
-    req.on("error", reject);
-  });
 }
 
 async function handle(req, res) {
@@ -112,45 +96,16 @@ async function handle(req, res) {
     res.writeHead(403, { "content-type": "application/json" }).end(rpcError(-32000, "Origin is not allowed."));
     return;
   }
-  // Compare the media type itself, so `application/jsonp` and similar are refused
-  // while parameters such as `; charset=utf-8` are still accepted.
-  const mediaType = String(req.headers["content-type"] ?? "").split(";")[0].trim().toLowerCase();
-  if (mediaType !== "application/json") {
-    res.writeHead(415, { "content-type": "application/json" }).end(rpcError(-32600, "Content-Type must be application/json."));
-    return;
-  }
-  const accept = String(req.headers.accept ?? "").toLowerCase();
-  if (accept && !accept.includes("application/json") && !accept.includes("text/event-stream") && !accept.includes("*/*")) {
-    res.writeHead(406, { "content-type": "application/json" }).end(rpcError(-32600, "Accept must allow application/json or text/event-stream."));
-    return;
-  }
-  const contentLength = Number(req.headers["content-length"] ?? 0);
-  if (Number.isFinite(contentLength) && contentLength > MAX_BODY_BYTES) {
-    res.writeHead(413, { "content-type": "application/json" }).end(rpcError(-32600, "Request body too large."));
-    return;
-  }
   if (activeRequests >= MAX_CONCURRENT_REQUESTS) {
     res.writeHead(429, { "content-type": "application/json", "retry-after": "1" }).end(rpcError(-32000, "Server is busy. Retry after one second."));
     return;
   }
 
+  // The SDK handler checks Content-Type (415), Accept (406), body size (413)
+  // and JSON syntax (400) itself.
   activeRequests += 1;
   try {
-    const raw = await readBody(req);
-    let body;
-    try {
-      body = raw ? JSON.parse(raw) : null;
-    } catch {
-      res.writeHead(400, { "content-type": "application/json" }).end(rpcError(-32700, "Malformed JSON request body."));
-      return;
-    }
-    await handleMcp(req, res, body);
-  } catch (err) {
-    if (err.status === 413 && !res.headersSent) {
-      res.writeHead(413, { "content-type": "application/json", connection: "close" }).end(rpcError(-32600, "Request body too large."));
-      return;
-    }
-    throw err;
+    await handleMcp(req, res);
   } finally {
     activeRequests -= 1;
   }
@@ -186,5 +141,8 @@ async function shutdown() {
   ]);
 }
 
-process.on("SIGINT", () => void shutdown());
-process.on("SIGTERM", () => void shutdown());
+// Exit explicitly: a live pwsh child keeps the event loop open, and exiting
+// closes its stdin, which ends it.
+const stop = () => void shutdown().finally(() => process.exit(0));
+process.on("SIGINT", stop);
+process.on("SIGTERM", stop);
