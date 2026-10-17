@@ -34,20 +34,20 @@ The existing delegated token scope default is retained. For app-only token injec
 
 | Variable | Plane | Default | Purpose |
 | --- | --- | --- | --- |
-| `PURVIEW_AUTH_MODE` | Both | `interactive` | `devicecode` signs in with a URL + code instead of a browser popup. `managedidentity` uses the host's managed identity (no secret at rest). Chooses the credential for **both** planes. |
+| `PURVIEW_AUTH_MODE` | Both | `interactive` | `interactive`, `devicecode` or `managedidentity` (case-insensitive); any other value stops the server. `devicecode` signs in with a URL + code instead of a browser popup. `managedidentity` uses the host's managed identity (no secret at rest). Chooses the credential for **both** planes. |
 | `AZURE_REDIRECT_URI` | Both | `http://localhost` | Redirect URI for the interactive browser flow. |
 | `AZURE_CLIENT_CERTIFICATE_PATH` | Both | *(none)* | Switches the credential to **certificate app-only**. The Graph label-policy-settings read then uses the tenant-wide path and needs `InformationProtectionPolicy.Read.All`. |
 | `PURVIEW_ORGANIZATION` | DLP | *(from token)* | Your `<tenant>.onmicrosoft.com` domain for `-Organization`. Derived from the token's `upn` claim if unset. |
 | `PURVIEW_EXO_SCOPE` | DLP | `https://outlook.office365.com/.default` | Resource scope for the Security & Compliance access token. |
-| `PURVIEW_DLP_AUTH_MODE` | DLP | `token` | `token` injects a Node-acquired access token into `Connect-IPPSSession` — the only mode that works from this server. `interactive` lets pwsh sign in itself; see the warning above. |
+| `PURVIEW_DLP_AUTH_MODE` | DLP | `token` | `token` or `interactive` (case-insensitive); any other value stops the server. `token` injects a Node-acquired access token into `Connect-IPPSSession`, the only mode that works from this server. `interactive` lets pwsh sign in itself; see the warning above. |
 | `PURVIEW_APP_ID` + `PURVIEW_CERT_THUMBPRINT` | DLP | *(none)* | With `PURVIEW_ORGANIZATION`, uses cmdlet-native certificate app-only auth (Windows cert store). |
 | `PURVIEW_UPN` | DLP | *(none)* | Interactive mode only: pre-fills the account for `Connect-IPPSSession`. |
 | `PURVIEW_ENABLE_WAM` | DLP | *(off)* | Interactive mode only: `1` uses the Windows WAM broker (needs a desktop host). |
-| `PURVIEW_SIGNIN_TIMEOUT_MS` | DLP | *(as connect)* | Bound on acquiring the access token in Node — i.e. how long an unanswered interactive sign-in can block the tool call. |
-| `PURVIEW_CONNECT_TIMEOUT_MS` | DLP | `300000` | Timeout budget for the connect step in `pwsh` (module import + session handshake). Does not cover the sign-in above, which happens first. |
-| `PURVIEW_EXEC_TIMEOUT_MS` | DLP | `60000` | Per-cmdlet timeout once connected. On timeout the pwsh session is reset; the next call reconnects. |
+| `PURVIEW_SIGNIN_TIMEOUT_MS` | DLP | the connect timeout (`60000` on the HTTP host) | Positive integer, otherwise the server stops. Bound on acquiring the access token in Node, i.e. how long an unanswered interactive sign-in can block the tool call. |
+| `PURVIEW_CONNECT_TIMEOUT_MS` | DLP | `300000` (`90000` on the HTTP host) | Positive integer, otherwise the server stops. Timeout budget for the connect step in `pwsh` (module import + session handshake). Does not cover the sign-in above, which happens first. |
+| `PURVIEW_EXEC_TIMEOUT_MS` | DLP | `60000` | Positive integer, otherwise the server stops. Per-cmdlet timeout once connected. On timeout the pwsh session is reset; the next call reconnects. |
 | `PURVIEW_PWSH` | DLP | `pwsh` | Path to the PowerShell 7+ executable. |
-| `PURVIEW_ALLOW_UNSUPPORTED_OS` | DLP | *(off)* | Set to `1` to attempt `Connect-IPPSSession` on macOS/Linux despite Microsoft not supporting it there. |
+| `PURVIEW_ALLOW_UNSUPPORTED_OS` | DLP | *(off)* | Set to `1` to attempt `Connect-IPPSSession` on macOS/Linux despite Microsoft not supporting it there. Needed in the [container image](hosting.md#container-image). |
 
 > **`PURVIEW_DLP_AUTH_MODE=interactive` does not work on this server** and is not the default. It asks the `pwsh` child to run its own sign-in, but that child is spawned with piped stdio and has no console: WAM fails with *"A window handle must be configured"*, and the `-DisableWAM` browser fallback hangs until the connect timeout. It is retained only for a host that gives `pwsh` a real console.
 

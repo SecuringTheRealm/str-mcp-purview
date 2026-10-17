@@ -36,11 +36,11 @@ Insider Risk, Communications Compliance and DSPM are not covered yet; see [ROADM
 ## Prerequisites
 
 - **Node.js 20+**.
-- **Windows with PowerShell 7+** and the Exchange Online module. Run this inside `pwsh` (PowerShell 7), not Windows PowerShell 5.1, which would install the module where `pwsh` cannot see it:
+- **Windows with PowerShell 7.4 or 7.5** and the Exchange Online module. Run this inside `pwsh` (PowerShell 7), not Windows PowerShell 5.1, which would install the module where `pwsh` cannot see it. The tool error repeats this command if the module is missing:
   ```powershell
   Install-Module ExchangeOnlineManagement -RequiredVersion 3.9.2 -Scope CurrentUser
   ```
-  The default token sign-in needs 3.8.0 or later (certificate and interactive modes need 3.2.0). 3.9.2 is pinned because module 3.10+ requires PowerShell 7.6 (the `Containerfile` pins PowerShell 7.5 with 3.9.2). PowerShell 7.5+ is recommended: on 7.4 an ISO timestamp in a text field such as a comment is turned into a date.
+  The default token sign-in needs 3.8.0 or later (certificate and interactive modes need 3.2.0). 3.9.2 is pinned because module 3.10+ requires PowerShell 7.6 (the `Containerfile` pins PowerShell 7.5 with 3.9.2). PowerShell 7.5 is recommended: on 7.4 an ISO timestamp in a text field such as a comment is turned into a date.
 - A **Microsoft 365 tenant** where you (or an admin) can register an app and grant consent.
 - An **admin account** with the Purview role for the tools you'll use (step 2).
 
@@ -89,7 +89,7 @@ The server reads `AZURE_TENANT_ID`, `AZURE_CLIENT_ID` and `PURVIEW_ORGANIZATION`
 [System.Environment]::SetEnvironmentVariable("AZURE_CLIENT_ID", "<client-id>", "User")
 ```
 
-Every other variable is optional; see [docs/auth.md](docs/auth.md#auth-environment-variables).
+Every other variable is optional; see [docs/auth.md](docs/auth.md#auth-environment-variables). A bad value stops the server at startup with a message naming it (it does not fall back to a default).
 
 ### 5. Register the server with your MCP host
 
@@ -145,9 +145,11 @@ Both prompts are read-only. Details: [docs/tools.md](docs/tools.md#prompts).
 
 - Every action runs as the signed-in admin and is limited by that account's Purview RBAC.
 - **Deletes** always show a confirmation form naming the tenant and the resolved object. Declining, cancelling, or a client without form support means nothing is deleted. `confirm: true` cannot skip it ([how it works](docs/design.md#elicitation-for-deletion-confirmation)).
-- **Deletes over HTTP need a verified caller.** The HTTP host refuses them unless `MCP_TRUST_EASY_AUTH=true` and App Service Authentication supplies the caller's Entra identity, which the confirmation is bound to. Deletion always works over stdio ([why](docs/design.md#elicitation-for-deletion-confirmation)).
+- **Deletes over HTTP need a verified caller and an MCP 2026-07-28 client.** The HTTP host refuses them unless `MCP_TRUST_EASY_AUTH=true` behind App Service Authentication, which supplies the Entra identity the confirmation is bound to. 2025-era stateless HTTP carries no client capabilities, so a form is impossible there. Deletion always works over stdio ([HTTP details](docs/hosting.md#deleting-over-http)).
 - `PURVIEW_READ_ONLY` and `PURVIEW_ALLOW_DESTRUCTIVE` take `true`/`false` (also `1`/`0`, `yes`/`no`, case-insensitive); any other value stops the server at startup. `PURVIEW_ALLOWED_CAPABILITIES` and related settings narrow it further ([environment variables](docs/tools.md#environment-variables)).
-- New DLP policies start in `TestWithNotifications` (reported, not blocked) unless you ask for `Enable`. Other creates and every set apply immediately.
+- New DLP policies start in `TestWithNotifications` (reported, not blocked) unless you ask for `Enable`, and `create_auto_label_policy` creates the policy `Disabled`. Other creates and every set apply immediately.
+- Failed calls return a code: only `BUSY` is `retryable`, and after `OUTCOME_UNCERTAIN` a write may have applied, so read before retrying ([error codes](docs/tools.md#error-codes)).
+- On stdio the server exits once idle when the client closes stdin, so no `pwsh` session is left running.
 - Tenant data in results is untrusted input to the model. Review changes an agent proposes before approving them.
 
 ## Troubleshooting
@@ -160,6 +162,12 @@ Both prompts are read-only. Details: [docs/tools.md](docs/tools.md#prompts).
 | `AADSTS650057: Invalid resource` | The app lacks `Exchange.ManageV2`; redo step 1.4 and grant consent. |
 | `Unexpected character ... parsing value: <` | An expired or rejected token. Reads retry automatically; re-run writes after checking state. |
 | "Auth is not configured" | `AZURE_TENANT_ID` / `AZURE_CLIENT_ID` are not in the server's environment. |
+| "Deletion requires a trusted caller..." | Over HTTP, set `MCP_TRUST_EASY_AUTH=true` behind App Service Authentication ([hosting](docs/hosting.md#deleting-over-http)). |
+| "Deletion requires a client with form elicitation support" | Use a client that supports MCP 2026-07-28 form elicitation; 2025-era HTTP cannot confirm deletes. |
+| "PowerShell is busy with N commands" (`BUSY`) | Nothing was sent. Retry in a few seconds; limit is `PURVIEW_MAX_QUEUED_COMMANDS`. |
+| HTTP 401 | Easy Auth identity missing, or the caller is from another tenant than `AZURE_TENANT_ID`. |
+| HTTP 429 | More than `MCP_MAX_CONCURRENT_REQUESTS` in flight; retry after one second. |
+| Server exits at startup naming a setting | That setting is invalid (for example a non-integer timeout or an unknown capability name); fix it. |
 
 More in [docs/auth.md](docs/auth.md#troubleshooting-sign-in).
 
@@ -176,7 +184,7 @@ Uses Node's built-in `node:test` (no framework dependency), including real stdio
 | Doc | Contents |
 | --- | --- |
 | [docs/auth.md](docs/auth.md) | Sign-in flow, unattended and app-only auth, [auth variables](docs/auth.md#auth-environment-variables), troubleshooting |
-| [docs/tools.md](docs/tools.md) | All 37 tools, tool modes, DLP write corrections, capability policies, [policy variables](docs/tools.md#environment-variables), prompts, resources, workflows |
+| [docs/tools.md](docs/tools.md) | 27 of the 37 tools (labels, DLP, SITs, `get_auth_status`; the ten auto-label tools are in [docs/design.md](docs/design.md#service-side-automatic-sensitivity-labeling)), error codes, tool modes, DLP write corrections, capability policies, [policy variables](docs/tools.md#environment-variables), prompts, resources, workflows |
 | [docs/hosting.md](docs/hosting.md) | Azure Functions and container hosting (in UAT), endpoint security, [HTTP host variables](docs/hosting.md#http-host-environment-variables), pagination, logging |
 | [docs/design.md](docs/design.md) | Architecture, extending the catalogue, deletion confirmation, auto-labelling, requirement-elicitation proposal |
 | [SECURITY.md](SECURITY.md) / [ROADMAP.md](ROADMAP.md) | Reporting and remote-hosting guidance / delivery outcomes and status |

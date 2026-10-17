@@ -58,7 +58,9 @@ as a trust boundary:
 - Review what an agent proposes before approving a destructive tool call.
 - Deletes always require form elicitation confirmation; `confirm: true` does
   not skip it, and the HTTP host refuses deletes unless
-  `MCP_TRUST_EASY_AUTH=true` with Easy Auth supplying a verified caller (see
+  `MCP_TRUST_EASY_AUTH=true` with Easy Auth supplying a verified caller and
+  the client speaks MCP 2026-07-28 (see
+  [HTTP deletes](docs/hosting.md#deleting-over-http) and
   [design notes](docs/design.md#elicitation-for-deletion-confirmation)).
 - For remote hosting, require Entra/Easy Auth and audience validation. A
   function key alone is not production caller authentication.

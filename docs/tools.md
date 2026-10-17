@@ -82,18 +82,18 @@ Read once from the server's process environment, on stdio and HTTP alike. Auth v
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `PURVIEW_TOOL_MODE` | `full` | `full`, `compact` or `dispatcher`. Any other value is an error. |
-| `PURVIEW_TOOL_LIMIT` | `8` | Search candidates returned by `purview_search` / `purview_search_capabilities`; integer 1-20. |
+| `PURVIEW_TOOL_MODE` | `full` | `full`, `compact` or `dispatcher`, case-insensitive. Any other value stops the server. |
+| `PURVIEW_TOOL_LIMIT` | `8` | Search candidates returned by `purview_search` / `purview_search_capabilities`; integer 1-20, otherwise the server stops. |
 | `PURVIEW_READ_ONLY` | `false` | `true` denies every write capability. |
 | `PURVIEW_ALLOW_DESTRUCTIVE` | `true` | `false` denies capabilities marked destructive (deletes and `set_*` updates). |
-| `PURVIEW_ALLOWED_CAPABILITIES` | unset (all allowed) | Comma-separated canonical IDs. Set but empty denies all. |
-| `PURVIEW_ALLOWED_DOMAINS` | unset (all allowed) | Comma-separated `labels`, `dlp`, `classification`, `auth`. Set but empty denies all. |
+| `PURVIEW_ALLOWED_CAPABILITIES` | unset (all allowed) | Comma-separated canonical IDs. Set but empty denies all. An unknown ID stops the server. |
+| `PURVIEW_ALLOWED_DOMAINS` | unset (all allowed) | Comma-separated `labels`, `dlp`, `classification`, `auth` (case-insensitive). Set but empty denies all. An unknown domain stops the server. |
 | `PURVIEW_PERMISSIONS` | unset (not checked) | Trusted permission labels matched against capability metadata. |
 | `PURVIEW_SCOPES` | unset (not checked) | Trusted Microsoft scope names matched against declared alternatives. |
 | `PURVIEW_FEATURES` | unset (none enabled) | Enabled feature flags for feature-gated capabilities. |
-| `PURVIEW_MAX_QUEUED_COMMANDS` | `3` on HTTP, unlimited on stdio | PowerShell commands that may wait behind the running one; more are refused at once (nothing sent, safe to retry). |
+| `PURVIEW_MAX_QUEUED_COMMANDS` | `3` on HTTP, unlimited on stdio | Positive integer. PowerShell commands, and write capabilities, that may wait behind the running one. More are refused at once with `BUSY` (nothing sent; retry). A write whose caller has cancelled never starts (`CANCELLED`). |
 
-`PURVIEW_READ_ONLY` and `PURVIEW_ALLOW_DESTRUCTIVE` accept `true`/`false` (also `1`/`0`, `yes`/`no`, case-insensitive); any other value stops the server at startup.
+`PURVIEW_READ_ONLY` and `PURVIEW_ALLOW_DESTRUCTIVE` accept `true`/`false` (also `1`/`0`, `yes`/`no`, case-insensitive). Settings are checked once when the server is built at startup, on stdio and HTTP alike, and a bad value stops the server with a message naming it instead of failing each request. The same applies to the numeric, enum and secret settings in the [auth](auth.md#auth-environment-variables) and [HTTP host](hosting.md#http-host-environment-variables) tables.
 
 ### Capability policies and retrieval
 
@@ -107,7 +107,20 @@ Catalogue resources return only the first 25 items with pagination information. 
 
 An embedding host may also provide `authorizeCapability({capability, arguments})` to `createServer`. This trusted hook runs after schema validation and before the handler on **every execution**, including resource reads. It must return exactly `true`; false, missing results and exceptions deny the call. It can inspect resource identities/arguments (for example, forbid production-policy changes); it cannot widen capability permissions. Argument copies prevent hook mutations from changing the eventual operation. No new policy engine is required. This is an extension point, not a tenant policy admin interface or automatic mapping of HTTP identity claims.
 
-Tool errors retain `isError` and readable text, and now include `structuredContent.error` with `code`, `message`, and `retryable:false`. Codes distinguish `VALIDATION_ERROR`, `CAPABILITY_UNAVAILABLE` (unknown and unauthorized IDs deliberately share a response), `POLICY_DENIED`, `BACKEND_ERROR`, and unexpected `INTERNAL_ERROR`. Backend failures are conservatively non-retryable at this boundary: a failed write may already have taken effect. Existing integration-specific retry behaviour is unchanged; agents must not blindly retry mutations.
+### Error codes
+
+Tool errors keep `isError` and readable text, and add `structuredContent.error` with `code`, `message` and `retryable`. `retryable` is `true` only for `BUSY`; every other code is `false`.
+
+| Code | Meaning | What to do |
+| --- | --- | --- |
+| `BUSY` | Refused before anything was sent: too many PowerShell commands or writes already waiting (`PURVIEW_MAX_QUEUED_COMMANDS`), or the session was reset before the command started. `retryable: true`. | Retry in a few seconds. |
+| `OUTCOME_UNCERTAIN` | The command timed out or PowerShell exited before replying. A write may have applied. | Read the object before retrying; never repeat the write blindly. |
+| `CANCELLED` | The caller cancelled a write while it waited, so it never started. | Nothing was sent; ask again if still wanted. |
+| `VALIDATION_ERROR` | The arguments are wrong. Nothing was sent. | Correct them and retry. |
+| `CONFIRMATION_REQUIRED` | A delete could not be confirmed: no trusted caller, no form support, no tenant, or the review expired or the target changed. Nothing was deleted. | See [Deleting over HTTP](hosting.md#deleting-over-http), or start a new review. |
+| `BACKEND_ERROR` | Graph or PowerShell returned an error. | Read the message; check state before repeating a write. |
+
+Other codes: `CAPABILITY_UNAVAILABLE` (unknown and unauthorised IDs deliberately share a response), `POLICY_DENIED`, `INTERNAL_ERROR`, and the auto-label codes `FEATURE_UNAVAILABLE`, `TARGET_NOT_FOUND`, `SIMULATION_REQUIRED`, `REVISION_CONFLICT` and `READBACK_FAILED`. None is retryable. Reads that hit a lapsed token reconnect and retry once on their own; writes surface the error. The server's `instructions` tell agents to retry only errors marked `retryable`.
 
 Every tool below is documented two ways: **Business** — why an admin would reach
 for it and what they get back — and **Technical** — the exact Graph endpoint or
@@ -491,6 +504,25 @@ Maps to the 4 Copilot protections: block sensitive prompts *(SITs + `block_proce
 |-----------|------|--------------|
 | `scope` | string | `all` (default) or `custom` — restrict to the org's own SITs |
 | `name_contains` | string | Optional — only SITs whose name contains this text (case-insensitive) |
+
+### Diagnostics and auto-labelling
+
+#### `get_auth_status`
+
+- **Business:** Check what is configured before the first real call, without signing in. Compact mode exposes it as `purview_auth`.
+- **Technical:** Local configuration check; it never mints a token or contacts Microsoft, so it works on every platform. No parameters. Returns:
+
+| Field | Meaning |
+|-------|---------|
+| `mode` | Credential in use: `interactive`, `devicecode`, `managedidentity` or `certificate` |
+| `graph_configured` | `true` when nothing required is missing |
+| `powershell_auth` | How the PowerShell plane connects: `token`, `interactive` or `certificate` |
+| `powershell_platform_supported` | `false` on macOS/Linux unless `PURVIEW_ALLOW_UNSUPPORTED_OS=1` |
+| `missing` | Unset names among `AZURE_TENANT_ID` and `AZURE_CLIENT_ID` (empty for managed identity) |
+| `credentials_verified` | Always `false`: actual calls check credentials, consent and RBAC |
+| `note` | Reminder that this is configuration only |
+
+The ten auto-label tools (`list/get/create/set/remove_auto_label_policy` and the same for `_rule`) are documented in [design.md](design.md#service-side-automatic-sensitivity-labeling). `create_auto_label_policy` creates the policy `Disabled`.
 
 ## Prompts
 

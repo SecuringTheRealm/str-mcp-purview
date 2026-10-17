@@ -16,6 +16,7 @@
     "MCP_REQUEST_LOGGING": "true",
     "PURVIEW_TOOL_MODE": "compact",
     "PURVIEW_TOOL_LIMIT": "8",
+    "// container": "Only for the Linux container image: set PURVIEW_ALLOW_UNSUPPORTED_OS to 1 to attempt Security & Compliance PowerShell there, after checking a live tenant. Omit otherwise.",
 
     "// platform": "Azure Functions and PowerShell-backed execution remain In UAT until the deployed authentication and all-tool matrix passes."
   }
