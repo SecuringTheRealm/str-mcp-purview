@@ -13,3 +13,6 @@ docs
 benchmarks
 node_modules
 *.md
+.agents
+.claude
+.githooks

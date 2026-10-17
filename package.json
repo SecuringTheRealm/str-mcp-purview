@@ -25,6 +25,7 @@
     "SECURITY.md"
   ],
   "scripts": {
+    "prepare": "node -e \"const fs = require('node:fs'); if (fs.existsSync('.git') && fs.existsSync('.githooks')) { try { require('node:child_process').execFileSync('git', ['config', 'core.hooksPath', '.githooks'], { stdio: 'ignore' }) } catch {} }\"",
     "start": "node index.js",
     "test": "node --experimental-test-module-mocks --test",
     "benchmark:retrieval": "node benchmarks/retrieval.js",
