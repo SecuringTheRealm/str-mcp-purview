@@ -163,8 +163,11 @@ test("bridge failures map to retry-safe or uncertain codes", async () => {
   const base = syntheticCatalogue(1).entries.find((c) => c.action === "write" && !c.deletes);
   const failWith = (flags) => defineCapability({ ...base, handler: async () => { throw Object.assign(new Error("x"), flags); } });
   const code = async (cap) => errorResult(await executeCapability(cap.id, { identity: "s" }, {}, indexCapabilities([cap])).catch((e) => e)).structuredContent.error;
-  assert.deepEqual(await code(failWith({ busy: true })), { code: "BUSY", message: "x", retryable: true });
+  assert.deepEqual(await code(failWith({ notStarted: true })), { code: "BUSY", message: "x", retryable: true });
   assert.deepEqual(await code(failWith({ uncertain: true })), { code: "OUTCOME_UNCERTAIN", message: "x", retryable: false });
+  // A timed-out read changed nothing, so it is a plain backend error.
+  const read = defineCapability({ ...syntheticCatalogue(1).entries.find((c) => c.action === "read" && c.operation === "get"), handler: async () => { throw Object.assign(new Error("x"), { uncertain: true }); } });
+  assert.equal((await code(read)).code, "BACKEND_ERROR");
 });
 
 test("waiting writes are bounded, and a cancelled one never starts", async () => {
@@ -175,7 +178,9 @@ test("waiting writes are bounded, and a cancelled one never starts", async () =>
   const run = (signal) => executeCapability(slow.id, { identity: "s" }, {}, index, undefined, { context: { mcpReq: { signal } } });
   process.env.PURVIEW_MAX_QUEUED_COMMANDS = "1";
   try {
-    const accepted = [run(), run()]; // one about to start plus one waiting
+    const running = run();
+    await new Promise((r) => setTimeout(r, 5)); // let it start
+    const accepted = [running, run()]; // one running plus one waiting, matching the bridge
     await assert.rejects(run(), { code: "BUSY" });
     await Promise.all(accepted);
   } finally {

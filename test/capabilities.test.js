@@ -102,6 +102,7 @@ test("get_auth_status reports the credential that will actually be used", () => 
   assert.deepEqual([mi.mode, mi.missing, mi.graph_configured], ["managedidentity", [], true]);
   assert.equal(status({ AZURE_CLIENT_CERTIFICATE_PATH: "/c.pem" }).mode, "certificate");
   assert.equal(status({ PURVIEW_DLP_AUTH_MODE: "interactive" }).powershell_auth, "interactive");
+  assert.throws(() => status({ PURVIEW_DLP_AUTH_MODE: "interacive" }), /PURVIEW_DLP_AUTH_MODE must be one of/);
   assert.equal(status({ PURVIEW_APP_ID: "a", PURVIEW_ORGANIZATION: "o", PURVIEW_CERT_THUMBPRINT: "t" }).powershell_auth, "certificate");
 });
 
@@ -115,6 +116,5 @@ test("allow-list typos and short cursor secrets stop the server instead of hidin
     delete process.env.PURVIEW_ALLOWED_DOMAINS;
   }
   assert.throws(() => createListPaginator({ secret: "short" }), /at least 32 characters/);
-  assert.throws(() => authStatus({}, { PURVIEW_DLP_AUTH_MODE: "interacive" }), /PURVIEW_DLP_AUTH_MODE must be one of/);
 });
 

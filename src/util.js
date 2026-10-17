@@ -52,6 +52,9 @@ export function envInt(name, fallback, env = process.env) {
   return value;
 }
 
+/** Commands (or writes) that may wait behind the running one; unlimited unless set. */
+export const maxQueued = (env = process.env) => envInt("PURVIEW_MAX_QUEUED_COMMANDS", Infinity, env);
+
 // Security & Compliance PowerShell settings, shared by the bridge and get_auth_status.
 /** Whether Connect-IPPSSession can run here (Windows, unless overridden). */
 export const platformSupported = (env = process.env) => process.platform === "win32" || env.PURVIEW_ALLOW_UNSUPPORTED_OS === "1";

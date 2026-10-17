@@ -96,6 +96,7 @@ export const handlers = {
     return text(formatWriteResult("Set DLP policy", await dlp.setPolicy(params)));
   },
   create_dlp_rule: async (args) => {
+    assertEndpointNotify(args); // cheap check before the policy read
     await validateRulePolicy(args);
     return createRule("Create DLP rule", args);
   },

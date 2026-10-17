@@ -41,7 +41,7 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { getToken } from "./auth.js";
-import { dlpAuthMode, envInt, platformSupported } from "./util.js";
+import { dlpAuthMode, envInt, maxQueued, platformSupported } from "./util.js";
 
 // Limits are read per call, so the HTTP host can set tighter defaults, and once
 // at load so a bad value stops the server at startup.
@@ -58,7 +58,6 @@ const signinTimeout = () => envInt("PURVIEW_SIGNIN_TIMEOUT_MS", connectTimeout()
 // waiting. Beyond PURVIEW_MAX_QUEUED_COMMANDS waiting commands (set by the HTTP
 // host, whose front door times out; unlimited on stdio), new ones are refused
 // at once. Nothing is sent, so a retry is safe.
-const maxQueued = () => envInt("PURVIEW_MAX_QUEUED_COMMANDS", Infinity);
 execTimeout(); signinTimeout(); maxQueued(); dlpAuthMode();
 // Resource scope for a Security & Compliance access token.
 const EXO_SCOPE = process.env.PURVIEW_EXO_SCOPE || "https://outlook.office365.com/.default";
@@ -442,7 +441,7 @@ class PowerShellBridge {
   async invoke(cmdlet, params = {}, selectProps = null) {
     // Counted from the start, so callers waiting on a slow sign-in count too.
     if (this.depth > maxQueued()) {
-      throw bridgeError(`PowerShell is busy with ${this.depth} commands. Nothing was sent; retry in a few seconds.`, { busy: true });
+      throw bridgeError(`PowerShell is busy with ${this.depth} commands. Nothing was sent; retry in a few seconds.`, { notStarted: true });
     }
     this.depth += 1;
     try {
@@ -515,8 +514,8 @@ function isAuthExpiry(err, cmdlet = "", params = {}) {
   const m = String(err.message || "").toLowerCase();
   // A write's error can quote its own arguments (a policy named "Unauthorized
   // access"), so a match inside an argument value is not evidence of expiry.
-  const quoted = /^get-/i.test(cmdlet) ? [] : JSON.stringify(params).toLowerCase().match(/"[^"]*"/g) ?? [];
-  if (AUTH_REJECTIONS.some((s) => m.includes(s) && !quoted.some((v) => v.includes(s)))) return true;
+  const args = /^get-/i.test(cmdlet) ? "" : JSON.stringify(params).toLowerCase();
+  if (AUTH_REJECTIONS.some((s) => m.includes(s) && !args.includes(s))) return true;
   return m.includes(OPAQUE_NON_JSON_RESPONSE) && /^get-/i.test(cmdlet);
 }
 

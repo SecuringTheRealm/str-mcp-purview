@@ -58,3 +58,23 @@ test("request logger records error type without backend error details", async ()
   assert.equal(record.error_type, "TypeError");
   assert.doesNotMatch(lines[0], /tenant-sensitive/);
 });
+
+test("logging follows MCP_REQUEST_LOGGING strictly and records the compact capability", async () => {
+  const saved = process.env.MCP_REQUEST_LOGGING;
+  try {
+    process.env.MCP_REQUEST_LOGGING = "0";
+    const quiet = [];
+    await createRequestLogger({ sink: (l) => quiet.push(l) })("tools/call", async () => ({ content: [] }))({ params: {} }, context());
+    assert.equal(quiet.length, 0);
+    process.env.MCP_REQUEST_LOGGING = "maybe";
+    assert.throws(() => createRequestLogger(), /MCP_REQUEST_LOGGING must be one of/);
+  } finally {
+    if (saved === undefined) delete process.env.MCP_REQUEST_LOGGING; else process.env.MCP_REQUEST_LOGGING = saved;
+  }
+  const lines = [];
+  const wrap = createRequestLogger({ sink: (l) => lines.push(l) });
+  await wrap("tools/call", async () => ({ content: [] }), (r) => ({ tool: r.params.name, capability: r.params.arguments?.operation }))(
+    { params: { name: "purview_manage_dlp", arguments: { operation: "remove_dlp_rule" } } }, context());
+  assert.equal(JSON.parse(lines[0]).capability, "remove_dlp_rule");
+});
+

@@ -17,7 +17,5 @@ createServer({ transport: "stdio" });
 // When the client goes away, finish what it already asked for, then exit: a live
 // pwsh child would otherwise keep this process (and its signed-in session)
 // running. Exiting closes the child's stdin, which ends it.
-process.stdin.once("end", function exitWhenIdle() {
-  setTimeout(() => (bridgesIdle() ? process.exit(0) : exitWhenIdle()), 100);
-});
+process.stdin.once("end", () => setInterval(() => bridgesIdle() && process.exit(0), 100));
 await serveStdio((context) => createServer({ ...context, transport: "stdio" }));

@@ -545,9 +545,9 @@ test("PowerShellBridge auth-expiry retry", async (t) => {
   await t.test("does NOT retry a write whose error only quotes its own argument", async () => {
     const bridge = await freshBridge("auth-word-in-arg");
     useFakes();
-    const invokePromise = bridge.invoke("New-DlpCompliancePolicy", { Name: "Unauthorized access" });
+    const invokePromise = bridge.invoke("New-DlpCompliancePolicy", { Name: 'Block "unauthorized access"' });
     await connected();
-    lastProc.respondErr("A policy named 'Unauthorized access' already exists.");
+    lastProc.respondErr('A policy named Block "unauthorized access" already exists.');
     await assert.rejects(invokePromise, /already exists/);
     assert.equal(lastProc.writes.join("").match(/^Connect-IPPSSession -/gm).length, 1);
   });

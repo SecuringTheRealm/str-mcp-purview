@@ -66,4 +66,4 @@ Read by `functions/server.js` (and `src/pagination.js` / `src/request-logging.js
 
 The [`Containerfile`](../Containerfile) installs PowerShell 7.5 and `ExchangeOnlineManagement` 3.9.2 on Linux, where Microsoft does not support Security & Compliance PowerShell. The server therefore refuses PowerShell-backed tools until you set `PURVIEW_ALLOW_UNSUPPORTED_OS=1` in the container's application settings, once you have checked the connection against a live tenant. Graph-backed `get_label_policy_settings` and `get_auth_status` work without it.
 
-`.containerignore` and `.dockerignore` keep `.git`, `.github`, `.env*`, `.mcp.json`, `local.settings.json`, `artifacts`, `scripts`, `test`, `docs`, `benchmarks`, `node_modules` and `*.md` out of the image, so local secrets and tenant data are never copied in.
+`.dockerignore` (also read by Podman and Buildah) keeps `.git`, `.github`, `.env*`, `.mcp.json`, `local.settings.json`, `artifacts`, `scripts`, `test`, `docs`, `benchmarks`, `node_modules` and `*.md` out of the image, so local secrets and tenant data are never copied in.

@@ -2,7 +2,7 @@ import Ajv from "ajv";
 import { capabilityById } from "../capabilities/registry.js";
 import { permitted } from "../retrieval/filters.js";
 import { CapabilityError } from "./errors.js";
-import { envInt } from "../util.js";
+import { maxQueued } from "../util.js";
 
 const ajv = new Ajv({ allErrors: true, strict: false, useDefaults: true });
 const validators = new WeakMap();
@@ -22,7 +22,7 @@ export function validateArguments(schema, args, name) {
 let writeQueue = Promise.resolve();
 let waitingWrites = 0;
 function serialised(fn, signal) {
-  if (waitingWrites > envInt("PURVIEW_MAX_QUEUED_COMMANDS", Infinity)) {
+  if (waitingWrites >= maxQueued()) {
     throw new CapabilityError("BUSY", `${waitingWrites} writes are already waiting. Nothing was sent; retry in a few seconds.`);
   }
   waitingWrites += 1;
@@ -65,6 +65,8 @@ export async function executeCapability(id, args = {}, policy = {}, registry = c
     if (error instanceof CapabilityError) throw error;
     // BUSY: refused before anything was sent, so retrying is safe.
     // OUTCOME_UNCERTAIN: a write may have applied; read before retrying.
-    throw new CapabilityError(error.busy || error.notStarted ? "BUSY" : error.uncertain ? "OUTCOME_UNCERTAIN" : "BACKEND_ERROR", error.message);
+    // A read that timed out changed nothing, so only a write is uncertain.
+    const code = error.notStarted ? "BUSY" : error.uncertain && capability.action === "write" ? "OUTCOME_UNCERTAIN" : "BACKEND_ERROR";
+    throw new CapabilityError(code, error.message);
   }
 }
