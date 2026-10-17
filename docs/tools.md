@@ -120,6 +120,15 @@ Tool errors keep `isError` and readable text, and add `structuredContent.error` 
 
 Other codes: `CAPABILITY_UNAVAILABLE` (unknown and unauthorised IDs deliberately share a response), `POLICY_DENIED`, `INTERNAL_ERROR`, and the auto-label codes `FEATURE_UNAVAILABLE`, `TARGET_NOT_FOUND`, `SIMULATION_REQUIRED`, `REVISION_CONFLICT` and `READBACK_FAILED`. None is retryable. Reads that hit a lapsed token reconnect and retry once on their own; writes surface the error. The server's `instructions` tell agents to retry only errors marked `retryable`.
 
+### Deprecated (removed in 3.0)
+
+These arguments are still accepted so existing clients keep working, but they do nothing and the next major version removes them.
+
+| Argument | Tools | Behaviour |
+| --- | --- | --- |
+| `confirm` (only `true` is accepted) | `remove_sensitivity_label`, `remove_label_policy`, `remove_dlp_policy`, `remove_dlp_rule` | Ignored. It never authorizes deletion; the server always asks for form elicitation confirmation. Omit it. |
+| `include_protection_settings` | `get_sensitivity_label` | Ignored. Protection settings are always returned. Omit it. |
+
 Every tool below is documented two ways: **Business** — why an admin would reach
 for it and what they get back — and **Technical** — the exact Graph endpoint or
 PowerShell cmdlet it runs and how. Tools are grouped by data plane; writes are
@@ -147,7 +156,7 @@ flagged and only exist on the PowerShell plane.
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `label_id` | string | Sensitivity label SCC name or GUID, from `list_sensitivity_labels` |
-| `include_protection_settings` | boolean | Deprecated compatibility flag; protection settings are always returned |
+| `include_protection_settings` | boolean | Deprecated and ignored; will be removed in 3.0. Protection settings are always returned |
 
 ---
 
