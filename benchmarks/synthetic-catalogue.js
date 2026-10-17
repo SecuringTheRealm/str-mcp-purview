@@ -33,7 +33,7 @@ export function syntheticCatalogue(perDomain = 5) {
         if (destructive) { properties.confirm = { const: true, type: "boolean" }; required.push("confirm"); }
         if (operation === "update") properties.note = { type: "string", maxLength: 200 };
         entries.push(defineCapability({
-          id, domain, operation, action, destructive,
+          id, domain, operation, action, destructive, deletes: operation === "delete",
           risk: destructive ? "destructive" : action === "read" ? "read-only" : "non-destructive",
           idempotent: action === "read", openWorld: false,
           description: `${operation} ${noun} in the simulated catalogue.`,

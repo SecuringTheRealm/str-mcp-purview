@@ -305,6 +305,23 @@ test("PowerShellBridge.invoke", async (t) => {
       assert.equal(procs[0].writes.filter((w) => w.includes("Set-DlpComplianceRule")).length, 1, "A is not retried");
     }));
 
+  await t.test("refuses new commands at once when too many are already waiting", () =>
+    withEnv({ PURVIEW_EXEC_TIMEOUT_MS: "40", PURVIEW_CONNECT_TIMEOUT_MS: "40" }, async () => {
+      const bridge = await freshBridge("queue-limit");
+      useFakes();
+      const warm = bridge.invoke("Get-Label", {});
+      await connected();
+      lastProc.respondOk([]);
+      await warm;
+      // One running plus three waiting is the limit; the fifth is refused unsent.
+      const held = [1, 2, 3, 4].map((n) => bridge.invoke("Get-Label", { Identity: `L${n}` }).catch(() => {}));
+      await tick();
+      const writes = lastProc.writes.length;
+      await assert.rejects(bridge.invoke("Set-Label", { Identity: "L5" }), /busy with 4 commands\. Nothing was sent/);
+      assert.equal(lastProc.writes.length, writes);
+      await Promise.all(held);
+    }));
+
   await t.test("decodes a multibyte character split across stdout chunks", async () => {
     const bridge = await freshBridge("utf8-split");
     useFakes();

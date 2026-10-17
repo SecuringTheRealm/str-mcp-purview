@@ -281,6 +281,28 @@ test("Azure Functions streamable HTTP host", async (t) => {
     await assert.rejects(withHttpServer(async () => {}, "compct"), /exited early/);
   });
 
+  await t.test("with MCP_TRUST_EASY_AUTH, the Easy Auth caller is required and deletion binds to it", async () => {
+    const principal = (tid) => Buffer.from(JSON.stringify({ claims: [
+      { typ: "http://schemas.microsoft.com/identity/claims/objectidentifier", val: "user-1" },
+      { typ: "http://schemas.microsoft.com/identity/claims/tenantid", val: tid },
+      { typ: "azp", val: "client-1" },
+    ] })).toString("base64");
+    const remove = (base, headers = {}) => rpc(base, {
+      jsonrpc: "2.0", id: "del", method: "tools/call",
+      params: { name: "remove_dlp_policy", arguments: { identity: "P1" }, _meta: { ...MODERN_META, "io.modelcontextprotocol/clientCapabilities": { elicitation: { form: {} } } } },
+    }, { "MCP-Protocol-Version": "2026-07-28", "Mcp-Method": "tools/call", "Mcp-Name": "remove_dlp_policy", ...headers });
+    const deletionError = (r) => r.body.result.content[0].text;
+    await withHttpServer(async (base) => {
+      assert.equal((await rawPost(base, INIT)).status, 401);
+      assert.equal((await rawPost(base, INIT, { "x-ms-client-principal": principal("other-tenant") })).status, 403);
+      const r = await remove(base, { "x-ms-client-principal": principal("tenant-1") });
+      assert.doesNotMatch(deletionError(r), /trusted caller/, "a verified caller gets past the identity check");
+    }, "full", { MCP_TRUST_EASY_AUTH: "true", AZURE_TENANT_ID: "tenant-1" });
+    await withHttpServer(async (base) => {
+      assert.match(deletionError(await remove(base)), /trusted caller/, "without it, deletes stay refused");
+    }, "full", { AZURE_TENANT_ID: "tenant-1" });
+  });
+
   await t.test("on a non-loopback bind, loopback Host values need an explicit allowlist", async () => {
     await withHttpServer(
       async (base) => {

@@ -96,7 +96,7 @@ export function createProjection({ mode = toolMode(), policy = {}, limit = searc
       const result = {
         // Search shows one sentence; describe gives the full text, which carries the constraints.
         capability_id: c.id, description: c.tool.description, domain: c.domain, operation: c.operation,
-        action: c.action, risk: c.risk, destructive: c.destructive, execution_kind: c.executionKind,
+        action: c.action, risk: c.risk, destructive: c.destructive, deletes: c.deletes, execution_kind: c.executionKind,
         input_schema: c.inputSchema, ...(c.outputSchema ? { output_schema: c.outputSchema } : {}),
         constraints: c.constraints, examples: c.examples, invocation: routeFor(c, mode),
         authorization: { permissions: c.permissions, scope_alternatives: c.scopeAlternatives,

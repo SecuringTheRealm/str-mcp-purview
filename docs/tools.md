@@ -91,6 +91,7 @@ Read once from the server's process environment, on stdio and HTTP alike. Auth v
 | `PURVIEW_PERMISSIONS` | unset (not checked) | Trusted permission labels matched against capability metadata. |
 | `PURVIEW_SCOPES` | unset (not checked) | Trusted Microsoft scope names matched against declared alternatives. |
 | `PURVIEW_FEATURES` | unset (none enabled) | Enabled feature flags for feature-gated capabilities. |
+| `PURVIEW_MAX_QUEUED_COMMANDS` | `3` | PowerShell commands that may wait behind the running one; more are refused at once (nothing sent, safe to retry). |
 
 `PURVIEW_READ_ONLY` and `PURVIEW_ALLOW_DESTRUCTIVE` accept `true`/`false` (also `1`/`0`, `yes`/`no`, case-insensitive); any other value stops the server at startup.
 
@@ -299,7 +300,7 @@ At least one nonempty `exchange_location` or `modern_group_location` target is r
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `name` | string | Unique policy name |
-| `mode` | string | Policy mode: `Enable`, `TestWithNotifications`, `TestWithoutNotifications`, `Disable` (default `Enable`) |
+| `mode` | string | Policy mode: `Enable`, `TestWithNotifications`, `TestWithoutNotifications`, `Disable` (default `TestWithNotifications`) |
 | `comment` | string | Optional description/comment |
 | `exchange_location` | string[] | Exchange locations, e.g. `["All"]` |
 | `sharepoint_location` | string[] | SharePoint locations, e.g. `["All"]` |
@@ -411,7 +412,7 @@ These two tools are kept **separate** from the traditional DLP tools above so th
 | `name` | string | Unique policy name |
 | `endpoint_location` | string[] | Users whose onboarded devices are in scope — email/name/GUID, or `["All"]` (default) |
 | `endpoint_location_exception` | string[] | Users whose onboarded devices are excluded from the policy |
-| `mode` | string | `Enable`, `TestWithNotifications`, `TestWithoutNotifications`, `Disable` (default `Enable`) |
+| `mode` | string | `Enable`, `TestWithNotifications`, `TestWithoutNotifications`, `Disable` (default `TestWithNotifications`) |
 | `comment` | string | Optional description/comment |
 
 ---
@@ -451,7 +452,7 @@ Kept **separate** from traditional DLP so the Copilot-specific conditions/action
 |-----------|------|-------------|
 | `name` | string | Unique policy name |
 | `user_scope` | string[] | Users the policy applies to — email/GUID, or `["All"]` (default) |
-| `mode` | string | `Enable`, `TestWithNotifications`, `TestWithoutNotifications`, `Disable` (default `Enable`) |
+| `mode` | string | `Enable`, `TestWithNotifications`, `TestWithoutNotifications`, `Disable` (default `TestWithNotifications`) |
 | `comment` | string | Optional description/comment |
 
 ---

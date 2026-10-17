@@ -114,6 +114,15 @@ test("real pwsh: hostile parameter values stay data", SUITE, async () => {
   assert.deepEqual(JSON.parse(res.body), hostile, "values must round-trip unchanged and never execute");
 });
 
+test("real pwsh: an ISO timestamp in free text stays text (PowerShell 7.5+)", SUITE, async (t) => {
+  const version = spawnSync(PWSH, ["-NoLogo", "-NoProfile", "-Command", "$PSVersionTable.PSVersion.Minor"], { encoding: "utf8" }).stdout.trim();
+  if (Number(version) < 5) return t.skip("needs PowerShell 7.5 for -DateKind");
+  const echo = "function Get-Echo { param($Comment) [pscustomobject]@{ Comment = $Comment; Type = $Comment.GetType().Name } }";
+  const res = await runReal(`${echo}\n${cmdletScript("Get-Echo", { Comment: "2025-03-01T10:00:00Z" }, ["Comment", "Type"])}`);
+  assert.equal(res.status, "__OK__", res.body);
+  assert.deepEqual(JSON.parse(res.body), { Comment: "2025-03-01T10:00:00Z", Type: "String" });
+});
+
 test("real pwsh: connect script", SUITE, async (t) => {
   await t.test("PowerShell accepts every line of the token-mode connect script", async () => {
     const connect = await powershell.connectScript();

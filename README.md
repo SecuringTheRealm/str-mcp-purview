@@ -40,7 +40,7 @@ Insider Risk, Communications Compliance and DSPM are not covered yet; see [ROADM
   ```powershell
   Install-Module ExchangeOnlineManagement -RequiredVersion 3.9.2 -Scope CurrentUser
   ```
-  The default token sign-in needs 3.8.0 or later (certificate and interactive modes need 3.2.0). 3.9.2 is pinned because module 3.10+ requires PowerShell 7.6 (the `Containerfile` pins the 7.4 / 3.9.2 pair).
+  The default token sign-in needs 3.8.0 or later (certificate and interactive modes need 3.2.0). 3.9.2 is pinned because module 3.10+ requires PowerShell 7.6 (the `Containerfile` pins PowerShell 7.5 with 3.9.2). PowerShell 7.5+ is recommended: on 7.4 an ISO timestamp in a text field such as a comment is turned into a date.
 - A **Microsoft 365 tenant** where you (or an admin) can register an app and grant consent.
 - An **admin account** with the Purview role for the tools you'll use (step 2).
 
@@ -145,9 +145,9 @@ Both prompts are read-only. Details: [docs/tools.md](docs/tools.md#prompts).
 
 - Every action runs as the signed-in admin and is limited by that account's Purview RBAC.
 - **Deletes** always show a confirmation form naming the tenant and the resolved object. Declining, cancelling, or a client without form support means nothing is deleted. `confirm: true` cannot skip it ([how it works](docs/design.md#elicitation-for-deletion-confirmation)).
-- **Deletes are refused on the shipped HTTP host.** It supplies no trusted caller identity, so the confirmation cannot be bound to a person. Deletion works over stdio ([why](docs/design.md#elicitation-for-deletion-confirmation)).
+- **Deletes over HTTP need a verified caller.** The HTTP host refuses them unless `MCP_TRUST_EASY_AUTH=true` and App Service Authentication supplies the caller's Entra identity, which the confirmation is bound to. Deletion always works over stdio ([why](docs/design.md#elicitation-for-deletion-confirmation)).
 - `PURVIEW_READ_ONLY` and `PURVIEW_ALLOW_DESTRUCTIVE` take `true`/`false` (also `1`/`0`, `yes`/`no`, case-insensitive); any other value stops the server at startup. `PURVIEW_ALLOWED_CAPABILITIES` and related settings narrow it further ([environment variables](docs/tools.md#environment-variables)).
-- Creates and sets apply immediately. Create DLP policies in `TestWithNotifications` first and promote them once you've checked their impact.
+- New DLP policies start in `TestWithNotifications` (reported, not blocked) unless you ask for `Enable`. Other creates and every set apply immediately.
 - Tenant data in results is untrusted input to the model. Review changes an agent proposes before approving them.
 
 ## Troubleshooting

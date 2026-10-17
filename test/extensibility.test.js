@@ -33,6 +33,17 @@ test("contract rejects incoherent risk, invalid schemas/examples, collisions and
   assert.throws(() => defineCapability({ ...c, examples: [] }), /example/);
   assert.throws(() => validateRegistry([c, { ...c, id: "other", aliases: [c.id] }]), /Duplicate/);
   assert.throws(() => defineCapability({ ...c, scopeAlternatives: [[]] }), /metadata/);
+  // Deletion confirmation hangs off an explicit flag, so a delete-like capability without it is refused.
+  const del = syntheticCatalogue(1).entries.find((e) => e.deletes);
+  assert.throws(() => defineCapability({ ...del, deletes: false }), /deletes flag/);
+  assert.throws(() => defineCapability({ ...del, operation: "purge", id: "purge_records", aliases: [], deletes: false }), /deletes flag/);
+  assert.throws(() => defineCapability({ ...c, deletes: true }), /deletes flag/);
+});
+
+test("a destructive capability with a new operation name still needs confirmation when it deletes", async () => {
+  const del = syntheticCatalogue(1).entries.find((e) => e.deletes);
+  const purge = defineCapability({ ...del, operation: "purge", id: "purge_records", aliases: [] });
+  await assert.rejects(executeCapability(purge.id, { identity: "x", confirm: true }, {}, indexCapabilities([purge])), { code: "CONFIRMATION_REQUIRED" });
 });
 
 test("argument policy is enforced in all modes, after validation and before handlers", async () => {

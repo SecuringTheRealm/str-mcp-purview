@@ -57,8 +57,8 @@ as a trust boundary:
   certificates. `.env` and `.mcp.json` are gitignored for this reason.
 - Review what an agent proposes before approving a destructive tool call.
 - Deletes always require form elicitation confirmation; `confirm: true` does
-  not skip it, and the shipped HTTP host refuses deletes because it supplies
-  no trusted caller identity (see
+  not skip it, and the HTTP host refuses deletes unless
+  `MCP_TRUST_EASY_AUTH=true` with Easy Auth supplying a verified caller (see
   [design notes](docs/design.md#elicitation-for-deletion-confirmation)).
 - For remote hosting, require Entra/Easy Auth and audience validation. A
   function key alone is not production caller authentication.

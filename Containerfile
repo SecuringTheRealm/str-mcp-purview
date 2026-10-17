@@ -14,7 +14,7 @@
 FROM mcr.microsoft.com/azure-functions/node:4-node20
 
 # PowerShell 7 from the release tarball (distro-agnostic; pin the version).
-ARG PWSH_VERSION=7.4.6
+ARG PWSH_VERSION=7.5.12
 RUN apt-get update && apt-get install -y --no-install-recommends wget ca-certificates libicu-dev \
     && wget -qO /tmp/pwsh.tar.gz "https://github.com/PowerShell/PowerShell/releases/download/v${PWSH_VERSION}/powershell-${PWSH_VERSION}-linux-x64.tar.gz" \
     && mkdir -p /opt/microsoft/powershell/7 \
@@ -23,7 +23,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends wget ca-certifi
     && ln -s /opt/microsoft/powershell/7/pwsh /usr/bin/pwsh \
     && rm /tmp/pwsh.tar.gz && rm -rf /var/lib/apt/lists/*
 
-# 3.10+ requires PowerShell 7.6; keep this experimental image's 7.4 pair compatible.
+# 3.10+ requires PowerShell 7.6; 3.9.2 runs on 7.5, which keeps ISO dates in text (-DateKind).
 # This does not make Security & Compliance PowerShell supported on Linux.
 ARG EXO_MODULE_VERSION=3.9.2
 RUN pwsh -NoLogo -NoProfile -Command "Install-Module ExchangeOnlineManagement -RequiredVersion ${EXO_MODULE_VERSION} -Scope AllUsers -Force"

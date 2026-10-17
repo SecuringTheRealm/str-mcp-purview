@@ -52,6 +52,10 @@ const CONNECT_TIMEOUT_MS = Number(process.env.PURVIEW_CONNECT_TIMEOUT_MS) || 300
 // finding a browser window they may never have seen open, and without a bound of
 // its own that blocks the agent's tool call forever.
 const SIGNIN_TIMEOUT_MS = Number(process.env.PURVIEW_SIGNIN_TIMEOUT_MS) || CONNECT_TIMEOUT_MS;
+// One session runs one cmdlet at a time, so a deep queue means minutes of
+// waiting (past the HTTP front door's timeout). Beyond this many waiting
+// commands, new ones are refused at once; nothing is sent, so a retry is safe.
+const MAX_QUEUED = Number(process.env.PURVIEW_MAX_QUEUED_COMMANDS) || 3;
 // Resource scope for a Security & Compliance access token.
 const EXO_SCOPE = process.env.PURVIEW_EXO_SCOPE || "https://outlook.office365.com/.default";
 
@@ -115,7 +119,10 @@ export function cmdletScript(cmdlet, params = {}, selectProps = null) {
   const b64 = Buffer.from(JSON.stringify(params ?? {}), "utf8").toString("base64");
   const select = selectProps?.length ? ` | Select-Object ${selectProps.join(",")}` : "";
   return [
-    `$__p = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${b64}')) | ConvertFrom-Json -AsHashtable`,
+    // -DateKind String (PowerShell 7.5+) keeps an ISO timestamp in free text,
+    // such as a Comment, as text; 7.4 would turn it into a DateTime.
+    "$__o = @{ AsHashtable = $true }; if ((Get-Command ConvertFrom-Json).Parameters.ContainsKey('DateKind')) { $__o.DateKind = 'String' }",
+    `$__p = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${b64}')) | ConvertFrom-Json @__o`,
     "if ($null -eq $__p) { $__p = @{} }",
     `${cmdlet} @__p${select}`,
   ].join("\n");
@@ -157,6 +164,7 @@ class PowerShellBridge {
     this.proc = null;
     this.queue = Promise.resolve();
     this.connecting = null;
+    this.depth = 0; // commands running or waiting
     // The child whose Connect-IPPSSession succeeded. A cmdlet only runs on this
     // child: if a timeout replaced it while the cmdlet waited in the queue, the
     // new child has no session, so the cmdlet is refused before it is sent.
@@ -201,7 +209,11 @@ class PowerShellBridge {
 
   // Serialise every request so their framed output blocks cannot interleave.
   #enqueue(script, timeoutMs = EXEC_TIMEOUT_MS, connect = false) {
-    const run = this.queue.then(() => this.#exec(script, timeoutMs, connect));
+    if (!connect && this.depth > MAX_QUEUED) {
+      return Promise.reject(bridgeError(`PowerShell is busy with ${this.depth} commands. Nothing was sent; retry in a few seconds.`));
+    }
+    this.depth += 1;
+    const run = this.queue.then(() => this.#exec(script, timeoutMs, connect)).finally(() => { this.depth -= 1; });
     // Keep the chain alive even if a call rejects.
     this.queue = run.catch(() => {});
     return run;

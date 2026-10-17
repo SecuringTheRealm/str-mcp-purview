@@ -202,7 +202,7 @@ test("OneDrive edits preserve unrelated users and reject implicit scope changes"
 test("policy handlers never emit obsolete OneDrive parameters and show correct scope", async () => {
   const p = createProjection({ mode: "full" });
   await p.call("create_dlp_policy", { name: "P1", location_exceptions: { onedrive: ["a@contoso.com"] } });
-  assert.deepEqual(calls.at(-1).params, { Name: "P1", OneDriveLocation: ["All"], ExceptIfOneDriveSharedBy: ["a@contoso.com"] });
+  assert.deepEqual(calls.at(-1).params, { Name: "P1", Mode: "TestWithNotifications", OneDriveLocation: ["All"], ExceptIfOneDriveSharedBy: ["a@contoso.com"] });
   current = { Name: "P1", OneDriveLocation: ["All"], ExceptIfOneDriveSharedBy: ["a@contoso.com"] };
   await p.call("set_dlp_policy", { identity: "P1", add_location_exceptions: { onedrive: ["b@contoso.com"] } });
   assert.deepEqual(calls.at(-1).params, { Identity: "P1", ExceptIfOneDriveSharedBy: ["a@contoso.com", "b@contoso.com"] });
@@ -257,4 +257,19 @@ test("handler validation failures carry VALIDATION_ERROR, not BACKEND_ERROR", as
     await assert.rejects(p.call(id, args), { code: "VALIDATION_ERROR" }, id);
     assert.ok(calls.every((c) => c.cmdlet.startsWith("Get-")), id);
   }
+});
+
+test("new DLP policies start in test mode unless enforcement is asked for", async () => {
+  const p = createProjection({ mode: "full" });
+  const modes = [];
+  for (const [tool, args] of [
+    ["create_dlp_policy", { name: "P", exchange_location: ["All"] }],
+    ["create_endpoint_dlp_policy", { name: "P" }],
+    ["create_copilot_dlp_policy", { name: "P" }],
+    ["create_dlp_policy", { name: "P", exchange_location: ["All"], mode: "Enable" }],
+  ]) {
+    await p.call(tool, args);
+    modes.push(calls.at(-1).params.Mode);
+  }
+  assert.deepEqual(modes, ["TestWithNotifications", "TestWithNotifications", "TestWithNotifications", "Enable"]);
 });

@@ -33,7 +33,7 @@ export async function executeCapability(id, args = {}, policy = {}, registry = c
     if (allowed !== true) throw new CapabilityError("POLICY_DENIED", "Request denied by resource or argument policy.");
   };
   await checkAuthorization();
-  if (capability.operation === "delete") {
+  if (capability.deletes) {
     if (!interaction.confirmDeletion) throw new CapabilityError("CONFIRMATION_REQUIRED", "Deletion requires form elicitation confirmation; confirm:true alone is insufficient.");
     const review = await interaction.confirmDeletion(capability, input, interaction.context);
     if (review.result) return review.result;

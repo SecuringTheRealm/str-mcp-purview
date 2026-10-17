@@ -49,7 +49,8 @@ export function createServer(factoryContext = {}) {
   const mode = toolMode(factoryContext.toolMode);
   const authorize = factoryContext.authorizeCapability;
   const confirmDeletion = createDeletionConfirmation({
-    principal: factoryContext.confirmationPrincipal ?? (factoryContext.transport === "stdio" ? "local-stdio" : undefined),
+    principal: factoryContext.confirmationPrincipal ?? factoryContext.authInfo?.extra?.principal
+      ?? (factoryContext.transport === "stdio" ? "local-stdio" : undefined),
     client: factoryContext.transport === "stdio" ? randomUUID() : factoryContext.confirmationClientId ?? factoryContext.authInfo?.clientId,
   });
   const projection = createProjection({ mode, policy, limit: searchLimit(), entries, authorize, confirmDeletion });

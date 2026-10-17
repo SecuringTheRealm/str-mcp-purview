@@ -7,7 +7,7 @@ const identifier = /^[a-z][a-z0-9_]*$/;
 export function defineCapability(entry) {
   const c = {
     aliases: [], permissions: [], scopeAlternatives: [], features: [],
-    constraints: [], examples: [], executionKind: "immediate", ...entry,
+    constraints: [], examples: [], executionKind: "immediate", deletes: false, ...entry,
   };
   c.tool = {
     name: c.id, description: c.description, inputSchema: c.inputSchema,
@@ -34,6 +34,10 @@ export function validateRegistry(entries) {
       || !["read-only", "non-destructive", "destructive"].includes(c.risk)
       || c.risk !== (c.destructive ? "destructive" : c.action === "read" ? "read-only" : "non-destructive")
       || (c.action === "read" && c.destructive)) throw new Error(`Invalid capability safety metadata: ${c.id}`);
+    // `deletes` gates form-elicitation confirmation, so it is declared, never
+    // inferred, and a delete-like name or operation without it is refused.
+    if (typeof c.deletes !== "boolean" || (c.deletes && !c.destructive)
+      || (!c.deletes && (c.operation === "delete" || /^(remove|delete|purge)_/.test(c.id)))) throw new Error(`Invalid deletes flag: ${c.id}`);
     if (c.executionKind !== "immediate") throw new Error(`Unsupported execution kind: ${c.id}`);
     if (typeof c.handler !== "function") throw new Error(`Invalid capability handler: ${c.id}`);
     for (const key of ["keywords", "aliases", "permissions", "features", "constraints"]) {

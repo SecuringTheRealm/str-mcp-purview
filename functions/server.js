@@ -16,6 +16,7 @@ import { createServer as createHttpServer } from "node:http";
 import { createMcpHandler } from "@modelcontextprotocol/server";
 import { hostHeaderValidation, toNodeHandler } from "@modelcontextprotocol/node";
 import { createServer } from "../src/server.js";
+import { envFlag } from "../src/util.js";
 
 const PORT = Number(process.env.PORT || process.env.FUNCTIONS_CUSTOMHANDLER_PORT || 3000);
 const HOST = process.env.MCP_HTTP_HOST || (process.env.FUNCTIONS_CUSTOMHANDLER_PORT ? "0.0.0.0" : "127.0.0.1");
@@ -67,6 +68,24 @@ function rpcError(code, message) {
   return JSON.stringify({ jsonrpc: "2.0", error: { code, message }, id: null });
 }
 
+// App Service Authentication (Easy Auth) validates the caller's Entra token and
+// passes the result in X-MS-CLIENT-PRINCIPAL, removing any copy a client sent.
+// Trust it only when Easy Auth is on with "require authentication"; it gives
+// deletion confirmation a real caller (oid) and client (azp) to bind to.
+const TRUST_EASY_AUTH = envFlag("MCP_TRUST_EASY_AUTH", false);
+const CLAIM = { oid: "http://schemas.microsoft.com/identity/claims/objectidentifier", tid: "http://schemas.microsoft.com/identity/claims/tenantid" };
+
+function easyAuthIdentity(req) {
+  try {
+    const { claims = [] } = JSON.parse(Buffer.from(String(req.headers["x-ms-client-principal"] ?? ""), "base64").toString("utf8"));
+    const claim = (...types) => claims.find((c) => types.includes(c.typ))?.val;
+    const oid = claim(CLAIM.oid, "oid"), tid = claim(CLAIM.tid, "tid"), client = claim("azp", "appid");
+    return oid && tid && client ? { token: "", clientId: client, scopes: [], extra: { principal: `${tid}/${oid}`, tenant: tid } } : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 async function handle(req, res) {
   if (!validateHost(req, res)) return;
   let url;
@@ -95,6 +114,17 @@ async function handle(req, res) {
   if (origin && !allowedOrigins.has(origin)) {
     res.writeHead(403, { "content-type": "application/json" }).end(rpcError(-32000, "Origin is not allowed."));
     return;
+  }
+  if (TRUST_EASY_AUTH) {
+    req.auth = easyAuthIdentity(req);
+    if (!req.auth) {
+      res.writeHead(401, { "content-type": "application/json" }).end(rpcError(-32000, "Authentication required."));
+      return;
+    }
+    if (process.env.AZURE_TENANT_ID && req.auth.extra.tenant !== process.env.AZURE_TENANT_ID) {
+      res.writeHead(403, { "content-type": "application/json" }).end(rpcError(-32000, "Caller is from another tenant."));
+      return;
+    }
   }
   if (activeRequests >= MAX_CONCURRENT_REQUESTS) {
     res.writeHead(429, { "content-type": "application/json", "retry-after": "1" }).end(rpcError(-32000, "Server is busy. Retry after one second."));

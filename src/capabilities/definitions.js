@@ -424,7 +424,7 @@ const TOOLS = [
         mode: {
           type: "string",
           enum: ["Enable", "TestWithNotifications", "TestWithoutNotifications", "Disable"],
-          description: "Policy mode (default Enable)",
+          description: "Policy mode. Defaults to TestWithNotifications: matches are reported and users see policy tips, but nothing is blocked. Use Enable to enforce once impact is checked.", default: "TestWithNotifications",
         },
         comment: { type: "string", description: "Optional description/comment" },
         exchange_location: {
@@ -622,7 +622,7 @@ const TOOLS = [
         mode: {
           type: "string",
           enum: ["Enable", "TestWithNotifications", "TestWithoutNotifications", "Disable"],
-          description: "Policy mode (default Enable). Prefer a Test mode first to see impact before blocking.",
+          description: "Policy mode. Defaults to TestWithNotifications: matches are reported and users see policy tips, but nothing is blocked. Use Enable to enforce once impact is checked.", default: "TestWithNotifications",
         },
         comment: { type: "string", description: "Optional description/comment" },
       },
@@ -693,7 +693,7 @@ const TOOLS = [
         mode: {
           type: "string",
           enum: ["Enable", "TestWithNotifications", "TestWithoutNotifications", "Disable"],
-          description: "Policy mode (default Enable). Prefer a Test mode first.",
+          description: "Policy mode. Defaults to TestWithNotifications: matches are reported and users see policy tips, but nothing is blocked. Use Enable to enforce once impact is checked.", default: "TestWithNotifications",
         },
         comment: { type: "string", description: "Optional description/comment" },
       },
