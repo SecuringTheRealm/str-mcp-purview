@@ -41,7 +41,9 @@ The five catalog list tools and policy-scoped `get_dlp_rule` default to 25 items
 
 Waiting writes are bounded by `PURVIEW_MAX_QUEUED_COMMANDS` too, and a write whose caller has cancelled never starts. Over the limit, a call fails with `BUSY` (`retryable: true`; nothing was sent). See [error codes](tools.md#error-codes).
 
-Each MCP request emits one redacted structured completion record to stderr (captured by Azure application logging), including transport, protocol era/version, method or tool name, client identity metadata, trace context, duration, and outcome. Arguments, results, tokens, backend error messages, and tenant objects are not logged. Set `MCP_REQUEST_LOGGING=false` only when platform-level observability fully replaces these records.
+Each MCP request emits one redacted structured record to stderr (captured by Azure application logging): transport, protocol era and version, method, tool and capability, MCP client name and version, trace context, duration, outcome and error code. Arguments, results, tokens, backend error messages and tenant objects are never logged.
+
+**Audit trail.** Purview's own audit log shows only the app identity, so these records are the place to see which person ran a write or delete. Behind Easy Auth (`MCP_TRUST_EASY_AUTH=true`) each record carries `caller_principal` (`<tenant ID>/<object ID>`) and `caller_client_id` (the calling app's ID); on stdio the principal is `local-stdio`. These are pseudonymous IDs, not names or UPNs, but they are still personal data: send the logs to a workspace with restricted access, set a retention period that matches your audit policy, and resolve an object ID to a person in Entra only when investigating. Set `MCP_REQUEST_LOGGING=false` only when platform-level observability fully replaces these records.
 
 ## HTTP host environment variables
 

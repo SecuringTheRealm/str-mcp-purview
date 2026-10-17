@@ -56,14 +56,16 @@ export function createServer(factoryContext = {}) {
   };
   const mode = toolMode(factoryContext.toolMode);
   const authorize = factoryContext.authorizeCapability;
-  const confirmDeletion = createDeletionConfirmation({
+  // The verified caller, used to bind deletion confirmations and in the audit log.
+  const caller = {
     principal: factoryContext.confirmationPrincipal ?? factoryContext.authInfo?.extra?.principal
       ?? (factoryContext.transport === "stdio" ? "local-stdio" : undefined),
     client: factoryContext.transport === "stdio" ? randomUUID() : factoryContext.confirmationClientId ?? factoryContext.authInfo?.clientId,
-  });
+  };
+  const confirmDeletion = createDeletionConfirmation(caller);
   const projection = createProjection({ mode, policy, limit: searchLimit(), entries, authorize, confirmDeletion });
   const visibleResources = RESOURCES.filter((r) => policy.allowedIds.includes(resourceCapabilities[r.uri][0]));
-  const withLogging = createRequestLogger({ transport: factoryContext.transport, era: factoryContext.era });
+  const withLogging = createRequestLogger({ transport: factoryContext.transport, era: factoryContext.era, caller });
   const server = new Server(
     { name: "str-mcp-purview", version },
     {

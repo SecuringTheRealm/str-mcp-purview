@@ -78,3 +78,13 @@ test("logging follows MCP_REQUEST_LOGGING strictly and records the compact capab
   assert.equal(JSON.parse(lines[0]).capability, "remove_dlp_rule");
 });
 
+test("audit record carries the pseudonymous caller and the error code, never arguments", async () => {
+  const lines = [];
+  const wrap = createRequestLogger({ sink: (l) => lines.push(l), caller: { principal: "tenant-1/oid-1", client: "client-1" } });
+  const failing = async () => ({ isError: true, structuredContent: { error: { code: "BUSY" } }, content: [] });
+  await wrap("tools/call", failing, (r) => ({ tool: r.params.name }))({ params: { name: "set_dlp_rule", arguments: { identity: "Secret rule" } } }, context());
+  const record = JSON.parse(lines[0]);
+  assert.deepEqual([record.caller_principal, record.caller_client_id, record.error_code, record.outcome], ["tenant-1/oid-1", "client-1", "BUSY", "tool_error"]);
+  assert.doesNotMatch(lines[0], /Secret rule/);
+});
+

@@ -13,6 +13,17 @@
   "bin": {
     "str-mcp-purview": "index.js"
   },
+  "files": [
+    "index.js",
+    "src/",
+    "functions/server.js",
+    "host.json",
+    "docs/auth.md",
+    "docs/design.md",
+    "docs/hosting.md",
+    "docs/tools.md",
+    "SECURITY.md"
+  ],
   "scripts": {
     "start": "node index.js",
     "test": "node --experimental-test-module-mocks --test",
