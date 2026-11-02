@@ -43,16 +43,9 @@ Test behaviour that can break: cmdlet parameter mapping, validation, safety gate
 
 ## Branching and releases
 
-- `main` is always stable and only moves by a release: a PR from `dev`, merged with a **merge commit** (never squash, or `dev` and `main` diverge and the next release conflicts), then a tag on the merge commit (`v2.1.0`). The `release-source` workflow fails any other PR into `main`; it blocks merging once it and `test` are required status checks on `main`.
-- New work branches off `dev` and merges back into `dev` by PR. Untested or new code lives on `dev`, never `main`.
-- Before a PR merges to `dev`, run three reviews: **ponytail** (needed? smaller? already here?), **junior-to-senior** (correctness, concurrency, failure paths) and **last-20-percent** (docs, contracts, operator experience). The last two are in `.agents/skills/`; ponytail is [DietrichGebert/ponytail](https://github.com/DietrichGebert/ponytail).
-- Delete feature branches once merged, and leave a branch alone if it holds unmerged work by someone else.
-
-```bash
-git switch dev && git switch -c feat/<name>          # start
-gh pr create --base dev --fill                        # land (or the GitHub UI)
-gh pr create --base main --head dev --fill            # release: merge commit, then tag it
-```
+- Start feature work from `dev` and merge it back by PR. `main` only receives releases from `dev`, merged with a **merge commit** and tagged at that merge commit. Never squash `dev` into `main`; the `release-source` workflow rejects other sources.
+- Before merging to `dev`, run **ponytail**, **junior-to-senior** and **last-20-percent**. The latter two live in `.agents/skills/`; ponytail is [DietrichGebert/ponytail](https://github.com/DietrichGebert/ponytail).
+- Delete merged feature branches. Leave branches with unmerged work alone.
 
 ## Working in this repo
 
@@ -64,4 +57,4 @@ gh pr create --base main --head dev --fill            # release: merge commit, t
 
 ## Conventions
 
-Conventional commits (`.cz-config.js`). British English in prose, American English in code. Bump `package.json` by the lowest semver step; `serverInfo.version` reads it. `.agents/skills/` holds the skills, with `.claude/skills/` symlinks for Claude Code: the product-owner and user-story skills and `.codex/` come from Agent OS, and junior-to-senior and last-20-percent from `Sealjay/dotfiles`. Update each from its source, not by hand.
+Use conventional commits, British English in prose and American English in code. Bump `package.json` by the lowest semver step; `serverInfo.version` reads it. Update vendored skills from their sources: product-owner, user-story and `.codex/` from Agent OS; junior-to-senior and last-20-percent from `Sealjay/dotfiles`. `.claude/skills/` links to `.agents/skills/`.
