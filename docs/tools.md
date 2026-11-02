@@ -332,7 +332,7 @@ At least one nonempty `exchange_location` or `modern_group_location` target is r
 
 #### `set_dlp_policy`
 
-- **Business:** Change an existing policy's enforcement level — most importantly, **promote a policy from Test to enforcement** once you're confident it behaves correctly (or pull it back to test / turn it off) — and **grow or shrink where it applies** by adding/removing locations per workload. This closes the test → enforce lifecycle that `create_dlp_policy` begins.
+- **Business:** Promote a policy from Test to enforcement after validating it, return it to test mode or turn it off when needed. Add or remove locations to change its scope. This completes the test → enforce lifecycle started by `create_dlp_policy`.
 - **Technical:** **Write.** `Set-DlpCompliancePolicy -Identity <name|GUID>` with `-Mode`, `-Comment`, and/or the `-Add*/-Remove*Location` parameters. Only supplied fields change. *(Note: this is the modern unified-DLP cmdlet, not the retired Exchange-only `Set-DlpPolicy`.)*
 
 | Parameter | Type | Description |
@@ -504,7 +504,7 @@ Maps to the 4 Copilot protections: block sensitive prompts *(SITs + `block_proce
 
 #### `list_sensitive_information_types`
 
-- **Business:** Look up the exact catalogue of detectable data types — built-in Microsoft ones (credit card numbers, SSNs, passport numbers…) plus any custom types your org has defined. You need the precise name from here to reference a type when building a DLP rule.
+- **Business:** Find the exact names of detectable data types: built-in Microsoft types (credit card numbers, SSNs and passport numbers) and custom types your organisation has defined. Use a name when creating a DLP rule.
 - **Technical:** `Get-DlpSensitiveInformationType`. One line per SIT: name, built-in/custom, and a short description. Custom SITs are identified by `Publisher` being something other than `Microsoft Corporation` (per Microsoft's documented convention). Does **not** include trainable classifiers — see [ROADMAP.md](../ROADMAP.md).
 
 | Parameter | Type | Description |
@@ -535,7 +535,7 @@ The ten auto-label tools (`list/get/create/set/remove_auto_label_policy` and the
 
 Prompts are pre-defined workflows that chain multiple tool calls and instruct the model to produce a structured report. In VS Code they are available via the Copilot Chat prompt picker. All are read-only analyses — they make no changes.
 
-The analysis layer applies **data-security judgment**, not just reads: it traces whether classifications (SITs, labels) translate into *enforced* controls, classifies gaps as **Effectiveness** (data not protected) or **Hygiene** (quality) rather than imposing a severity score, and ends every recommendation in a concrete next action. `data-security-posture` is the front door; `dlp-control-review` is a focused DLP drill-down. Findings are also tagged **[config]** (a fact from settings) or **[assessment]** (the model's judgement).
+The analysis follows SITs and labels into DLP to show where classifications are enforced. It classifies gaps as **Effectiveness** (data not protected) or **Hygiene** (configuration quality), and gives each recommendation a concrete next action. It does not assign severity scores. Findings use **[config]** for facts from settings and **[assessment]** for model judgements. `data-security-posture` is the main workflow; `dlp-control-review` focuses on DLP.
 
 ### `data-security-posture`
 
