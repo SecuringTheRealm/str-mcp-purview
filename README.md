@@ -3,7 +3,7 @@
 > An MCP server that lets AI agents read and write Microsoft Purview **data security** configuration (sensitivity labels and DLP policies) as the signed-in admin. Runs locally over stdio, or remotely over streamable HTTP.
 
 ![GitHub issues](https://img.shields.io/github/issues/SecuringTheRealm/str-mcp-purview)
-![GitHub](https://img.shields.io/github/license/SecuringTheRealm/str-mcp-purview)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Node](https://img.shields.io/badge/node-%3E%3D20-3178C6?logo=node.js&logoColor=ffffff)](https://nodejs.org/)
 [![MCP](https://img.shields.io/badge/MCP-Model_Context_Protocol-3178C6)](https://modelcontextprotocol.io/)
 
